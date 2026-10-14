@@ -30,10 +30,26 @@ HLAE and FFmpeg are downloaded by the app itself when you first click **Install 
 1. Download this repository: **Code → Download ZIP** and unzip it, or `git clone https://github.com/RonGershtein/Cs2-faceit-highlighter`.
    Put it in a folder **without spaces** in the path, for example `C:\cs2-highlighter`.
 2. Double-click **`start.bat`**.
-   The first run creates a Python environment, installs the dependencies and downloads the radar images (1–3 minutes).
-   Every later run starts in a few seconds.
-3. Your browser opens at **http://localhost:8000**. Keep the black console window open while you use the app;
-   close it to stop the app.
+   The first run creates a Python environment, installs the dependencies, downloads the radar images (1–3 minutes)
+   and puts a **CS2 Highlighter** icon on your Desktop.
+3. Your browser opens at **http://localhost:8000**. From now on just double-click the Desktop icon to start the app;
+   close its (minimized) console window to stop it.
+
+### Commands
+
+Everything can also be done from a terminal. `make` on Linux/macOS/WSL, `cs2w.bat` on Windows (same commands):
+
+| command | what it does |
+|---|---|
+| `make install` / `cs2w install` | create the Python env, install dependencies, download radars |
+| `make run` / `cs2w run` | start the app |
+| `make doctor` / `cs2w doctor` | check Python, dependencies, config, CS2 path, HLAE/FFmpeg, disk |
+| `make tools` / `cs2w tools` | download HLAE + FFmpeg for recording (same as the button in the app) |
+| `make test` / `cs2w test` | run the unit tests |
+| `make parse DEMO=x.dem.zst` / `cs2w parse x.dem.zst` | parse one demo from the CLI |
+| `make shortcut` / `cs2w shortcut` | (re)create the Desktop icon |
+| `make update` / `cs2w update` | `git pull` + reinstall dependencies |
+| `make clean` / `cs2w clean` | remove the Python env (keeps your data) |
 
 ### First-time setup (2 minutes)
 
@@ -94,6 +110,7 @@ Restart the app after editing the file by hand.
 - **Recording: no audio in the clip**: update to the latest version of this repo (fixed) and re-record.
 - **A demo stays at "parsing"**: look at the console window for the error; remove the match and drop it again.
 - **Python not found**: install Python 3.11/3.12 from python.org with "Add to PATH" ticked, then run `start.bat` again.
+- **Something else is off**: run `cs2w doctor` (or `make doctor`); it lists what is missing and how to fix it.
 
 ## Safety
 
@@ -111,7 +128,8 @@ python -m backend.ingest path/to/match.dem.zst   # parse one demo from the CLI
 ```
 
 ```
-run.py / start.bat       start the server (+ browser)
+run.py / start.bat       start the server (+ browser); cs2w.bat and Makefile wrap the common commands
+scripts/doctor.py        environment check; scripts/fetch_tools.py downloads HLAE + FFmpeg; scripts/make_shortcut.ps1 Desktop icon
 backend/app.py           FastAPI routes, static frontend
 backend/ingest.py        decompress → parse → artifacts → highlights → sqlite; watch folder
 backend/parser.py        demoparser2: rounds, sampled frames, kills, grenades, stats
