@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS2 Watcher – replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="topbar">
+  <a href="/" class="brand" style="text-decoration:none"><span class="logo">CS</span></a>
+  <a href="/" class="ghost" style="color:var(--text-2)">← Library</a>
+  <h1 id="title">loading…</h1>
+  <span class="spacer"></span>
+  <button class="small" id="btn-watch-cs2" title="open this whole demo in CS2 from the first round">Watch in CS2</button>
+  <span class="help" id="help"><kbd>space</kbd> play <kbd>←</kbd><kbd>→</kbd> 5 s <kbd>,</kbd><kbd>.</kbd> frame <kbd>[</kbd><kbd>]</kbd> kill <kbd>PgUp</kbd><kbd>PgDn</kbd> round <kbd>L</kbd> level</span>
+</div>
+<div class="viewer">
+  <div class="main">
+    <div class="canvas-wrap">
+      <canvas id="map" width="1024" height="1024"></canvas>
+      <div class="hud">
+        <span class="score" id="hud-score"></span>
+        <span class="clock" id="hud-clock"></span>
+        <span class="bomb" id="hud-bomb"></span>
+      </div>
+      <div class="hud-bl">
+        <button class="small" id="btn-level" title="toggle lower level (L)">Lower level</button>
+        <button class="small active" id="btn-labels" title="toggle names">Names</button>
+        <button class="small active" id="btn-cones" title="toggle view cones">Cones</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="icon" id="btn-prev-round" title="previous round (PgUp)"><svg class="ico" viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+      <button class="icon" id="btn-prev-kill" title="previous kill ([)"><svg class="ico" viewBox="0 0 24 24"><path d="M17 5v14L6 12z"/></svg></button>
+      <button id="btn-play" class="primary" style="min-width:86px;justify-content:center">▶ Play</button>
+      <button class="icon" id="btn-next-kill" title="next kill (])"><svg class="ico" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></svg></button>
+      <button class="icon" id="btn-next-round" title="next round (PgDn)"><svg class="ico" viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+      <select id="speed" title="playback speed">
+        <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option>
+        <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+      </select>
+      <select id="round-select" title="jump to round"></select>
+      <span class="time" id="time"></span>
+      <span class="spacer"></span>
+      <span class="muted" id="status" style="font-size:12px"></span>
+    </div>
+    <canvas id="timeline" height="46"></canvas>
+  </div>
+  <div class="divider" id="divider" title="drag to resize the panel"></div>
+  <div class="side">
+    <div class="tabs">
+      <button data-tab="highlights" class="active">Highlights</button>
+      <button data-tab="scoreboard">Scoreboard</button>
+      <button data-tab="killfeed">Kill feed</button>
+    </div>
+    <div class="panel active" id="panel-highlights">
+      <div class="hl-filters">
+        <button class="small active" data-f="mine" id="f-mine">Mine</button>
+        <button class="small" data-f="all" id="f-all">All</button>
+        <button class="small" data-f="kills" id="f-kills" title="include single kills">+ kills</button>
+        <span class="spacer"></span>
+        <button class="small" id="btn-play-all" title="play all listed highlights in order">▶ Play all</button>
+        <a class="small muted" id="csdm-all" href="#" download title="export listed highlights as CS Demo Manager sequences">CSDM</a>
+      </div>
+      <div class="recbar" id="recbar">
+        <button class="small" id="btn-select-all" title="select every listed highlight without a video">☑ Select all</button>
+        <span class="count" id="sel-count">0 selected</span>
+        <span class="spacer"></span>
+        <button class="small primary" id="btn-record-sel" disabled title="record the selected highlights to MP4 with CS2 + HLAE"><i class="rec-dot"></i> Record selected</button>
+        <button class="small" id="btn-cine" style="display:none" title="slow-motion kills + music versions of all recorded clips">✨ Cinematic</button>
+        <a class="small" id="reel-link" href="#" style="display:none" download>⬇ reel.mp4</a>
+        <a class="small" id="reel-cine-link" href="#" style="display:none" download>⬇ cinematic reel</a>
+        <button class="small" id="btn-export" style="display:none" title="copy all clips to your Downloads folder">⬇ Save to Downloads</button>
+        <button class="small" id="btn-install-tools" style="display:none">Install HLAE + FFmpeg</button>
+        <button class="small danger" id="btn-rec-cancel" style="display:none">✕ cancel</button>
+        <div class="recstatus" id="recstatus"></div>
+      </div>
+      <div id="hl-list"></div>
+    </div>
+    <div class="panel scoreboard" id="panel-scoreboard"></div>
+    <div class="panel killfeed" id="panel-killfeed"></div>
+  </div>
+</div>
+<div class="modal" id="me-modal" style="display:none"><div class="modal-box">
+  <div class="modal-head">Who are you in this match? <span class="spacer"></span><button class="small ghost" id="me-close">✕</button></div>
+  <p class="muted" style="margin:0 0 12px">Pick your name so "Mine" shows your highlights and your stats appear in the library. Saved for all demos.</p>
+  <div class="who" id="me-list"></div>
+</div></div>
+<div class="modal" id="rec-modal" style="display:none"><div class="modal-box">
+  <div class="modal-head">Before recording <span class="spacer"></span><button class="small ghost" id="rec-close">✕</button></div>
+  <ul class="checklist">
+    <li><b>Close CS2</b> if it is running.</li>
+    <li><b>Close the FACEIT client</b> (and its anti-cheat) from the tray. It must not run while HLAE is attached to the game.</li>
+    <li>CS2 opens in a window and records <b id="rec-n">1</b> highlight(s). Don't touch the game until it closes itself (about a minute per highlight).</li>
+    <li>Clips are saved in the app and copied to your Downloads folder.</li>
+  </ul>
+  <div class="modal-foot"><button class="ghost" id="rec-cancel-btn">Cancel</button><button class="primary" id="rec-go"><i class="rec-dot"></i> Start recording</button></div>
+</div></div>
+<div class="modal" id="music-modal" style="display:none"><div class="modal-box">
+  <div class="modal-head">✨ Cinematic clips <span class="spacer"></span><button class="small ghost" id="music-close">✕</button></div>
+  <p class="muted" style="margin:0 0 10px">Every kill gets a slow-motion moment and a music track plays under the game sound. Add your own music (MP3 / M4A / WAV); one track is picked at random per clip. Without music you still get the slow motion.</p>
+  <div class="field"><label>Music tracks</label><div id="music-list" class="muted">none yet</div>
+    <div class="row" style="margin-top:6px"><input type="file" id="music-file" accept=".mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" multiple><span class="hint" id="music-dir"></span></div></div>
+  <div class="modal-foot"><span class="muted" id="cine-msg"></span><button class="primary" id="cine-go">✨ Make cinematic versions</button></div>
+</div></div>
+<div class="modal" id="video-modal" style="display:none"><div class="modal-box wide">
+  <div class="modal-head"><span id="video-title"></span><span class="spacer"></span><a id="video-dl" href="#" download>⬇ download</a> <button class="small ghost" id="video-close">✕</button></div>
+  <video id="video-el" controls autoplay playsinline></video>
+</div></div>
+<script src="/js/api.js"></script>
+<script src="/js/replay.js"></script>
+<script src="/js/timeline.js"></script>
+<script src="/js/ui.js"></script>
+</body>
+</html>

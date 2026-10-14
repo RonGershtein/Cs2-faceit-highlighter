@@ -1,0 +1,21 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# user data (demos, parsed matches, videos, music, sqlite) and downloaded tools
+data/
+tools/
+config.toml
+
+# demo files anywhere in the tree
+*.dem
+*.dem.zst
+*.dem.gz
+*.dem.bz2
+*:Zone.Identifier
+
+# OS / editor
+.DS_Store
+Thumbs.db

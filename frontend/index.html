@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS2 Watcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="logo">CS</span> CS2 Watcher</div>
+  <span class="muted">2D replays · highlights · MP4 clips</span>
+  <span class="spacer"></span>
+  <span id="watch-status" class="muted"></span>
+  <button class="ghost" id="btn-settings" title="settings">⚙ Settings</button>
+</div>
+<div class="page">
+  <div class="hero">
+    <div class="dropzone" id="drop">
+      <div class="dz-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m6 10 6-6 6 6"/><path d="M4 20h16"/></svg></div>
+      <h2>Drop a FACEIT demo here</h2>
+      <p>or <a href="#" id="pick">choose a file</a>. New files in your watch folder are picked up automatically.</p>
+      <div class="formats"><span class="badge">.dem.zst</span><span class="badge">.dem</span><span class="badge">.dem.gz</span></div>
+      <input type="file" id="file" multiple accept=".dem,.zst,.gz,.bz2" style="display:none">
+      <div class="uploads" id="uploads"></div>
+    </div>
+    <div class="stats" id="stats">
+      <div class="card stat"><div class="k">Matches</div><div class="v" id="st-matches">–</div><div class="s" id="st-matches-s"></div></div>
+      <div class="card stat"><div class="k">Win rate</div><div class="v" id="st-win">–</div><div class="s" id="st-win-s"></div></div>
+      <div class="card stat"><div class="k">Avg rating</div><div class="v" id="st-rating">–</div><div class="s" id="st-rating-s"></div></div>
+      <div class="card stat"><div class="k">K / D</div><div class="v" id="st-kd">–</div><div class="s" id="st-kd-s"></div></div>
+    </div>
+  </div>
+  <div class="section-head">
+    <h2>Matches</h2>
+    <span class="muted" id="match-count"></span>
+    <span class="spacer"></span>
+    <div class="filters"><select id="map-filter"><option value="">All maps</option></select></div>
+  </div>
+  <div class="matches" id="matches"><div class="empty">loading…</div></div>
+</div>
+
+<div class="modal" id="settings-modal" style="display:none"><div class="modal-box">
+  <div class="modal-head">Settings <span class="spacer"></span><button class="small ghost" id="settings-close">✕</button></div>
+  <div class="field"><label>My Steam64 ID</label><input type="text" id="cfg-steamid" placeholder="7656119…"><div class="hint">Used for "my highlights" and the stats above. You can also click <b>me</b> next to your name in a match scoreboard.</div></div>
+  <div class="field"><label>Demo download folder (watched)</label><div class="row"><input type="text" id="cfg-watch" placeholder="C:\Users\me\Downloads"><button class="browse" data-for="cfg-watch" data-title="Where do your FACEIT demos download to?">Browse…</button></div><div class="hint">Demos saved here are parsed automatically. Point it at the folder your browser downloads FACEIT demos to.</div></div>
+  <div class="field"><label>Save clips to</label><div class="row"><input type="text" id="cfg-export" placeholder=""><button class="browse" data-for="cfg-export" data-title="Where should recorded clips be saved?">Browse…</button></div><div class="hint" id="cfg-export-hint">Recorded highlights and reels are copied here, one subfolder per match.</div></div>
+  <div class="field"><label>CS2 install path (optional)</label><div class="row"><input type="text" id="cfg-cs2" placeholder="auto-detected from Steam"><button class="browse" data-for="cfg-cs2" data-title="Select the 'Counter-Strike Global Offensive' folder">Browse…</button></div></div>
+  <div class="modal-foot"><span class="muted" id="cfg-msg"></span><button class="primary" id="cfg-save">Save</button></div>
+</div></div>
+<script src="/js/api.js"></script>
+<script src="/js/library.js"></script>
+</body>
+</html>
