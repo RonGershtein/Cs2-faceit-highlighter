@@ -2,6 +2,7 @@
 rem CS2 FACEIT Highlighter — Windows command wrapper (same commands as the Makefile).
 rem   cs2w install | run | tools | doctor | test | parse <demo> | update | clean
 setlocal
+call "%~dp0scripts\check_folder.bat" "%~dp0" || exit /b 1
 cd /d "%~dp0"
 set PYEXE=.venv\Scripts\python.exe
 set CMD=%1
@@ -33,15 +34,16 @@ if "%CMD%"=="update" (
     goto :eof
 )
 
-if not exist "%PYEXE%" (
-    if not "%CMD%"=="install" echo Python environment missing, running install first...
-    py -3.12 -m venv .venv 2>nul || py -3.11 -m venv .venv 2>nul || python -m venv .venv
-    if not exist "%PYEXE%" ( echo Python 3.11+ not found. Install it from python.org ^(tick "Add to PATH"^) and retry. & exit /b 1 )
-    "%PYEXE%" -m pip install --upgrade pip -q
-    "%PYEXE%" -m pip install -r requirements.txt -q || (echo pip install failed & exit /b 1)
-    "%PYEXE%" scripts\fetch_radars.py
-    if "%CMD%"=="install" ( echo installed. next: cs2w run & goto :eof )
-)
+if exist "%PYEXE%" goto :have_venv
+if not "%CMD%"=="install" echo Python environment missing, running install first...
+call scripts\ensure_python.bat || exit /b 1
+"%BASEPY%" -m venv .venv
+if not exist "%PYEXE%" ( echo Could not create the Python environment with "%BASEPY%". & exit /b 1 )
+"%PYEXE%" -m pip install --upgrade pip -q
+"%PYEXE%" -m pip install -r requirements.txt -q || (echo pip install failed & exit /b 1)
+"%PYEXE%" scripts\fetch_radars.py
+if "%CMD%"=="install" ( echo installed. next: cs2w run & goto :eof )
+:have_venv
 
 if "%CMD%"=="install" (
     "%PYEXE%" -m pip install -r requirements.txt -q
