@@ -322,7 +322,7 @@ def record_start(demo_id: str, body: RecordIn):
 @app.get("/api/demos/{demo_id}/videos")
 def list_videos(demo_id: str):
     _demo_or_404(demo_id)
-    return _rec().videos_index(demo_id) if rec else {"videos": [], "reel": None}
+    return _rec().videos_index(demo_id) if rec else {"videos": [], "reel": None, "long": []}
 
 
 @app.post("/api/demos/{demo_id}/videos/export")
@@ -354,6 +354,45 @@ def make_cinematic_videos(demo_id: str, body: CineIn):
         raise HTTPException(400, "FFmpeg is not installed (Install HLAE + FFmpeg)")
     r.start_cinematic(demo_id, todo)
     return {"ok": True, "count": len(todo), "music": [m.name for m in cine.music_files()], "music_dir": str(cine.MUSIC_DIR)}
+
+
+class DeleteClipsIn(BaseModel):
+    highlight_ids: list[int]
+    downloads: bool = False   # also remove the copies in the export (Downloads) folder
+
+
+@app.post("/api/demos/{demo_id}/videos/delete")
+def delete_clips(demo_id: str, body: DeleteClipsIn):
+    """Delete the recorded clips of the given highlights (they can be recorded again afterwards)."""
+    _demo_or_404(demo_id)
+    try:
+        return _rec().delete_clips(demo_id, body.highlight_ids, body.downloads)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
+
+
+class LongIn(BaseModel):
+    highlight_ids: list[int]
+    cinematic: bool = False
+
+
+@app.post("/api/demos/{demo_id}/videos/long")
+def make_long_video(demo_id: str, body: LongIn):
+    """Join the recorded clips of the selected highlights into one long MP4 (synchronous; a few seconds to a minute)."""
+    _demo_or_404(demo_id)
+    try:
+        return _rec().compile_long_video(demo_id, body.highlight_ids, body.cinematic)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/demos/{demo_id}/videos/long/{name}")
+def delete_long_video(demo_id: str, name: str):
+    _demo_or_404(demo_id)
+    if "/" in name or "\\" in name or ".." in name or not name.startswith("long_"):
+        raise HTTPException(400, "bad name")
+    _rec().delete_long_video(demo_id, name)
+    return {"ok": True}
 
 
 @app.get("/api/music")

@@ -158,8 +158,10 @@ def cancel() -> None:
 def videos_index(demo_id: str) -> dict:
     p = VIDEOS_DIR / demo_id / "videos.json"
     if p.exists():
-        return json.loads(p.read_text(encoding="utf-8"))
-    return {"videos": [], "reel": None}
+        idx = json.loads(p.read_text(encoding="utf-8"))
+        idx.setdefault("long", [])
+        return idx
+    return {"videos": [], "reel": None, "long": []}
 
 
 def _safe(s: str, n: int = 24) -> str:
@@ -342,6 +344,140 @@ def build_reel(outputs: list[dict], out_dir: Path) -> dict | None:
     return None
 
 
+def long_video_name(n: int, cinematic: bool, when: float | None = None) -> str:
+    stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(when))
+    return f"long_{n}clips{'_cinematic' if cinematic else ''}_{stamp}.mp4"
+
+
+def concat_copy_args(files: list[Path], list_file: Path, out: Path) -> list[str]:
+    """Stream-copy concat (fast, lossless); only valid when every clip has the same codecs/streams."""
+    list_file.write_text("".join(f"file '{f.as_posix()}'\n" for f in files), encoding="utf-8")
+    return [str(FFMPEG_EXE), "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy",
+            "-movflags", "+faststart", str(out)]
+
+
+def concat_reencode_args(clips: list[dict], out: Path, width: int, height: int, fps: int, crf: int = 20) -> list[str]:
+    """Re-encode concat that tolerates mixed clips (cinematic + plain, missing audio, different sizes).
+
+    clips: [{"path": Path, "audio": bool, "seconds": float}]. Pure function; unit-tested.
+    """
+    args = [str(FFMPEG_EXE), "-y"]
+    graph = []
+    labels = []
+    n_in = 0
+    for k, c in enumerate(clips):
+        args += ["-i", str(c["path"])]
+        vi = n_in
+        n_in += 1
+        if c.get("audio", True):
+            ai = vi
+        else:
+            args += ["-f", "lavfi", "-t", f"{max(0.1, float(c.get('seconds') or 1)):.3f}", "-i",
+                     "anullsrc=channel_layout=stereo:sample_rate=48000"]
+            ai = n_in
+            n_in += 1
+        graph.append(f"[{vi}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                     f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p[v{k}]")
+        graph.append(f"[{ai}:a]aresample=48000,aformat=channel_layouts=stereo[a{k}]")
+        labels.append(f"[v{k}][a{k}]")
+    graph.append("".join(labels) + f"concat=n={len(clips)}:v=1:a=1[v][a]")
+    args += ["-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast",
+             "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)]
+    return args
+
+
+def pick_long_clips(index: dict, highlight_ids: list[int], cinematic: bool) -> list[dict]:
+    """Recorded clips for the given highlights, in match order; cinematic versions when asked and available."""
+    want = set(highlight_ids)
+    vids = sorted((v for v in index.get("videos", []) if v["highlight_id"] in want), key=lambda v: v["start_tick"])
+    clips = []
+    for v in vids:
+        use_cine = bool(cinematic and v.get("cine"))
+        clips.append({"highlight_id": v["highlight_id"], "file": v["cine"] if use_cine else v["file"], "cine": use_cine,
+                      "audio": True if use_cine else bool(v.get("audio", True)),
+                      "seconds": float((v.get("cine_info") or {}).get("seconds") or v.get("seconds") or 0) if use_cine
+                      else float(v.get("seconds") or 0),
+                      "description": v.get("description", ""), "player": v.get("player", "")})
+    return clips
+
+
+def compile_long_video(demo_id: str, highlight_ids: list[int], cinematic: bool = False) -> dict:
+    """Join the recorded clips of the selected highlights into one MP4 and register it in videos.json."""
+    if not FFMPEG_EXE.exists():
+        raise RuntimeError("FFmpeg is not installed (Install HLAE + FFmpeg)")
+    out_dir = VIDEOS_DIR / demo_id
+    index = videos_index(demo_id)
+    clips = pick_long_clips(index, highlight_ids, cinematic)
+    clips = [c for c in clips if (out_dir / c["file"]).exists()]
+    if len(clips) < 2:
+        raise RuntimeError("select at least two highlights that already have a recorded clip")
+    cfg = load_config()
+    out = out_dir / long_video_name(len(clips), cinematic)
+    files = [out_dir / c["file"] for c in clips]
+    uniform = all(c["audio"] for c in clips) and len({c["cine"] for c in clips}) == 1
+    ok = False
+    if uniform:
+        lst = out_dir / "long_list.txt"
+        r = subprocess.run(concat_copy_args(files, lst, out), capture_output=True, text=True)
+        lst.unlink(missing_ok=True)
+        ok = r.returncode == 0 and out.exists() and out.stat().st_size > 0
+    if not ok:
+        args = concat_reencode_args([{"path": f, "audio": c["audio"], "seconds": c["seconds"]} for f, c in zip(files, clips)],
+                                    out, int(cfg.get("record_width", 1920)), int(cfg.get("record_height", 1080)),
+                                    int(cfg.get("record_fps", 60)), int(cfg.get("record_crf", 20)))
+        r = subprocess.run(args, capture_output=True, text=True)
+        if r.returncode != 0 or not out.exists():
+            raise RuntimeError("ffmpeg failed: " + r.stderr[-800:])
+    entry = {"file": out.name, "size": out.stat().st_size, "seconds": round(sum(c["seconds"] for c in clips), 1),
+             "highlight_ids": [c["highlight_id"] for c in clips], "clips": [c["file"] for c in clips],
+             "cinematic": cinematic, "created": time.time(),
+             "description": f"{len(clips)} highlights" + (" (cinematic)" if cinematic else "")}
+    index = videos_index(demo_id)
+    index["long"] = [e for e in index.get("long", []) if (out_dir / e["file"]).exists()] + [entry]
+    (out_dir / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
+    try:
+        entry["exported"] = str(export_clips(demo_id, [], entry, cfg))
+    except Exception as e:  # noqa: BLE001
+        entry["exported"] = f"export failed: {e}"
+    return entry
+
+
+def delete_long_video(demo_id: str, name: str) -> None:
+    out_dir = VIDEOS_DIR / demo_id
+    index = videos_index(demo_id)
+    index["long"] = [e for e in index.get("long", []) if e["file"] != name]
+    (out_dir / name).unlink(missing_ok=True)
+    (out_dir / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
+
+
+def delete_clips(demo_id: str, highlight_ids: list[int], downloads: bool = False) -> dict:
+    """Delete the recorded clip (and its cinematic version) of each highlight; optionally the Downloads copies too.
+
+    Long videos and reels built earlier are left alone: they are finished files of their own.
+    """
+    out_dir = VIDEOS_DIR / demo_id
+    index = videos_index(demo_id)
+    want = set(highlight_ids)
+    gone = [v for v in index.get("videos", []) if v["highlight_id"] in want]
+    if not gone:
+        raise RuntimeError("none of the selected highlights has a recorded clip")
+    names = [n for v in gone for n in (v.get("file"), v.get("cine")) if n]
+    removed = 0
+    folders = [out_dir] + ([export_folder_for(demo_id)] if downloads else [])
+    for folder in folders:
+        for n in names:
+            f = folder / n
+            if f.exists():
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+    index["videos"] = [v for v in index.get("videos", []) if v["highlight_id"] not in want]
+    (out_dir / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
+    return {"deleted": [v["highlight_id"] for v in gone], "files": removed}
+
+
 def export_folder_for(demo_id: str, cfg: dict | None = None) -> Path:
     """Folder in the user's Downloads (or cfg.export_folder) that receives copies of finished clips."""
     cfg = cfg or load_config()
@@ -372,6 +508,7 @@ def write_index(demo_id: str, outputs: list[dict], reel: dict | None) -> dict:
     for o in outputs:
         by_id[o["highlight_id"]] = o
     index = {"videos": sorted(by_id.values(), key=lambda v: v["start_tick"]), "reel": reel or index.get("reel"),
+             "reel_cine": index.get("reel_cine"), "long": index.get("long", []),
              "updated": time.time(), "export_folder": str(export_folder_for(demo_id))}
     (out_dir / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
     return index

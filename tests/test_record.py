@@ -40,3 +40,64 @@ def test_build_cfg_no_quit_when_disabled():
 
 def test_raw_dir_has_no_spaces():
     assert " " not in str(raw_dir_for("abc")) or str(raw_dir_for("abc")).startswith("C:")
+
+
+def test_pick_long_clips_orders_and_prefers_cinematic():
+    from backend.record import pick_long_clips
+
+    index = {"videos": [
+        {"highlight_id": 2, "file": "b.mp4", "start_tick": 9000, "seconds": 8.0, "audio": True, "cine": "b_cine.mp4", "cine_info": {"seconds": 12.5}},
+        {"highlight_id": 1, "file": "a.mp4", "start_tick": 5000, "seconds": 6.0, "audio": False},
+        {"highlight_id": 3, "file": "c.mp4", "start_tick": 100, "seconds": 3.0},
+    ]}
+    plain = pick_long_clips(index, [1, 2], cinematic=False)
+    assert [c["file"] for c in plain] == ["a.mp4", "b.mp4"]
+    assert [c["audio"] for c in plain] == [False, True]
+    cine = pick_long_clips(index, [1, 2], cinematic=True)
+    assert [c["file"] for c in cine] == ["a.mp4", "b_cine.mp4"]  # a has no cinematic version -> plain clip
+    assert cine[1]["seconds"] == 12.5 and cine[1]["audio"] is True
+
+
+def test_concat_reencode_args_adds_silence_for_mute_clips():
+    from backend.record import concat_reencode_args
+
+    args = concat_reencode_args([{"path": Path("a.mp4"), "audio": True, "seconds": 5},
+                                 {"path": Path("b.mp4"), "audio": False, "seconds": 7}], Path("out.mp4"), 1280, 720, 60)
+    graph = args[args.index("-filter_complex") + 1]
+    assert args.count("-i") == 3 and "anullsrc" in " ".join(args)
+    assert "[0:a]" in graph and "[2:a]" in graph and "[1:a]" not in graph
+    assert "concat=n=2:v=1:a=1[v][a]" in graph and "scale=1280:720" in graph
+    assert args[-1] == "out.mp4"
+
+
+def test_long_video_name():
+    from backend.record import long_video_name
+
+    assert long_video_name(3, False, 0).startswith("long_3clips_")
+    assert "_cinematic_" in long_video_name(2, True, 0)
+
+
+def test_delete_clips_removes_files_and_index_entries(tmp_path, monkeypatch):
+    import json
+    from backend import record as rec
+
+    monkeypatch.setattr(rec, "VIDEOS_DIR", tmp_path / "videos")
+    monkeypatch.setattr(rec, "export_folder_for", lambda demo_id, cfg=None: tmp_path / "dl")
+    d = tmp_path / "videos" / "demo1"; d.mkdir(parents=True); (tmp_path / "dl").mkdir()
+    for n in ("a.mp4", "a_cine.mp4", "b.mp4"):
+        (d / n).write_bytes(b"x"); (tmp_path / "dl" / n).write_bytes(b"x")
+    idx = {"videos": [{"highlight_id": 1, "file": "a.mp4", "cine": "a_cine.mp4", "start_tick": 1},
+                      {"highlight_id": 2, "file": "b.mp4", "start_tick": 2}], "reel": {"file": "reel.mp4"},
+           "long": [{"file": "long_x.mp4"}]}
+    (d / "videos.json").write_text(json.dumps(idx))
+    r = rec.delete_clips("demo1", [1, 99], downloads=False)
+    assert r["deleted"] == [1] and r["files"] == 2
+    assert not (d / "a.mp4").exists() and not (d / "a_cine.mp4").exists() and (d / "b.mp4").exists()
+    assert (tmp_path / "dl" / "a.mp4").exists()  # Downloads copy kept
+    after = rec.videos_index("demo1")
+    assert [v["highlight_id"] for v in after["videos"]] == [2] and after["reel"] and after["long"]
+    r = rec.delete_clips("demo1", [2], downloads=True)
+    assert r["files"] == 2 and not (tmp_path / "dl" / "b.mp4").exists()
+    import pytest
+    with pytest.raises(RuntimeError):
+        rec.delete_clips("demo1", [5])

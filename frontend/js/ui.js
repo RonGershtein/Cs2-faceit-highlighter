@@ -7,7 +7,7 @@
   const status = $('status');
   const toast = (html, ms = 8000) => {
     const el = document.createElement('div'); el.className = 'toast'; el.innerHTML = html;
-    document.body.appendChild(el); setTimeout(() => el.remove(), ms);
+    document.body.appendChild(el); setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 160); }, ms);
   };
 
   status.textContent = 'loading…';
@@ -44,11 +44,23 @@
   let listed = [];
   let playAllIdx = -1;
   const selected = new Set();
+  function selectedHighlights() { return listed.filter(h => selected.has(h.id)); }
   function updateSelCount() {
-    const n = [...selected].filter(id => listed.some(h => h.id === id)).length;
-    $('sel-count').textContent = `${n} selected`;
-    $('btn-record-sel').disabled = n === 0;
-    $('btn-record-sel').innerHTML = n ? `<i class="rec-dot"></i> Record ${n} selected` : '<i class="rec-dot"></i> Record selected';
+    const sel = selectedHighlights();
+    const toRecord = sel.filter(h => !videoFor(h)).length;
+    const withVideo = sel.length - toRecord;
+    $('sel-count').textContent = `${sel.length} selected`;
+    $('btn-record-sel').disabled = toRecord === 0;
+    $('btn-record-sel').innerHTML = toRecord ? `<i class="rec-dot"></i> Record ${toRecord} selected` : '<i class="rec-dot"></i> Record selected';
+    const db = $('btn-del-clips');
+    db.style.display = withVideo ? '' : 'none';
+    db.textContent = `🗑 Delete ${withVideo} clip${withVideo === 1 ? '' : 's'}`;
+    const lb = $('btn-long');
+    lb.style.display = videos.videos.length ? '' : 'none';
+    lb.disabled = withVideo < 2;
+    lb.textContent = withVideo >= 2 ? `🎬 Long video (${withVideo} clips)` : '🎬 Long video';
+    lb.title = withVideo >= 2 ? `join the ${withVideo} recorded clips of the selected highlights into one long video`
+      : 'select at least two highlights that already have a recorded clip (green ▶ Video button)';
   }
   const timeline = new Timeline($('timeline'), replay, [], me);
 
@@ -68,7 +80,7 @@
     const cur = replay.tick;
     $('hl-list').innerHTML = listed.length ? listed.map((h, i) => `
       <div class="hl ${cur >= h.start_tick && cur <= h.end_tick ? 'current' : ''} ${selected.has(h.id) ? 'selected' : ''}" data-i="${i}">
-        <label class="chk" title="select for recording"><input type="checkbox" class="sel" data-id="${h.id}" ${selected.has(h.id) ? 'checked' : ''} ${videoFor(h) ? 'disabled' : ''}></label>
+        <label class="chk" title="${videoFor(h) ? 'select for a long video' : 'select for recording'}"><input type="checkbox" class="sel" data-id="${h.id}" ${selected.has(h.id) ? 'checked' : ''}></label>
         <div>
           <div class="head"><span class="type ${h.type}">${esc(h.type.replace('_', ' '))}${h.n ? ` ${h.type === 'clutch' ? '1v' + h.n : h.n + 'K'}` : ''}</span>
             <span class="meta">round ${h.round} · ${h.score} pts</span></div>
@@ -279,12 +291,14 @@
   });
 
   // ---- recording (CS2 + HLAE + FFmpeg) ----------------------------------------------------------
-  let videos = { videos: [], reel: null };
+  let videos = { videos: [], reel: null, long: [] };
   let tools = null;
   let recPoll = null;
   function videoFor(h) { return videos.videos.find(v => v.highlight_id === h.id) || null; }
   async function loadVideos() {
-    try { videos = await API.videos(id); } catch (_) { videos = { videos: [], reel: null }; }
+    try { videos = await API.videos(id); } catch (_) { videos = { videos: [], reel: null, long: [] }; }
+    videos.long = videos.long || [];
+    renderLongList();
     const reel = $('reel-link');
     if (videos.reel) { reel.href = API.videoUrl(id, videos.reel.file); reel.style.display = ''; } else reel.style.display = 'none';
     $('btn-export').style.display = videos.videos.length ? '' : 'none';
@@ -293,6 +307,20 @@
     if (videos.reel_cine) { rc.href = API.videoUrl(id, videos.reel_cine.file); rc.style.display = ''; } else rc.style.display = 'none';
     if (videos.export_folder) $('btn-export').title = `copy all clips to ${videos.export_folder}`;
   }
+  function renderLongList() {
+    $('long-list').innerHTML = videos.long.map((l, i) => `<span class="pill" title="${esc(l.file)}">🎬 ${esc(l.description)} · ${l.seconds}s
+      <button class="small act-long-play" data-i="${i}" title="watch">▶</button>
+      <a class="small" href="${API.videoUrl(id, l.file)}" download title="download">⬇</a>
+      <button class="small ghost act-long-del" data-i="${i}" title="delete this long video">✕</button></span>`).join('');
+  }
+  $('long-list').addEventListener('click', async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const l = videos.long[+b.dataset.i]; if (!l) return;
+    if (b.classList.contains('act-long-play')) openVideo(l);
+    if (b.classList.contains('act-long-del') && confirm(`Delete ${l.file}? (the copy in Downloads stays)`)) {
+      try { await API.deleteLongVideo(id, l.file); await loadVideos(); } catch (err) { toast(esc(err.message)); }
+    }
+  });
   function openVideo(v) {
     if (!v) return;
     $('video-title').textContent = `${v.description} (${v.seconds}s)`;
@@ -319,7 +347,7 @@
       recStatusText(st);
       if (st.status === 'done' || st.status === 'error' || st.status === 'idle') {
         clearInterval(recPoll); recPoll = null;
-        if (st.status === 'done') { for (const o of (st.outputs || [])) selected.delete(o.highlight_id); await loadVideos(); renderHighlights(); }
+        if (st.status === 'done') { await loadVideos(); renderHighlights(); }
       }
     } catch (_) { /* ignore */ }
   }
@@ -341,13 +369,64 @@
   }
   $('rec-close').onclick = $('rec-cancel-btn').onclick = () => $('rec-modal').style.display = 'none';
   $('btn-select-all').onclick = () => {
-    const ids = listed.filter(h => !videoFor(h)).map(h => h.id);
+    const ids = listed.map(h => h.id);
     const all = ids.every(id => selected.has(id));
     for (const id of ids) { if (all) selected.delete(id); else selected.add(id); }
     renderHighlights();
   };
   $('btn-record-sel').onclick = () => startRecording(listed.filter(h => selected.has(h.id) && !videoFor(h)).map(h => h.id));
   $('btn-rec-cancel').onclick = async () => { await API.recordCancel(); };
+  // ---- long video (join recorded clips of the selected highlights) ----------------------------------
+  $('btn-long').onclick = () => {
+    const sel = selectedHighlights();
+    const withVideo = sel.filter(h => videoFor(h)).sort((a, b) => a.start_tick - b.start_tick);
+    const skipped = sel.length - withVideo.length;
+    if (withVideo.length < 2) return;
+    const total = withVideo.reduce((s, h) => s + (videoFor(h).seconds || 0), 0);
+    $('long-clips').innerHTML = withVideo.map(h => `<div>round ${h.round} · ${esc(h.player_name)} · ${esc(h.description)} (${videoFor(h).seconds}s)</div>`).join('')
+      + `<div style="margin-top:4px"><b>${withVideo.length} clips · about ${Math.round(total)}s</b></div>`;
+    const anyCine = withVideo.some(h => videoFor(h).cine);
+    $('long-cine-field').style.display = anyCine ? '' : 'none';
+    $('long-skip').style.display = skipped ? '' : 'none';
+    $('long-skip').textContent = skipped ? `${skipped} selected highlight(s) have no recorded clip yet and will be left out. Record them first to include them.` : '';
+    $('long-msg').textContent = '';
+    $('long-go').disabled = false;
+    $('long-modal').style.display = '';
+    $('long-go').onclick = async () => {
+      $('long-go').disabled = true;
+      $('long-msg').textContent = 'joining clips…';
+      try {
+        const r = await API.longVideo(id, withVideo.map(h => h.id), anyCine && $('long-cine').checked);
+        $('long-modal').style.display = 'none';
+        await loadVideos();
+        toast(`<b>${esc(r.file)}</b> created (${r.seconds}s)` + (r.exported ? `<br>saved to ${esc(r.exported)}` : ''), 8000);
+        openVideo(r);
+      } catch (e) { $('long-msg').textContent = e.message; $('long-go').disabled = false; }
+    };
+  };
+  $('long-close').onclick = () => $('long-modal').style.display = 'none';
+  // ---- delete recorded clips of the selected highlights ----------------------------------------------
+  $('btn-del-clips').onclick = () => {
+    const withVideo = selectedHighlights().filter(h => videoFor(h)).sort((a, b) => a.start_tick - b.start_tick);
+    if (!withVideo.length) return;
+    $('del-clips').innerHTML = withVideo.map(h => `<div>round ${h.round} · ${esc(h.player_name)} · ${esc(h.description)}${videoFor(h).cine ? ' <span class="muted">(+ cinematic)</span>' : ''}</div>`).join('');
+    $('del-msg').textContent = '';
+    $('del-go').disabled = false;
+    $('del-modal').style.display = '';
+    $('del-go').onclick = async () => {
+      $('del-go').disabled = true;
+      try {
+        const r = await API.deleteClips(id, withVideo.map(h => h.id), $('del-downloads').checked);
+        $('del-modal').style.display = 'none';
+        for (const hid of r.deleted) selected.delete(hid);
+        await loadVideos(); renderHighlights();
+        toast(`${r.deleted.length} clip(s) deleted`, 4000);
+      } catch (e) { $('del-msg').textContent = e.message; $('del-go').disabled = false; }
+    };
+  };
+  $('del-close').onclick = $('del-cancel').onclick = () => $('del-modal').style.display = 'none';
+  $('del-modal').addEventListener('click', (e) => { if (e.target === $('del-modal')) $('del-modal').style.display = 'none'; });
+  $('long-modal').addEventListener('click', (e) => { if (e.target === $('long-modal')) $('long-modal').style.display = 'none'; });
   // ---- cinematic (slow-motion + music) -------------------------------------------------------------
   async function renderMusic() {
     try {

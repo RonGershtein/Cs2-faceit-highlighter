@@ -6,7 +6,7 @@ Drop a FACEIT (or Valve MM) CS2 demo into a local web app and get:
 - **automatic highlights**: multi-kills, aces, clutches, ninja defuses, knife kills, with a "mine" filter
 - per-match **stats** (K/D/A, ADR, HS%, KAST, rating) and a library of all your matches
 - **Open in CS2** at any highlight, or watch the whole demo in the game
-- **MP4 recording** of selected highlights (CS2 + HLAE + FFmpeg, first-person, with game audio), a combined reel,
+- **MP4 recording** of selected highlights (CS2 + HLAE + FFmpeg, first-person, with game audio), a combined reel, a **long video** from any clips you pick,
   and a **cinematic** version with slow-motion on the final kill and your own music
 
 Everything runs on your PC. Nothing is uploaded anywhere.
@@ -19,7 +19,7 @@ Everything runs on your PC. Nothing is uploaded anywhere.
 | | |
 |---|---|
 | OS | Windows 10/11 for the full feature set (CS2 launching and recording). The replay viewer and highlights also work on Linux/macOS. |
-| Python | 3.11 or 3.12 from [python.org](https://www.python.org/downloads/). Tick **"Add python.exe to PATH"** in the installer. |
+| Python | 3.11 or 3.12. `start.bat` offers to install it for you (via winget) if it is missing; or get it from [python.org](https://www.python.org/downloads/) and tick **"Add python.exe to PATH"**. |
 | CS2 | installed through Steam (only needed for "Open in CS2" and recording) |
 | Disk | ~250 MB per demo kept by the app, plus ~35 MB per recorded 20 s clip |
 
@@ -29,6 +29,7 @@ HLAE and FFmpeg are downloaded by the app itself when you first click **Install 
 
 1. Download this repository: **Code → Download ZIP** and unzip it, or `git clone https://github.com/RonGershtein/Cs2-faceit-highlighter`.
    Put it in a folder **without spaces** in the path, for example `C:\cs2-highlighter`.
+   It must be a normal Windows folder, not a network or WSL path (`\\wsl.localhost\...`).
 2. Double-click **`start.bat`**.
    The first run creates a Python environment, installs the dependencies, downloads the radar images (1–3 minutes)
    and puts a **CS2 Highlighter** icon on your Desktop.
@@ -79,6 +80,10 @@ Match cards show the score from your side, win/loss, your K/D/A, ADR, HS% and ra
 4. CS2 opens in a window and records the clips one by one in your first-person view, then closes itself.
    Budget about a minute per highlight. Don't touch the game meanwhile.
 5. Each card gets a **▶ Video** button. Clips are in the app and copied to your clips folder; with 2+ clips you also get **reel.mp4**.
+6. **Long video from your picks:** tick two or more highlights that already have a clip and press **🎬 Long video**. Their clips are
+   joined in match order into one MP4 (optionally using the cinematic versions), listed under the toolbar with ▶ / ⬇ / ✕, and copied to your clips folder.
+7. **Delete clips:** tick recorded highlights and press **🗑 Delete clips**. The clip (and its cinematic version) is removed from the app;
+   a checkbox also removes the copies in your clips folder. The highlight can be recorded again afterwards.
 
 CS2 runs with `-insecure` while recording, which only disables VAC for that session. When you want to play, start CS2 normally from Steam as usual.
 
@@ -109,7 +114,8 @@ Restart the app after editing the file by hand.
 - **Recording: CS2 opens and sits in the menu / nothing recorded**: close the FACEIT client, make sure CS2 was fully closed before starting, then try again. If the demo plays but nothing happens, open the console and type `exec cs2watcher_rec`.
 - **Recording: no audio in the clip**: update to the latest version of this repo (fixed) and re-record.
 - **A demo stays at "parsing"**: look at the console window for the error; remove the match and drop it again.
-- **Python not found**: install Python 3.11/3.12 from python.org with "Add to PATH" ticked, then run `start.bat` again.
+- **Python not found**: answer `Y` when `start.bat` offers to install it, or install Python 3.11/3.12 from python.org with "Add to PATH" ticked, then run `start.bat` again.
+- **"This folder is on a network path"**: the repo lives in WSL or on a share. Clone or copy it to a Windows folder such as `C:\cs2-highlighter` and start it from there.
 - **Something else is off**: run `cs2w doctor` (or `make doctor`); it lists what is missing and how to fix it.
 
 ## Safety
