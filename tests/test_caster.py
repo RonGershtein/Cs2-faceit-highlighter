@@ -101,3 +101,15 @@ def test_no_repeated_phrasing_in_one_script():
     for seed in range(6):
         lines = [l["text"] for l in caster.write_script(tl, random.Random(seed)) if l["kind"] == "bomb"]
         assert len(lines) == len(set(lines)), lines
+
+
+def test_schedule_prefers_the_full_line_when_it_fits():
+    lines = [{"t": 0.0, "priority": 3, "kind": "kill"}, {"t": 8.0, "priority": 3, "kind": "kill"}]
+    placed = caster.schedule(lines, [5.0, 2.0], lambda t: t, total=20.0, alt_durations=[2.0, None])
+    assert placed == [(0, 0.0, False), (1, 8.0, False)]
+
+
+def test_talk_windows_chain_the_lines_at_normal_speed():
+    lines = [{"t": 0.0, "priority": 2}, {"t": 10.0, "priority": 3}, {"t": 11.0, "priority": 2}, {"t": 12.0, "priority": 1}]
+    wins = caster.talk_windows(lines, [3.0, 4.0, 2.0, 9.0])
+    assert wins == [(0.0, 3.25), (10.0, 14.25), (11.0, 16.5)]   # the reaction waits for the call; a filler reserves nothing

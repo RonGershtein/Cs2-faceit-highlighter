@@ -171,3 +171,16 @@ def test_plan_voices_keeps_the_same_files_when_replanned(tmp_path, monkeypatch):
     again = c.plan_voices([(0.0, 14.0, 1.0)], [4.0], 14.0, choice=first)
     assert [p for p, _ in again] == [p for p, _ in first]
     assert [t for _, t in again] == [0.3, 4.4]
+
+
+def test_union_windows_merges_overlaps_and_short_gaps():
+    assert c.union_windows([(6.0, 8.0), (0.0, 2.0), (2.5, 4.0), (9.5, 9.0)], min_cut=1.5) == [(0.0, 4.0), (6.0, 8.0)]
+
+
+def test_build_filter_ducks_game_audio_and_fast_forward_under_the_casters():
+    segs = [(0.0, 6.0, 6.0), (6.0, 9.0, 1.0)]
+    g = c.build_filter(segs, fps=60, width=1280, height=720, smooth=False, kills=[], impact=False, look=False, fade=False,
+                       has_music=False, game_vol=0.3, music_vol=0.7, texts=[], voices=[0.5], duck=[(0.5, 2.5)])
+    assert "atempo=1.5000,volume=0.35" in g                                             # the 6x segment is turned down
+    assert "volume='1.00*(1-0.5*min(1\\,between(t\\,0.25\\,2.75)))':eval=frame" in g   # game audio ducks under the line
+    assert "[1:a]adelay=500:all=1" in g and "amix=inputs=2" in g

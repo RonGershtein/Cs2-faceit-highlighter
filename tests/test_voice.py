@@ -85,3 +85,10 @@ def test_caster_fx_args(tmp_path):
     assert "acompressor" in g and "aecho" in g and "amix=inputs=2" in g and "loudnorm" in g and "[1:a]aresample=44100,volume=0.22[c]" in g
     a = voice.caster_fx_args(Path("ffmpeg"), tmp_path / "in.wav", tmp_path / "out.mp3", None)
     assert "anoisesrc=color=pink" in " ".join(a) and "tremolo" in a[a.index("-filter_complex") + 1]
+
+
+def test_other_voice_differs_from_the_first():
+    assert voice.other_voice("en-US-GuyNeural") == "en-US-ChristopherNeural"
+    assert voice.other_voice("en-US-ChristopherNeural") == "en-US-GuyNeural"
+    assert voice.other_voice("windows") == "windows"
+    assert voice.voice_label("en-US-GuyNeural") == "Guy" and voice.voice_label("x") == "x"

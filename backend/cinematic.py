@@ -118,16 +118,20 @@ def keep_windows(kill_times: list[float], duration: float, lead: float = 4.0, ta
     Dead time between kills (walking, waiting) is dropped when more than `min_cut` seconds would go."""
     if not kill_times or duration <= 0:
         return [(0.0, duration)]
-    wins: list[list[float]] = []
-    for t in sorted(kill_times):
-        a, b = max(0.0, t - lead), min(duration, t + tail)
+    return union_windows([(max(0.0, t - lead), min(duration, t + tail)) for t in kill_times], min_cut) or [(0.0, duration)]
+
+
+def union_windows(wins: list[tuple[float, float]], min_cut: float = TRIM_MIN_CUT) -> list[tuple[float, float]]:
+    """Sorted windows with overlaps merged; a gap shorter than `min_cut` is not worth cutting and is merged too."""
+    out: list[list[float]] = []
+    for a, b in sorted(wins):
         if a >= b:
             continue
-        if wins and a - wins[-1][1] < min_cut:
-            wins[-1][1] = max(wins[-1][1], b)
+        if out and a - out[-1][1] < min_cut:
+            out[-1][1] = max(out[-1][1], b)
         else:
-            wins.append([a, b])
-    return [(a, b) for a, b in wins] or [(0.0, duration)]
+            out.append([a, b])
+    return [(a, b) for a, b in out]
 
 
 def _merge_windows(kill_times: list[float], lo: float, hi: float, pre: float, post: float) -> list[list[float]]:
@@ -432,6 +436,8 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
             if smooth and s < 1.0:
                 v += f",minterpolate=fps={fps:g}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
             au += "," + _atempo_chain(s)
+            if s > 1.5:
+                au += ",volume=0.35"   # fast-forwarded game audio is a blur: keep it under the music and the casters
         parts.append(v + f"[v{i}]")
         parts.append(au + f"[a{i}]")
         labels.append(f"[v{i}][a{i}]")
@@ -456,6 +462,9 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
     post.append(f"fps={fps:g}")   # constant frame rate: speed changes leave irregular timestamps behind
     parts.append(cur + ",".join(post) + "[vc]")
     ag = f"volume={game_vol:.2f}" if has_music else "anull"
+    win = "+".join(f"between(t\\,{a - 0.25:.2f}\\,{b + 0.25:.2f})" for a, b in duck) if duck else ""
+    if win:   # the game audio drops to half while a caster talks (0.25 s either side), evaluated per frame
+        ag = f"volume='{(game_vol if has_music else 1.0):.2f}*(1-0.5*min(1\\,{win}))':eval=frame"
     if fade:
         ag += f",afade=t=in:st=0:d=0.4,afade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7"
     mix = ["[ag]"]
@@ -463,8 +472,7 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
     if has_music:
         fade_out = max(0.0, total - 2.0)
         mvol = f"volume={music_vol:.2f}"
-        if duck:   # music drops to 40 % while a voice line talks (0.25 s either side), evaluated per frame
-            win = "+".join(f"between(t\\,{a - 0.25:.2f}\\,{b + 0.25:.2f})" for a, b in duck)
+        if win:   # and the music to 40 %
             mvol = f"volume='{music_vol:.2f}*(1-0.6*min(1\\,{win}))':eval=frame"
         parts.append(f"[1:a]atrim=start=0:end={total:.3f},asetpts=PTS-STARTPTS,{mvol},"
                      f"afade=t=in:st=0:d=1.5,afade=t=out:st={fade_out:.3f}:d=2[am]")
@@ -679,6 +687,11 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
                             commentary_ctx.get("end_tick"), voice_id=str(opts.get("cine_tts_voice") or ""), ffmpeg=ffmpeg,
                             ffprobe=ffprobe, fx=bool(opts.get("cine_tts_fx", True)), final_real=final_real,
                             script=commentary_ctx.get("script"), voice2_id=str(opts.get("cine_tts_voice2") or ""))
+        if mode in ("cut", "fast"):
+            # keep real footage while the casters talk, so the lines are heard in full instead of their short forms
+            talk = [(a, min(duration, b)) for a, b in caster.talk_windows(cplan["lines"], cplan["durs"]) if a < duration]
+            keep = union_windows(keep + talk)
+            segs = plan(keep)
 
     def voices_for(sg: list[Seg]) -> list[tuple[Path, float]]:
         if cplan is not None:
@@ -729,7 +742,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
                          game_vol=float(opts["cine_game_volume"]), music_vol=float(opts["cine_music_volume"]), texts=texts,
                          voices=[at for _, at in voices], voice_vol=float(opts.get("cine_voice_volume", 1.0)),
                          card=card_spec, pad=pad,
-                         duck=[(at, at + durs.get(pth, 1.5)) for pth, at in voices] if (voices and has_music) else None)
+                         duck=[(at, at + durs.get(pth, 1.5)) for pth, at in voices] if voices else None)
     args += ["-filter_complex", graph, "-map", "[vc]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast",
              "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
              "-t", f"{total_out:.3f}", str(dst)]
@@ -752,8 +765,11 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     if want_text and not font:
         effects.append("no font found: text overlays skipped")
     if voices:
-        effects.append(("commentary: " if cplan is not None else "") + f"{len(voices)} voice line(s)"
-                       + (f", held last frame {pad:.1f}s" if pad > 0 else ""))
+        by = ""
+        if cplan is not None:
+            v1, v2 = cplan["voices"]
+            by = f"commentary by {voice.voice_label(v1)}" + (f" and {voice.voice_label(v2)}" if v2 else "") + ": "
+        effects.append(by + f"{len(voices)} voice line(s)" + (f", held last frame {pad:.1f}s" if pad > 0 else ""))
     spoken = caster_lines(cplan, voices) if cplan is not None else []
     return {"seconds": round(total_out, 1), "slow_segments": sum(1 for s in segs if s[2] < 0.999),
             "dead_seconds": round(duration - sum(b - a for a, b in keep), 1), "music": music.name if has_music else None,

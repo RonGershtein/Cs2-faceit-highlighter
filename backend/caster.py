@@ -339,7 +339,7 @@ def schedule(lines: list[dict], durations: list[float], out_time, total: float, 
     placed: list[tuple[int, float, bool]] = []
     alt = alt_durations or [None] * len(lines)
     # how late a line may come after its moment: a call must be prompt, a reaction can trail the call
-    slack = {"react": 3.5, "filler": 3.0, "bomb": 2.0, "final": 2.5, "intro": 1.0}
+    slack = {"react": 5.0, "filler": 3.0, "bomb": 2.0, "final": 2.5, "intro": 1.0}
 
     def dur(i: int, short: bool) -> float:
         return alt[i] if (short and alt[i] is not None) else durations[i]
@@ -367,12 +367,10 @@ def schedule(lines: list[dict], durations: list[float], out_time, total: float, 
             # strict: do not run into the next call so much that it would come late
             return not (strict and nxt is not None and end + gap > nxt + 1.5)
 
-        # a call that would fill the whole gap to the next call leaves no room for a reaction: go short first
-        tight = nxt is not None and alt[i] is not None and (nxt - want) < durations[i] + 2.6
-
         def best(start: float) -> bool | None:
-            tries = ([(True, True), (False, True)] if tight else [(False, True), (True, True)]) \
-                + ([(True, False), (False, False)] if must else [])
+            # the full line whenever it fits before the next call, else the short form; a call that must be heard
+            # may also run into the next call (which then comes a little late)
+            tries = [(False, True), (True, True)] + ([(True, False), (False, False)] if must else [])
             for short, strict in tries:
                 if short and alt[i] is None:
                     continue
@@ -389,6 +387,21 @@ def schedule(lines: list[dict], durations: list[float], out_time, total: float, 
             continue
         placed.append((i, max(want, end_prev + gap), choice))
     return placed
+
+
+def talk_windows(lines: list[dict], durations: list[float], gap: float = 0.25, min_priority: int = 2) -> list[tuple[float, float]]:
+    """Clip-time spans the casters need at normal speed to say their lines in full, one after another. The clip
+    keeps real footage there instead of cutting or fast-forwarding it, so the lines are heard whole rather than
+    in their short forms. Lines below `min_priority` (fillers) get no room reserved."""
+    out: list[tuple[float, float]] = []
+    end = -1.0
+    for i in sorted(range(len(lines)), key=lambda i: lines[i]["t"]):
+        if int(lines[i].get("priority", 2)) < min_priority:
+            continue
+        start = max(float(lines[i]["t"]), end + gap)
+        end = start + float(durations[i])
+        out.append((float(lines[i]["t"]), end + gap))
+    return out
 
 
 def draft(demo_id: str, highlight: dict, clip_start_tick: int, clip_end_tick: int | None,
@@ -431,6 +444,9 @@ def plan(demo_id: str, highlight: dict, clip_start_tick: int, clip_end_tick: int
     Schedule it with schedule_plan()."""
     from .cinematic import probe_duration
     lines = clean_script(script) if script else draft(demo_id, highlight, clip_start_tick, clip_end_tick, duo=bool(voice2_id))
+    voice_id = voice_id or voice.TTS_VOICES[0]["id"]
+    if voice2_id == voice_id:
+        voice2_id = voice.other_voice(voice_id)   # two casters with one voice sound like one caster
     files: list[Path] = []
     alts: list[Path | None] = []
     for ln in lines:
@@ -443,7 +459,8 @@ def plan(demo_id: str, highlight: dict, clip_start_tick: int, clip_end_tick: int
             files.append(tts_cached(ln["text"], vid, ffmpeg, fx))
             alts.append(tts_cached(ln["short"], vid, ffmpeg, fx) if ln.get("short") else None)
     return {"lines": lines, "files": files, "durs": [probe_duration(ffprobe, f) for f in files],
-            "alts": alts, "alt_durs": [probe_duration(ffprobe, f) if f else None for f in alts]}
+            "alts": alts, "alt_durs": [probe_duration(ffprobe, f) if f else None for f in alts],
+            "voices": [voice_id, voice2_id]}
 
 
 def schedule_plan(pl: dict, out_time, total: float) -> tuple[list[tuple[Path, float]], list[str]]:

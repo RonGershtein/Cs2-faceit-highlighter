@@ -441,9 +441,30 @@
     casterH = h; $('caster-msg').textContent = ''; $('caster-modal').style.display = '';
     $('caster-sub').innerHTML = `<b>${esc(h.description)}</b>${videoFor(h) ? '' : ' — <span class="warn">no recorded clip yet: the commentary follows the highlight; record the clip before making the cinematic version</span>'}`;
     $('caster-lines').innerHTML = '<span class="muted">writing…</span>';
+    fillCasterVoices();
     try { const r = await API.commentary(id, h.id); casterLines = r.lines; $('caster-duo').checked = !!r.duo; $('caster-msg').textContent = r.saved ? 'saved script' : 'automatic script (not saved yet)'; renderCasterLines(); }
     catch (e) { $('caster-lines').innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
   }
+  async function fillCasterVoices() {
+    // the two caster voices (saved cine_tts_voice / cine_tts_voice2); caster 2 never gets caster 1's voice
+    try {
+      const info = await API.cineSettings();
+      const opts = (info.voice?.tts_voices || []).map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('');
+      for (const [sel, key] of [['caster-voice1', 'cine_tts_voice'], ['caster-voice2', 'cine_tts_voice2']]) {
+        const el = $(sel); const cur = info.settings?.[key] || ''; el.innerHTML = opts;
+        if ([...el.options].some(o => o.value === cur)) el.value = cur;
+      }
+      casterVoicesDiffer();
+    } catch (_) { /* the saved voices are used */ }
+  }
+  function casterVoicesDiffer() {
+    const v1 = $('caster-voice1').value, v2 = $('caster-voice2');
+    if (v2.value !== v1) return;
+    const alt = [...v2.options].find(o => o.value !== v1 && o.value !== 'windows'); if (alt) v2.value = alt.value;
+  }
+  $('caster-voice1').addEventListener('change', casterVoicesDiffer);
+  $('caster-voice2').addEventListener('change', casterVoicesDiffer);
+  $('caster-duo').addEventListener('change', () => { $('caster-voice2-wrap').style.display = $('caster-duo').checked ? '' : 'none'; });
   $('caster-close').onclick = () => $('caster-modal').style.display = 'none';
   $('caster-modal').addEventListener('click', (e) => {
     if (e.target === $('caster-modal')) { $('caster-modal').style.display = 'none'; return; }
@@ -469,7 +490,9 @@
       if (!videoFor(casterH)) { $('caster-msg').textContent = 'saved. Record this highlight first, then make the cinematic version.'; return; }
       $('caster-go').disabled = true; $('caster-msg').textContent = 'starting…';
       const st = await API.cineSettings();
-      const settings = { ...st.settings, cine_voice: true, cine_commentary: true };
+      const settings = { ...st.settings, cine_voice: true, cine_commentary: true,
+        cine_tts_voice: $('caster-voice1').value || st.settings.cine_tts_voice,
+        cine_tts_voice2: $('caster-duo').checked ? ($('caster-voice2').value || st.settings.cine_tts_voice2 || '') : '' };
       const r = await API.cinematic(id, [casterH.id], settings);
       $('caster-go').disabled = false; $('caster-modal').style.display = 'none';
       toast(`🎙 Working on your cinematic clip with commentary… about a minute or two. Progress shows above the highlights.`, 6000);

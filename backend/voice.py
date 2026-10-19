@@ -159,6 +159,22 @@ TTS_VOICES = [
 ]
 
 
+def other_voice(voice_id: str) -> str:
+    """The voice for a second caster when it would be the same as the first: the first neural voice that differs
+    (the offline Windows voice has only one voice, so it stays)."""
+    if voice_id == "windows":
+        return voice_id
+    return next((v["id"] for v in TTS_VOICES if v["id"] not in (voice_id, "windows")), voice_id)
+
+
+def voice_label(voice_id: str) -> str:
+    """'Guy' for en-US-GuyNeural (the label's first word), else the id itself."""
+    for v in TTS_VOICES:
+        if v["id"] == voice_id:
+            return v["label"].split(" (")[0]
+    return voice_id
+
+
 def edge_available() -> bool:
     try:
         import edge_tts  # noqa: F401
