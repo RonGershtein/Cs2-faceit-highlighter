@@ -29,3 +29,6 @@ Thumbs.db
 .agents/
 .claude/
 skills-lock.json
+
+# friends' photos dropped in the repo root (the cropped avatars live in data/players)
+/players photos/
