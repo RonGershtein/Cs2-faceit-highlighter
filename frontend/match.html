@@ -18,8 +18,7 @@
   <a href="/" class="ghost" style="color:var(--text-2)">← Library</a>
   <h1 id="title">loading…</h1>
   <span class="spacer"></span>
-  <button class="small" id="btn-watch-cs2" title="open this whole demo in CS2 from the first round">Watch in CS2</button>
-  <span class="help" id="help"><kbd>space</kbd> play <kbd>←</kbd><kbd>→</kbd> 5 s <kbd>,</kbd><kbd>.</kbd> frame <kbd>[</kbd><kbd>]</kbd> kill <kbd>PgUp</kbd><kbd>PgDn</kbd> round <kbd>L</kbd> level</span>
+  <button class="small" id="btn-watch-cs2" title="open this whole demo in CS2 from the first round. Keys: space play · ← → 5 s · , . frame · [ ] kill · PgUp PgDn round · L level">Watch in CS2</button>
 </header>
 <main class="viewer" id="main">
   <div class="main">
@@ -54,11 +53,10 @@
     <canvas id="timeline" height="46" role="img" aria-label="Match timeline: rounds and kills; click to seek"></canvas>
   </div>
   <div class="divider" id="divider" title="drag to resize the panel" role="separator" aria-orientation="vertical" aria-label="Resize the side panel"></div>
-  <aside class="side" aria-label="Highlights, scoreboard and kill feed">
+  <aside class="side" aria-label="Highlights and scoreboard">
     <div class="tabs" role="tablist">
       <button data-tab="highlights" class="active">Highlights</button>
       <button data-tab="scoreboard">Scoreboard</button>
-      <button data-tab="killfeed">Kill feed</button>
     </div>
     <div class="panel active" id="panel-highlights">
       <div class="hl-filters">
@@ -88,7 +86,6 @@
       <div id="hl-list"></div>
     </div>
     <div class="panel scoreboard" id="panel-scoreboard"></div>
-    <div class="panel killfeed" id="panel-killfeed"></div>
   </aside>
 </main>
 <div class="modal" role="dialog" aria-modal="true" id="me-modal" style="display:none"><div class="modal-box">

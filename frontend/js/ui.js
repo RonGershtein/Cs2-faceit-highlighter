@@ -200,16 +200,6 @@
   });
   $('panel-scoreboard').addEventListener('click', (e) => { if (e.target.closest('#btn-who')) openWhoAmI(); });
   let lastRoundRendered = -1;
-  function renderKillfeed(tick, round) {
-    const ks = replay.kills.filter(k => k.round === round.num);
-    $('panel-killfeed').innerHTML = `<div class="teamname">Round ${round.num} · ${round.winner} win (${esc(round.reason)})</div>` +
-      ks.map(k => `<div class="k ${k.tick > tick ? 'future' : ''}" data-tick="${k.tick}" role="button" tabindex="0" style="cursor:pointer">
-        <span class="muted" style="width:44px">${fmtTick(k.tick - round.freeze_end)}</span>
-        <span class="${(k.attacker_team || '').toLowerCase()}">${esc(k.attacker_name || '?')}</span>
-        <span class="w">${esc(wname(k.weapon))}${k.headshot ? ' HS' : ''}${k.penetrated ? ' wall' : ''}${k.thrusmoke ? ' smoke' : ''}${k.noscope ? ' noscope' : ''}${k.attackerblind ? ' blind' : ''}</span>
-        <span class="${(k.victim_team || '').toLowerCase()}">${esc(k.victim_name)}</span></div>`).join('');
-  }
-  $('panel-killfeed').addEventListener('click', (e) => { const k = e.target.closest('.k'); if (k) replay.seek(+k.dataset.tick - 2 * replay.tickrate); });
   function fmtTick(dt) { const s = Math.max(0, dt / replay.tickrate); return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`; }
 
   // ---- per-tick HUD updates ------------------------------------------------------------------
@@ -227,7 +217,6 @@
       lastPanel = now;
       const active = document.querySelector('.tabs button.active')?.dataset.tab;
       if (active === 'scoreboard') renderScoreboard(st, round);
-      if (active === 'killfeed') { renderKillfeed(tick, round); lastRoundRendered = round.num; }
       if (active === 'highlights') {
         for (const el of $('hl-list').querySelectorAll('.hl')) { const h = listed[+el.dataset.i]; el.classList.toggle('current', tick >= h.start_tick && tick <= h.end_tick); }
       }
