@@ -244,7 +244,7 @@
   divider.addEventListener('pointerdown', (e) => { dragging = true; divider.classList.add('active'); divider.setPointerCapture(e.pointerId); });
   divider.addEventListener('pointermove', (e) => { if (dragging) { setSideW(window.innerWidth - e.clientX - 4); replay._resize(); replay.draw(); timeline._resize(); timeline.draw(); } });
   divider.addEventListener('pointerup', () => { dragging = false; divider.classList.remove('active'); });
-  divider.addEventListener('dblclick', () => { setSideW(Math.round(window.innerWidth * 0.4)); replay._resize(); replay.draw(); timeline._resize(); timeline.draw(); });
+  divider.addEventListener('dblclick', () => { setSideW(Math.round(window.innerWidth * 0.62)); replay._resize(); replay.draw(); timeline._resize(); timeline.draw(); });
 
   // ---- controls ------------------------------------------------------------------------------------
   const playBtn = $('btn-play');

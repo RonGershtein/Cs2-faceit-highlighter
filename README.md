@@ -15,6 +15,8 @@ Everything runs on your PC. Nothing is uploaded anywhere.
 ![library](docs/library.png)
 ![viewer](docs/viewer.png)
 ![cinematic dialog](docs/cinematic.png)
+![cinematic options](docs/cinematic-options.png)
+![full caster](docs/full-caster.png)
 ![cinematic clip](docs/cinematic-frame.png)
 
 ## Requirements
