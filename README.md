@@ -14,6 +14,8 @@ Everything runs on your PC. Nothing is uploaded anywhere.
 
 ![library](docs/library.png)
 ![viewer](docs/viewer.png)
+![cinematic dialog](docs/cinematic.png)
+![cinematic clip](docs/cinematic-frame.png)
 
 ## Requirements
 
@@ -105,11 +107,14 @@ highlights you ticked (those are remade). A `reel_cinematic.mp4` of all cinemati
 - **Music:** add MP3/M4A/WAV files (royalty-free if you plan to publish). A random track or the one you pick plays under the game sound.
   With "start the track at its drop" the app measures the track's loudness, finds the biggest sustained rise (the drop) and starts the
   music so the drop lands exactly on the slow-motion kill.
-- **Voice lines:** short sound bites in `data/voice/start`, `data/voice/kill` and `data/voice/final` play at the clip start, on every
-  kill but the last, and right after the final kill. They are picked by what happened: a sub-folder named after the highlight type
+- **Caster voice lines:** short sound bites in `data/voice/start`, `data/voice/kill` and `data/voice/final` play at the clip start, on
+  every kill but the last, and right after the final kill. They are picked by what happened: a sub-folder named after the highlight type
   (`ace`, `clutch`, `multikill`, `knife`, `ninja_defuse`) or, for the kill slot, the kill number (`2`, `3`, `4`, `5`) wins when it has
-  files, otherwise a general line from the slot plays. The dialog's "new lines are for" selector puts uploads and generated lines in the
-  right folder. Type a line ("Are you kidding me?!") and generate it with the Windows voice; the famous caster lines are one-click presets.
+  files, otherwise a general line from the slot plays. Click a line in the dialog to pin it: a slot with pinned lines only uses those.
+  The "new lines are for" selector puts uploads and generated lines in the right folder. Type a line ("Are you kidding me?!") and
+  generate it with a neural voice (Microsoft Edge's online voices through `edge-tts`; the offline Windows voice is the fallback);
+  the famous caster lines are one-click presets. Untick "play caster voice lines" for a clean clip. The clip runs on until the last
+  line has finished.
 
 ### Config file
 `config.toml` is created next to `start.bat` on first run. Most of it is editable from Settings; the rest:
