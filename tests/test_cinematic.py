@@ -132,9 +132,12 @@ def test_player_card_lookup(tmp_path, monkeypatch):
     monkeypatch.setattr(c, "PLAYERS_JSON", tmp_path / "players.json")
     h = {"player": "765", "player_name": "ingame"}
     assert c.player_card(h) == {"name": "ingame", "photo": None, "steamid": "765"}
+    (tmp_path / "vALenk.png").write_bytes(b"x")
+    assert c.player_card({"player": "1", "player_name": "valenk"})["photo"] == tmp_path / "vALenk.png"   # by nickname
+    assert c.player_card({"player": "1", "player_name": "va_lenk!"})["photo"] == tmp_path / "vALenk.png"
     (tmp_path / "765.jpg").write_bytes(b"x")
     (tmp_path / "players.json").write_text('{"765": {"name": "Ron"}}', encoding="utf-8")
-    assert c.player_card(h) == {"name": "Ron", "photo": tmp_path / "765.jpg", "steamid": "765"}
+    assert c.player_card(h) == {"name": "Ron", "photo": tmp_path / "765.jpg", "steamid": "765"}   # steam id wins
     assert c.player_card(None) is None
 
 

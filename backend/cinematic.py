@@ -332,13 +332,25 @@ def player_card(h: dict | None) -> dict | None:
         if entry.get("photo"):
             cand = PLAYERS_DIR / Path(str(entry["photo"])).name
             photo = cand if cand.is_file() else None
-    if photo is None and sid and PLAYERS_DIR.is_dir():
-        for ext in PHOTO_EXT:
-            cand = PLAYERS_DIR / f"{sid}{ext}"
-            if cand.is_file():
-                photo = cand
-                break
+    if photo is None and PLAYERS_DIR.is_dir():
+        photo = _photo_named(sid) or _photo_named(name)
     return {"name": name, "photo": photo, "steamid": sid}
+
+
+def _photo_key(s: str) -> str:
+    return "".join(ch for ch in str(s).lower() if ch.isalnum())
+
+
+def _photo_named(key: str) -> Path | None:
+    """data/players/<key>.<ext>, matched case-insensitively and ignoring punctuation, so a photo named after the
+    in-game nickname works too (e.g. 'vALenk.png' for the player 'valenk')."""
+    want = _photo_key(key)
+    if not want:
+        return None
+    for cand in sorted(PLAYERS_DIR.iterdir()):
+        if cand.is_file() and cand.suffix.lower() in PHOTO_EXT and _photo_key(cand.stem) == want:
+            return cand
+    return None
 
 
 def _fesc(s: str) -> str:
