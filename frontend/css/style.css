@@ -315,3 +315,12 @@ input[type=range] { accent-color: var(--accent); flex: 1; min-width: 80px; heigh
 *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.24); }
 .ct { color: var(--ct); } .t { color: var(--t); }
 .who .teamname.ct, .scoreboard .teamname.ct { color: var(--ct); } .who .teamname.t, .scoreboard .teamname.t { color: var(--t); }
+
+/* ---------- full caster editor ---------- */
+.caster-lines { display: grid; gap: 6px; max-height: 52vh; overflow-y: auto; padding-right: 4px; }
+.caster-line { display: grid; grid-template-columns: 64px 40px minmax(0, 1fr) 28px; gap: 6px; align-items: center; padding: 4px 6px; border-radius: var(--radius-s); border-left: 3px solid var(--accent); background: rgba(255,255,255,.02); }
+.caster-line.c2 { border-left-color: rgba(61,220,151,.8); }
+.caster-line input[type=number] { width: 100%; background: var(--bg-2); border: 1px solid var(--border-2); border-radius: var(--radius-s); padding: 5px 6px; font-size: 12px; }
+.caster-line .cl-text { width: 100%; padding: 6px 8px; font-size: 13px; }
+.caster-line .cl-who { padding: 2px 6px; font-weight: 700; }
+.caster-line.c2 .cl-who { color: var(--ok); }

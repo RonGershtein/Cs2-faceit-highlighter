@@ -183,6 +183,19 @@
 
   <div class="modal-foot"><span class="muted" id="cine-msg"></span><button class="small" id="cine-join" title="join every cinematic clip of this match, in match order, into one video">🎬 One video of all cinematic clips (<span id="cine-n-join">0</span>)</button><button class="primary" id="cine-go">✨ Make cinematic versions</button></div>
 </div></div>
+<div class="modal" id="caster-modal" style="display:none"><div class="modal-box cine">
+  <div class="modal-head">🎙 Full caster <span class="spacer"></span><button class="small ghost" id="caster-close">✕</button></div>
+  <p class="muted" id="caster-sub" style="margin:0 0 8px"></p>
+  <p class="muted" style="margin:0 0 10px">Written from the demo events: who died to what, headshots, how many were left, the bomb. Edit any line, delete what you don't like, or write a new script. Caster 1 calls the action, caster 2 reacts. Times are seconds from the start of the clip.</p>
+  <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
+    <button class="small" id="caster-redo" title="write the script again with different phrasing">🎲 Write it again</button>
+    <label class="opt" style="margin:0"><input type="checkbox" id="caster-duo" checked> two casters</label>
+    <span class="spacer"></span>
+    <button class="small" id="caster-add" title="add a line">+ line</button>
+  </div>
+  <div id="caster-lines" class="caster-lines"></div>
+  <div class="modal-foot"><span class="muted" id="caster-msg"></span><button class="ghost" id="caster-reset" title="forget the saved script; the next clip gets a fresh automatic one">Reset</button><button class="small" id="caster-save">💾 Save</button><button class="primary" id="caster-go">🎙 Save &amp; make the cinematic clip</button></div>
+</div></div>
 <div class="modal" id="long-modal" style="display:none"><div class="modal-box">
   <div class="modal-head">🎬 Long highlight video <span class="spacer"></span><button class="small ghost" id="long-close">✕</button></div>
   <p class="muted" style="margin:0 0 10px">The recorded clips of the selected highlights are joined into one video, in match order. It is saved in the app and copied to your Downloads folder.</p>

@@ -233,24 +233,24 @@ def caster_fx(ffmpeg: Path, src: Path) -> Path:
 
 
 def tts(text: str, slot: str, rate: int = 2, sub: str = "", voice_id: str = "", ffmpeg: Path | None = None,
-        fx: bool = False) -> Path:
+        fx: bool = False, edge_rate: str = "+18%") -> Path:
     """Speak `text` into data/voice/<slot>[/<sub>]/<slug>.mp3 with a neural voice (edge-tts), or .wav with the
     Windows voice when voice_id is "windows" or edge-tts is unavailable / offline. fx=True (needs ffmpeg) runs the
     stadium treatment afterwards (caster_fx)."""
-    p = _tts_raw(text, slot, rate, sub, voice_id)
+    p = _tts_raw(text, slot, rate, sub, voice_id, edge_rate)
     if fx and ffmpeg and Path(ffmpeg).exists():
         p = caster_fx(Path(ffmpeg), p)
     return p
 
 
-def _tts_raw(text: str, slot: str, rate: int, sub: str, voice_id: str) -> Path:
+def _tts_raw(text: str, slot: str, rate: int, sub: str, voice_id: str, edge_rate: str = "+18%") -> Path:
     text = " ".join(str(text).split())
     if not text:
         raise ValueError("empty text")
     voice_id = voice_id or TTS_VOICES[0]["id"]
     if voice_id != "windows" and edge_available():
         try:
-            return tts_edge(text, slot_dir(slot, sub) / f"{slug(text)}.mp3", voice_id)
+            return tts_edge(text, slot_dir(slot, sub) / f"{slug(text)}.mp3", voice_id, rate=edge_rate)
         except Exception as e:  # noqa: BLE001  (offline, service hiccup) -> Windows voice
             if not _powershell():
                 raise RuntimeError(f"neural voice failed ({e}); no offline voice available") from e

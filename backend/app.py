@@ -369,6 +369,80 @@ def make_cinematic_videos(demo_id: str, body: CineIn):
     return {"ok": True, "count": len(todo), "music": [m.name for m in cine.music_files()], "music_dir": str(cine.MUSIC_DIR)}
 
 
+# ---- full caster: commentary scripts per highlight -------------------------------------------
+
+def _highlight_or_404(demo_id: str, highlight_id: int) -> dict:
+    for h in db.get_highlights(demo_id):
+        if h["id"] == highlight_id:
+            return h
+    raise HTTPException(404, "no such highlight")
+
+
+def _clip_ticks(demo_id: str, h: dict) -> tuple[int, int]:
+    """The recorded clip's tick range for a highlight (falls back to the highlight itself)."""
+    for v in _rec().videos_index(demo_id).get("videos", []):
+        if v["highlight_id"] == h["id"]:
+            return int(v["start_tick"]), int(v.get("end_tick") or h["end_tick"])
+    return int(h["start_tick"]), int(h["end_tick"])
+
+
+@app.get("/api/demos/{demo_id}/highlights/{highlight_id}/commentary")
+def get_commentary(demo_id: str, highlight_id: int):
+    """The saved script for a highlight, or a freshly written one (saved=false)."""
+    from . import caster, cinematic as cine
+
+    _demo_or_404(demo_id)
+    h = _highlight_or_404(demo_id, highlight_id)
+    saved = cine.load_script(demo_id, highlight_id)
+    if saved:
+        return {"lines": saved, "saved": True, "duo": any(l.get("who") == 2 for l in saved)}
+    a, b = _clip_ticks(demo_id, h)
+    duo = bool(cfgmod.load().get("cine_tts_voice2"))
+    return {"lines": caster.draft(demo_id, h, a, b, duo=duo), "saved": False, "duo": duo}
+
+
+class CommentaryDraftIn(BaseModel):
+    duo: bool = True
+
+
+@app.post("/api/demos/{demo_id}/highlights/{highlight_id}/commentary/draft")
+def draft_commentary(demo_id: str, highlight_id: int, body: CommentaryDraftIn):
+    """Write a new script (random phrasing) without saving it."""
+    from . import caster
+
+    _demo_or_404(demo_id)
+    h = _highlight_or_404(demo_id, highlight_id)
+    a, b = _clip_ticks(demo_id, h)
+    return {"lines": caster.draft(demo_id, h, a, b, duo=body.duo), "saved": False, "duo": body.duo}
+
+
+class CommentaryIn(BaseModel):
+    lines: list[dict]
+
+
+@app.put("/api/demos/{demo_id}/highlights/{highlight_id}/commentary")
+def save_commentary(demo_id: str, highlight_id: int, body: CommentaryIn):
+    from . import caster, cinematic as cine
+
+    _demo_or_404(demo_id)
+    _highlight_or_404(demo_id, highlight_id)
+    lines = caster.clean_script(body.lines)
+    p = cine.script_path(demo_id, highlight_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"lines": lines}, indent=1), encoding="utf-8")
+    return {"ok": True, "lines": lines}
+
+
+@app.delete("/api/demos/{demo_id}/highlights/{highlight_id}/commentary")
+def delete_commentary(demo_id: str, highlight_id: int):
+    from . import cinematic as cine
+
+    p = cine.script_path(demo_id, highlight_id)
+    if p.exists():
+        p.unlink()
+    return {"ok": True}
+
+
 class DeleteClipsIn(BaseModel):
     highlight_ids: list[int]
     downloads: bool = False   # also remove the copies in the export (Downloads) folder

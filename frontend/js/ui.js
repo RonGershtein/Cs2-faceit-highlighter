@@ -89,7 +89,7 @@
           <div class="actions">
             <button class="small act-play" data-i="${i}">▶ Play</button>
             <button class="small act-cs2" data-i="${i}" title="open CS2 at this moment">Open in CS2</button>
-            ${videoFor(h) ? `<button class="small act-video has-video" data-i="${i}" title="watch the recorded MP4">▶ Video</button>${videoFor(h).cine ? `<button class="small act-cine has-video" data-i="${i}" title="watch the cinematic version (slow-motion + music)">✨ Cinematic</button>` : ''}` : `<button class="small act-rec" data-i="${i}" title="record only this highlight"><i class="rec-dot"></i> Rec</button>`}
+            ${videoFor(h) ? `<button class="small act-video has-video" data-i="${i}" title="watch the recorded MP4">▶ Video</button>${videoFor(h).cine ? `<button class="small act-cine has-video" data-i="${i}" title="watch the cinematic version (slow-motion + music)">✨ Cinematic</button>` : ''}<button class="small act-caster" data-i="${i}" title="write a full play-by-play commentary for this clip, edit it, and make the cinematic version with it">🎙 Full caster</button>` : `<button class="small act-rec" data-i="${i}" title="record only this highlight"><i class="rec-dot"></i> Rec</button>`}
             <button class="small ghost act-csdm" data-i="${i}" title="copy a CS Demo Manager sequence to the clipboard">CSDM</button>
           </div>
         </div>
@@ -129,6 +129,7 @@
       return;
     }
     if (b?.classList.contains('act-video')) { openVideo(videoFor(h)); return; }
+    if (b?.classList.contains('act-caster')) { openCaster(h); return; }
     if (b?.classList.contains('act-cine')) { const v = videoFor(h); openVideo({ ...v, file: v.cine, description: v.description + ' (cinematic)', seconds: v.cine_info?.seconds ?? v.seconds }); return; }
     if (b?.classList.contains('act-rec')) { startRecording([h.id]); return; }
     if (b?.classList.contains('act-csdm')) {
@@ -427,6 +428,57 @@
   $('del-close').onclick = $('del-cancel').onclick = () => $('del-modal').style.display = 'none';
   $('del-modal').addEventListener('click', (e) => { if (e.target === $('del-modal')) $('del-modal').style.display = 'none'; });
   $('long-modal').addEventListener('click', (e) => { if (e.target === $('long-modal')) $('long-modal').style.display = 'none'; });
+  // ---- full caster: editable commentary per highlight ------------------------------------------------
+  let casterH = null, casterLines = [], cinePoll = null;
+  function renderCasterLines() {
+    $('caster-lines').innerHTML = casterLines.map((l, i) => `<div class="caster-line ${l.who === 2 ? 'c2' : 'c1'}" data-i="${i}">
+      <input type="number" class="cl-t" value="${(+l.t).toFixed(1)}" step="0.1" min="0" title="seconds from the clip start">
+      <button class="small ghost cl-who" title="who says it: caster 1 calls, caster 2 reacts">${l.who === 2 ? 'C2' : 'C1'}</button>
+      <input type="text" class="cl-text" value="${esc(l.text)}" maxlength="300">
+      <button class="small ghost cl-del" title="delete this line">✕</button></div>`).join('') || '<span class="muted">no lines</span>';
+  }
+  function collectCasterLines() {
+    return [...document.querySelectorAll('.caster-line')].map((el, i) => ({ ...casterLines[i], t: parseFloat(el.querySelector('.cl-t').value) || 0, text: el.querySelector('.cl-text').value }));
+  }
+  async function openCaster(h) {
+    casterH = h; $('caster-msg').textContent = ''; $('caster-modal').style.display = '';
+    $('caster-sub').innerHTML = `<b>${esc(h.description)}</b>${videoFor(h) ? '' : ' — <span class="warn">no recorded clip yet: the commentary follows the highlight; record the clip before making the cinematic version</span>'}`;
+    $('caster-lines').innerHTML = '<span class="muted">writing…</span>';
+    try { const r = await API.commentary(id, h.id); casterLines = r.lines; $('caster-duo').checked = !!r.duo; $('caster-msg').textContent = r.saved ? 'saved script' : 'automatic script (not saved yet)'; renderCasterLines(); }
+    catch (e) { $('caster-lines').innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
+  }
+  $('caster-close').onclick = () => $('caster-modal').style.display = 'none';
+  $('caster-modal').addEventListener('click', (e) => {
+    if (e.target === $('caster-modal')) { $('caster-modal').style.display = 'none'; return; }
+    const row = e.target.closest('.caster-line'); if (!row) return; const i = +row.dataset.i;
+    if (e.target.closest('.cl-del')) { casterLines = collectCasterLines(); casterLines.splice(i, 1); renderCasterLines(); }
+    else if (e.target.closest('.cl-who')) { casterLines = collectCasterLines(); casterLines[i].who = casterLines[i].who === 2 ? 1 : 2; renderCasterLines(); }
+  });
+  $('caster-add').onclick = () => { casterLines = collectCasterLines(); const last = casterLines[casterLines.length - 1]; casterLines.push({ t: last ? +last.t + 3 : 0, text: '', kind: 'line', priority: 2, who: 1 }); renderCasterLines(); $('caster-lines').querySelector('.caster-line:last-child .cl-text')?.focus(); };
+  $('caster-redo').onclick = async () => {
+    if (!casterH) return; $('caster-msg').textContent = 'writing…';
+    try { const r = await API.commentaryDraft(id, casterH.id, $('caster-duo').checked); casterLines = r.lines; renderCasterLines(); $('caster-msg').textContent = 'new script (not saved yet)'; }
+    catch (e) { $('caster-msg').textContent = e.message; }
+  };
+  async function saveCaster() {
+    casterLines = collectCasterLines().filter(l => l.text.trim());
+    const r = await API.saveCommentary(id, casterH.id, casterLines); casterLines = r.lines; renderCasterLines(); return r;
+  }
+  $('caster-save').onclick = async () => { try { await saveCaster(); $('caster-msg').textContent = 'saved'; } catch (e) { $('caster-msg').textContent = e.message; } };
+  $('caster-reset').onclick = async () => { try { await API.deleteCommentary(id, casterH.id); const r = await API.commentary(id, casterH.id); casterLines = r.lines; renderCasterLines(); $('caster-msg').textContent = 'saved script removed; showing a fresh automatic one'; } catch (e) { $('caster-msg').textContent = e.message; } };
+  $('caster-go').onclick = async () => {
+    try {
+      await saveCaster();
+      if (!videoFor(casterH)) { $('caster-msg').textContent = 'saved. Record this highlight first, then make the cinematic version.'; return; }
+      $('caster-go').disabled = true; $('caster-msg').textContent = 'starting…';
+      const st = await API.cineSettings();
+      const settings = { ...st.settings, cine_voice: true, cine_commentary: true };
+      const r = await API.cinematic(id, [casterH.id], settings);
+      $('caster-go').disabled = false; $('caster-modal').style.display = 'none';
+      toast(`🎙 Making the cinematic clip with commentary (${r.count} clip)… about a minute.`, 6000);
+      startCinePoll();
+    } catch (e) { $('caster-go').disabled = false; $('caster-msg').textContent = e.message; }
+  };
   // ---- cinematic (slow-motion + music) -------------------------------------------------------------
   const CINE_NUM = ['cine_slow', 'cine_game_volume', 'cine_music_volume', 'cine_trim_lead', 'cine_fast', 'cine_voice_volume'];
   const CINE_STR = ['cine_kills', 'cine_music', 'cine_trim'];
@@ -550,7 +602,6 @@
     settings.cine_tts_voice = $('voice-voice').value || '';
     return settings;
   }
-  let cinePoll = null;
   $('cine-go').onclick = async () => {
     try {
       const which = $('cine-which-sel').checked ? 'sel' : 'all';
@@ -562,6 +613,10 @@
       $('cine-go').disabled = false; $('cine-msg').textContent = '';
       $('music-modal').style.display = 'none';
       toast(`Processing ${r.count} clip(s)… about half a minute per clip (longer with smooth frames).`, 5000);
+      startCinePoll();
+    } catch (e) { $('cine-go').disabled = false; $('cine-msg').textContent = e.message; }
+  };
+  function startCinePoll() {
       if (cinePoll) clearInterval(cinePoll);
       cinePoll = setInterval(async () => {
         const st = await API.recordStatus().catch(() => null); const c = st?.cinematic;
@@ -570,8 +625,7 @@
         $('recstatus').innerHTML = c.status === 'running' ? `✨ cinematic ${c.done + 1}/${c.total}: ${esc(c.current)}<span class="progress"><div style="width:${Math.round(100 * c.done / c.total)}%"></div></span>` : c.status === 'error' ? `cinematic failed: ${esc(c.error)}` : `✨ cinematic done: ${c.total} clip(s)`;
         if (c.status !== 'running') { clearInterval(cinePoll); cinePoll = null; await loadVideos(); renderHighlights(); }
       }, 2000);
-    } catch (e) { $('cine-go').disabled = false; $('cine-msg').textContent = e.message; }
-  };
+  }
   $('btn-export').onclick = async () => {
     try { const r = await API.exportVideos(id); toast(`${r.count} file(s) saved to <b>${esc(r.folder)}</b>`, 6000); }
     catch (e) { toast(`<b>Export failed:</b> ${esc(e.message)}`); }

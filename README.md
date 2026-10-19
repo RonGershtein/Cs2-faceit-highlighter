@@ -101,6 +101,13 @@ highlights you ticked (those are remade). A `reel_cinematic.mp4` of all cinemati
 - **Effects:** zoom punch and flash on each kill, vignette and colour grade, fade in/out.
 - **Text:** a title card for the first seconds (TRIPLE KILL / ACE / 1v3 CLUTCH, then "3K · map · round") and a kill counter.
   Uses Bahnschrift or Arial from Windows; drop any `.ttf` into `assets/fonts/` to use that instead.
+- **Full caster:** the 🎙 button on a highlight writes a complete play-by-play from the demo events (who killed whom with
+  what, headshots, through smoke, how many were left, bomb planted or defused, the clutch situation) for two casters: one
+  calls the action, the other reacts. No language model, just a few hundred phrasings picked at random. Edit any line, change
+  who says it, delete or add lines, write it again, then "Save & make the cinematic clip": the lines are spoken with the two
+  generated voices, scheduled so they never overlap (less important lines are dropped in dense moments), the music ducks
+  under them, and your real "after the final kill" cut is still used for the payoff. Nicknames a voice cannot pronounce
+  become "our man"; set `"say": "Ron"` for a player in `data/players.json` to have the casters use a spoken name.
 - **Player card:** a round avatar with the player's nickname at the bottom left, like a pro-match lower third. Photos go in
   `data/players/<steam64>.png` (or .jpg); without one a blank circle with the initial is shown. Optional `data/players.json`
   (`{"<steam64>": {"name": "nickname", "photo": "file.png"}}`) overrides the in-game name.
