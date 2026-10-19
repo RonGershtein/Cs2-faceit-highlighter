@@ -142,3 +142,29 @@ def test_fesc_escapes_filtergraph_specials():
     assert c._fesc("C:\\Windows\\Fonts\\a.ttf") == "C\\\\:/Windows/Fonts/a.ttf"   # ':' survives both parsing stages
     assert c._fesc("a,b;c[d]") == r"a\,b\;c\[d\]"
     assert c._fesc("it's") == "it\\\\\\'s"
+
+
+def test_voice_overrun_and_pad_in_filter(tmp_path):
+    a, b = tmp_path / "a.mp3", tmp_path / "b.mp3"
+    voices = [(a, 0.3), (b, 19.5)]
+    assert c.voice_overrun(voices, {a: 1.0, b: 3.0}, 22.7) == pytest.approx(0.8)
+    assert c.voice_overrun(voices, {a: 1.0, b: 1.0}, 22.7) < 0
+    assert c.voice_overrun([], {}, 10.0) < 0
+    segs = [(0.0, 5.0, 1.0)]
+    g = c.build_filter(segs, fps=60, width=1280, height=720, smooth=False, kills=[], impact=False, look=False, fade=True,
+                       has_music=False, game_vol=1, music_vol=1, texts=[], voices=[4.0], pad=1.5)
+    assert "[vcc]tpad=stop_mode=clone:stop_duration=1.500[vc0]" in g and "[acc]apad=pad_dur=1.500[ac0]" in g
+    assert "fade=t=out:st=5.800" in g      # fades use the padded length (5 + 1.5 - 0.7)
+
+
+def test_plan_voices_keeps_the_same_files_when_replanned(tmp_path, monkeypatch):
+    from backend import voice
+    monkeypatch.setattr(voice, "VOICE_DIR", tmp_path)
+    for slot in ("start", "final"):
+        (tmp_path / slot).mkdir()
+        for n in ("x.mp3", "y.mp3"):
+            (tmp_path / slot / n).write_bytes(b"x")
+    first = c.plan_voices([(0.0, 10.0, 1.0)], [4.0], 10.0)
+    again = c.plan_voices([(0.0, 14.0, 1.0)], [4.0], 14.0, choice=first)
+    assert [p for p, _ in again] == [p for p, _ in first]
+    assert [t for _, t in again] == [0.3, 4.4]

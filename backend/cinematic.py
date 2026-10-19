@@ -400,12 +400,12 @@ def _impact(kills_rel: list[float], fps: float) -> str:
 def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth: bool, kills: list[float],
                  impact: bool, look: bool, fade: bool, has_music: bool, game_vol: float, music_vol: float,
                  texts: list[dict], voices: list[float] | None = None, voice_vol: float = 1.0,
-                 card: dict | None = None) -> str:
+                 card: dict | None = None, pad: float = 0.0) -> str:
     """texts: [{"file": Path, "size": int, "x": str, "y": str, "alpha": str|None, "enable": str|None, "font": Path}]
     voices: output-time offsets of the extra audio inputs that follow the clip (and the music, when there is one).
     card: {"idx": input index of the photo or None, "d": avatar px, "x", "y", "initial": Path|None, "font": Path}
     for the circular player card, shown with the title card."""
-    total = total_duration(segs)
+    total = total_duration(segs) + pad
     parts, labels = [], []
     for i, (a, b, s) in enumerate(segs):
         v = f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS"
@@ -422,7 +422,12 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
         parts.append(v + f"[v{i}]")
         parts.append(au + f"[a{i}]")
         labels.append(f"[v{i}][a{i}]")
-    parts.append("".join(labels) + f"concat=n={len(segs)}:v=1:a=1[vc0][ac0]")
+    if pad > 0:
+        parts.append("".join(labels) + f"concat=n={len(segs)}:v=1:a=1[vcc][acc]")
+        parts.append(f"[vcc]tpad=stop_mode=clone:stop_duration={pad:.3f}[vc0]")   # hold the last frame
+        parts.append(f"[acc]apad=pad_dur={pad:.3f}[ac0]")
+    else:
+        parts.append("".join(labels) + f"concat=n={len(segs)}:v=1:a=1[vc0][ac0]")
     cur = "[vc0]"
     if look:
         parts.append(f"{cur}eq=contrast=1.06:saturation=1.18:gamma=0.98,vignette=angle=PI/4.6[vl]")
@@ -553,23 +558,32 @@ def voice_prefs(highlight: dict | None) -> list[str]:
     return [typ] if typ in voice.TYPE_SUBS else []
 
 
-def plan_voices(segs: list[Seg], kills: list[float], total: float,
-                highlight: dict | None = None) -> list[tuple[Path, float]]:
+def voice_overrun(voices: list[tuple[Path, float]], durs: dict[Path, float], total: float, tail: float = 1.0) -> float:
+    """Seconds by which the latest voice line (plus a tail that clears the fade-out) runs past the end of the clip."""
+    return max((at + durs.get(pth, 0.0) + tail for pth, at in voices), default=0.0) - total
+
+
+def plan_voices(segs: list[Seg], kills: list[float], total: float, highlight: dict | None = None,
+                choice: list[tuple[Path, float]] | None = None) -> list[tuple[Path, float]]:
     """(file, output time) of the voice lines: a 'start' line at the beginning, a 'kill' line on every kill but
     the last, a 'final' line right after the final kill. Lines from the sub-folder that matches the highlight
     (its type, or the kill number) are preferred; slots without files are silent."""
     out: list[tuple[Path, float]] = []
     prefs = voice_prefs(highlight)
-    p = voice.pick("start", prefs)
+    picked = iter([pth for pth, _ in choice]) if choice is not None else None
+
+    def pick(slot: str, prefer: list[str]) -> Path | None:
+        return next(picked, None) if picked is not None else voice.pick(slot, prefer)
+    p = pick("start", prefs)
     if p:
         out.append((p, 0.3))
     ks = sorted(kills)
     for j, k in enumerate(ks[:-1], start=1):
-        p = voice.pick("kill", [str(j)])
+        p = pick("kill", [str(j)])
         if p:
             out.append((p, min(total, out_time(segs, k) + 0.15)))
     if ks:
-        p = voice.pick("final", prefs)
+        p = pick("final", prefs)
         if p:
             out.append((p, min(total, out_time(segs, ks[-1]) + 0.4)))
     return out
@@ -587,12 +601,31 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     mode = opts.get("cine_trim", "off")
     keep = keep_windows(kills, duration, lead=float(opts.get("cine_trim_lead", 2.0))) if mode in ("cut", "fast") \
         else [(0.0, duration)]
-    segs = speed_segments(slow_kills, keep, slow, ramp=bool(opts.get("cine_ramp")))
-    if mode == "fast":
-        segs = fill_gaps(segs, duration, float(opts.get("cine_fast", 6.0)))
-    if not segs:
-        segs = [(0.0, duration, 1.0)]
-    total_out = total_duration(segs)
+
+    def plan(keep_windows_: list[tuple[float, float]]) -> list[Seg]:
+        sg = speed_segments(slow_kills, keep_windows_, slow, ramp=bool(opts.get("cine_ramp")))
+        if mode == "fast":
+            sg = fill_gaps(sg, duration, float(opts.get("cine_fast", 6.0)))
+        return sg or [(0.0, duration, 1.0)]
+    segs = plan(keep)
+    voices = plan_voices(segs, kills, total_duration(segs), highlight) if opts.get("cine_voice") else []
+    pad = 0.0
+    if voices:
+        # let the last voice line finish: keep more real footage after the final kill when the recording has it,
+        # otherwise hold the last frame (pad)
+        durs = {pth: probe_duration(ffprobe, pth) for pth, _ in voices}
+        for _ in range(4):
+            need = voice_overrun(voices, durs, total_duration(segs))
+            if need <= 0.05:
+                break
+            if mode in ("cut", "fast") and keep[-1][1] < duration - 0.05:
+                keep[-1] = (keep[-1][0], min(duration, keep[-1][1] + need * 1.2))
+                segs = plan(keep)
+                voices = plan_voices(segs, kills, total_duration(segs), highlight, choice=voices)
+            else:
+                pad = need
+                break
+    total_out = total_duration(segs) + pad
     has_music = music is not None and music.exists()
     want_text = opts.get("cine_title") or opts.get("cine_counter") or (opts.get("cine_card") and card)
     font = find_font() if want_text else None
@@ -603,7 +636,6 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     offset = 0.0
     if has_music and opts.get("cine_music_sync") and slow_kills:
         offset = music_offset(ffmpeg, music, out_time(segs, slow_kills[0]), total_out)
-    voices = plan_voices(segs, kills, total_out, highlight) if opts.get("cine_voice") else []
     args = [str(ffmpeg), "-y", "-i", str(src)]
     if has_music:
         args += ["-stream_loop", "-1"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + ["-i", str(music)]
@@ -617,7 +649,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
                          fade=bool(opts.get("cine_fade")), has_music=has_music,
                          game_vol=float(opts["cine_game_volume"]), music_vol=float(opts["cine_music_volume"]), texts=texts,
                          voices=[at for _, at in voices], voice_vol=float(opts.get("cine_voice_volume", 1.0)),
-                         card=card_spec)
+                         card=card_spec, pad=pad)
     args += ["-filter_complex", graph, "-map", "[vc]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast",
              "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
              "-t", f"{total_out:.3f}", str(dst)]
@@ -638,7 +670,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     if want_text and not font:
         effects.append("no font found: text overlays skipped")
     if voices:
-        effects.append(f"{len(voices)} voice line(s)")
+        effects.append(f"{len(voices)} voice line(s)" + (f", held last frame {pad:.1f}s" if pad > 0 else ""))
     return {"seconds": round(total_out, 1), "slow_segments": sum(1 for s in segs if s[2] < 0.999),
             "dead_seconds": round(duration - sum(b - a for a, b in keep), 1), "music": music.name if has_music else None,
             "music_offset": round(offset, 1), "effects": effects, "encode_time": round(time.time() - t0, 1)}
