@@ -666,7 +666,8 @@
           const pct = Math.round(100 * (c.progress ?? (c.done / c.total)));
           const stage = c.stage === 'encoding' ? `encoding ${Math.round(100 * Math.max(0, ((c.clip_progress ?? 0) - 0.15) / 0.85))}%` : (c.stage || 'working');
           const eta = c.eta == null ? '' : c.eta < 5 ? ' · almost done' : c.eta < 60 ? ` · about ${Math.round(c.eta / 5) * 5} s left` : ` · about ${Math.ceil(c.eta / 60)} min left`;
-          $('recstatus').innerHTML = `✨ Working on your cinematic video… ${c.total > 1 ? `clip ${c.done + 1}/${c.total} · ` : ''}${esc(stage)}${eta}<span class="progress live"><div style="width:${Math.max(2, pct)}%"></div></span>`;
+          $('recstatus').innerHTML = `✨ Working on your cinematic video… ${c.total > 1 ? `clip ${c.done + 1}/${c.total} · ` : ''}${esc(stage)}${eta} <button class="small ghost" id="cine-cancel" title="stop the cinematic job">✕ cancel</button><span class="progress live"><div style="width:${Math.max(2, pct)}%"></div></span>`;
+          $('cine-cancel').onclick = async () => { try { await API.cineCancel(); } catch (_) { /* ignore */ } };
         } else {
           $('recstatus').innerHTML = c.status === 'error' ? `cinematic failed: ${esc(c.error)}` : `✨ cinematic done: ${c.total} clip(s)`;
         }

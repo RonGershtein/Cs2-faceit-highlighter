@@ -35,6 +35,7 @@ const API = (() => {
     deleteLongVideo: (id, name) => json(`/api/demos/${id}/videos/long/${encodeURIComponent(name)}`, { method: 'DELETE' }),
     cinematic: (id, highlight_ids, settings) => post(`/api/demos/${id}/videos/cinematic`, { highlight_ids, settings }),
     cineSettings: () => get('/api/cinematic/settings'),
+    cineCancel: () => post('/api/cinematic/cancel', {}),
     commentary: (id, hid) => get(`/api/demos/${id}/highlights/${hid}/commentary`),
     commentaryDraft: (id, hid, duo) => post(`/api/demos/${id}/highlights/${hid}/commentary/draft`, { duo }),
     saveCommentary: (id, hid, lines) => json(`/api/demos/${id}/highlights/${hid}/commentary`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }) }),

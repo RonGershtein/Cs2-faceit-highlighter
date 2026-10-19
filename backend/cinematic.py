@@ -618,9 +618,18 @@ def plan_voices(segs: list[Seg], kills: list[float], total: float, highlight: di
 def run_ffmpeg_with_progress(args: list[str], total_seconds: float, on_fraction) -> tuple[int, str]:
     """Run an ffmpeg command, reporting the encoded position as a fraction of `total_seconds` through
     `-progress pipe:1`. Returns (return code, stderr tail)."""
+    import threading
     cmd = list(args)
-    cmd[1:1] = ["-nostats", "-progress", "pipe:1"]     # right after the executable, before -y
+    cmd[1:1] = ["-v", "error", "-nostats", "-progress", "pipe:1"]     # right after the executable, before -y
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    _running_procs.add(proc)
+    err_chunks: list[str] = []
+
+    def drain() -> None:   # stderr must be read concurrently or ffmpeg blocks once the pipe buffer is full
+        for chunk in proc.stderr:
+            err_chunks.append(chunk)
+    t = threading.Thread(target=drain, daemon=True)
+    t.start()
     last = -1.0
     try:
         for line in proc.stdout:   # key=value lines; out_time_us advances as frames are written
@@ -633,8 +642,25 @@ def run_ffmpeg_with_progress(args: list[str], total_seconds: float, on_fraction)
                     last = frac
                     on_fraction(frac)
     finally:
-        _, err = proc.communicate()
-    return proc.returncode, err or ""
+        proc.wait()
+        t.join(timeout=5)
+        _running_procs.discard(proc)
+    return proc.returncode, "".join(err_chunks)[-4000:]
+
+
+_running_procs: set = set()
+
+
+def cancel_running_ffmpeg() -> int:
+    """Terminate every ffmpeg started through run_ffmpeg_with_progress (used to abort a cinematic job)."""
+    n = 0
+    for proc in list(_running_procs):
+        try:
+            proc.kill()
+            n += 1
+        except OSError:
+            pass
+    return n
 
 
 def caster_lines(cplan: dict, voices: list[tuple[Path, float]]) -> list[str]:

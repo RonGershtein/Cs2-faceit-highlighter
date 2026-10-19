@@ -628,11 +628,35 @@ def cinematic_status() -> dict | None:
     return dict(_cine_job) if _cine_job else None
 
 
+_cine_thread: threading.Thread | None = None
+
+
+def cinematic_busy() -> bool:
+    """True while a cinematic job is really running (a job whose thread died is cleared, not kept forever)."""
+    global _cine_job
+    if not (_cine_job and _cine_job.get("status") == "running"):
+        return False
+    if _cine_thread is not None and not _cine_thread.is_alive():
+        _cine_job.update({"status": "error", "error": "the job stopped unexpectedly"})
+        return False
+    return True
+
+
+def cancel_cinematic() -> dict:
+    """Abort the running cinematic job: kill its ffmpeg, mark the job cancelled."""
+    from . import cinematic as cine
+
+    killed = cine.cancel_running_ffmpeg()
+    if _cine_job and _cine_job.get("status") == "running":
+        _cine_job.update({"status": "error", "error": "cancelled", "stage": "cancelled", "eta": 0})
+    return {"ok": True, "killed": killed}
+
+
 def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = None) -> dict:
     """Process the given clips in a background thread; `overrides` are cine_* options on top of config.toml."""
-    global _cine_job
-    if _cine_job and _cine_job.get("status") == "running":
-        raise RuntimeError("cinematic processing already running")
+    global _cine_job, _cine_thread
+    if cinematic_busy():
+        raise RuntimeError("a cinematic job is already running; wait for it to finish or cancel it")
     _cine_job = {"demo_id": demo_id, "status": "running", "total": len(videos), "done": 0, "current": videos[0]["file"],
                  "error": None, "stage": "starting", "clip_progress": 0.0, "progress": 0.0, "eta": None,
                  "started": time.time()}
@@ -644,6 +668,8 @@ def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = N
         clip_times: list[float] = []
         try:
             for i, v in enumerate(videos):
+                if _cine_job.get("status") != "running":
+                    return
                 t_clip = time.time()
                 _cine_job.update({"current": v["file"], "done": i, "stage": "starting", "clip_progress": 0.0})
 
@@ -694,8 +720,11 @@ def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = N
                         pass
             _cine_job.update({"status": "done", "done": len(videos), "stage": "done", "progress": 1.0, "eta": 0})
         except Exception as e:  # noqa: BLE001
+            if _cine_job.get("error") == "cancelled":
+                return
             traceback.print_exc()
             _cine_job.update({"status": "error", "error": str(e)})
 
-    threading.Thread(target=run, daemon=True, name="cinematic").start()
+    _cine_thread = threading.Thread(target=run, daemon=True, name="cinematic")
+    _cine_thread.start()
     return dict(_cine_job)

@@ -304,6 +304,12 @@ def record_status():
     return st
 
 
+@app.post("/api/cinematic/cancel")
+def cinematic_cancel():
+    """Abort the running cinematic job (kills its ffmpeg)."""
+    return _rec().cancel_cinematic()
+
+
 @app.post("/api/record/cancel")
 def record_cancel():
     _rec().cancel()
@@ -365,7 +371,10 @@ def make_cinematic_videos(demo_id: str, body: CineIn):
     opts = cine.options(overrides=body.settings or {})
     if body.settings:
         cfgmod.update(**{k: opts[k] for k in cine.OPTION_KEYS if k in body.settings})
-    r.start_cinematic(demo_id, todo, opts)
+    try:
+        r.start_cinematic(demo_id, todo, opts)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
     return {"ok": True, "count": len(todo), "music": [m.name for m in cine.music_files()], "music_dir": str(cine.MUSIC_DIR)}
 
 
