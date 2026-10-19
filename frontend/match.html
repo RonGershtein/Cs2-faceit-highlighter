@@ -170,12 +170,11 @@
         <optgroup label="highlight type (start / final)"><option value="ace">ace</option><option value="clutch">clutch</option><option value="multikill">multikill (2K-4K)</option><option value="knife">knife kill</option><option value="ninja_defuse">ninja defuse</option></optgroup>
         <optgroup label="kill number (on each kill)"><option value="2">2nd kill</option><option value="3">3rd kill</option><option value="4">4th kill</option><option value="5">5th kill</option></optgroup></select></div>
     <div id="voice-tts" class="row" style="flex-wrap:wrap;align-items:center">
-      <input type="text" id="voice-text" placeholder="type a line, e.g. Are you kidding me?!" maxlength="200">
+      <input type="text" id="voice-text" list="voice-presets" placeholder="type a line, e.g. Are you kidding me?!" maxlength="200"><datalist id="voice-presets"></datalist>
       <select id="voice-slot"><option value="start">at the start</option><option value="kill">on each kill</option><option value="final" selected>after the final kill</option></select>
       <select id="voice-voice" title="voice for generated lines"></select>
       <label class="opt" style="margin:0" title="broadcast compression, a little arena echo and a crowd bed under the voice"><input type="checkbox" id="cine_tts_fx"> stadium sound</label>
-      <button class="small" id="voice-gen" title="generate this line with the Windows voice">🗣 Generate</button>
-      <button class="small" id="voice-gen-all" title="generate every built-in caster line">Generate the caster lines</button>
+      <button class="small" id="voice-gen" title="generate this line with the selected voice (the text box offers a few famous caster lines)">🗣 Generate</button>
     </div>
     <span class="hint" id="voice-tts-hint" style="display:none">generating lines from text needs Windows</span>
     <span class="hint" id="voice-dir"></span>

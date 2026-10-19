@@ -240,21 +240,31 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
         if start < prev_end + tickrate:
             start = prev_end + tickrate
         end = max(end, start + tickrate)
-        setup = max(96, start - int(0.75 * tickrate))
+        setup = max(96, start - 2 * tickrate)      # 2 s of pre-roll after the seek so the spectator switch sticks
         jump_from = 100 if i == 1 else prev_end + 16
         folder = raw_dir / f"seq{i}"
         rel = hlae_rel_name(demo_id_for_cfg, i)
         player = names.get(str(h["player"]), h.get("player_name", ""))
         token = player.split()[0] if player else ""
+        try:   # Steam3 account id: robust against names CS2 cannot match (spaces, symbols)
+            acc = int(h["player"]) - 76561197960265728
+        except (TypeError, ValueError, KeyError):
+            acc = 0
+        spec = (f"spec_mode 1; spec_player_by_accountid {acc}; spec_player {token}" if acc > 0
+                else f"spec_mode 1; spec_player {token}")
         name = f"{i:02d}_{_safe(h['type'])}_r{h['round']}_{_safe(player, 16)}"
         preset = f"p{i}"
         lines += [
             f'mirv_streams settings add ffmpeg {preset} "-c:v libx264 -preset veryfast -crf {crf} -pix_fmt yuv420p '
             f'{{QUOTE}}{_fwd(folder)}\\\\video.mp4{{QUOTE}}"',
             f'alias hl_s{i} "mirv_streams record name {rel}; mirv_streams record screen settings {preset}; '
-            f'spec_mode 1; spec_player {token}; echo [cs2watcher] seq {i} ready"',
+            f'{spec}; echo [cs2watcher] seq {i} ready"',
+            f'alias hl_p{i} "{spec}"',
             f"mirv_cmd addAtTick {jump_from} demo_gototick {setup - 1}",
             f"mirv_cmd addAtTick {setup} hl_s{i}",
+            # the seek can swallow the first spectator switch (CS2 is still rebuilding entities): repeat it
+            f"mirv_cmd addAtTick {setup + tickrate // 2} hl_p{i}",
+            f"mirv_cmd addAtTick {max(setup + 1, start - 8)} hl_p{i}",
             f"mirv_cmd addAtTick {start} mirv_streams record start",
             f"mirv_cmd addAtTick {end} mirv_streams record end",
         ]

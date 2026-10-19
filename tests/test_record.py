@@ -13,11 +13,13 @@ def test_build_cfg_schedules_in_order_and_quits():
     names = {"76561198000000001": "Some One"}
     text, seqs = build_cfg(hs, Path("C:/x/raw"), names, {"record_fps": 60, "record_crf": 20}, 64)
     assert "mirv_cmd clear" in text and "mirv_cmd enabled 1" in text
-    assert "mirv_cmd addAtTick 100 demo_gototick 4951" in text          # first jump from tick 100 to setup-1
-    assert "mirv_cmd addAtTick 4952 hl_s1" in text
+    assert "mirv_cmd addAtTick 100 demo_gototick 4871" in text          # first jump from tick 100 to setup-1 (2 s pre-roll)
+    assert "mirv_cmd addAtTick 4872 hl_s1" in text
+    assert "mirv_cmd addAtTick 4904 hl_p1" in text and "mirv_cmd addAtTick 4992 hl_p1" in text   # spectator switch repeated
+    assert "spec_player_by_accountid 39734273;" in text                 # 76561198000000001 -> Steam3 account id
     assert "mirv_cmd addAtTick 5000 mirv_streams record start" in text
     assert "mirv_cmd addAtTick 5600 mirv_streams record end" in text
-    assert "mirv_cmd addAtTick 5616 demo_gototick 8951" in text         # next jump 16 ticks after previous end
+    assert "mirv_cmd addAtTick 5616 demo_gototick 8871" in text         # next jump 16 ticks after previous end (2 s pre-roll)
     assert text.rstrip().splitlines()[-2] == "mirv_cmd addAtTick 9628 quit"
     assert "spec_player Some;" in text                                  # first token of the name
     assert "{QUOTE}C:/x/raw/seq1\\\\video.mp4{QUOTE}" in text

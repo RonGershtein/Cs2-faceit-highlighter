@@ -490,7 +490,7 @@
     const tts = !!v?.tts;
     $('voice-tts').style.display = tts ? '' : 'none';
     $('voice-tts-hint').style.display = tts ? 'none' : '';
-    $('voice-gen-all').style.display = (v?.presets || []).length ? '' : 'none';
+    $('voice-presets').innerHTML = (v?.presets || []).map(o => `<option value="${esc(o.text)}">`).join('');
     const vs = $('voice-voice'); const cur = (cineInfo?.settings?.cine_tts_voice) || vs.value || '';
     vs.innerHTML = (v?.tts_voices || []).map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('');
     if ([...vs.options].some(o => o.value === cur)) vs.value = cur;
@@ -540,29 +540,6 @@
     try { await API.voiceTts(text, $('voice-slot').value, $('voice-sub').value, $('voice-voice').value, $('cine_tts_fx').checked); $('voice-text').value = ''; $('cine-msg').textContent = ''; await reloadVoice(); }
     catch (err) { $('cine-msg').textContent = err.message; }
     $('voice-gen').disabled = false;
-  };
-  $('voice-gen-all').onclick = async () => {
-    const presets = cineInfo?.voice?.presets || [];
-    $('voice-gen-all').disabled = true; $('voice-gen').disabled = true;
-    let failed = 0;
-    for (let i = 0; i < presets.length; i++) {
-      $('cine-msg').textContent = `generating ${i + 1}/${presets.length}: ${presets[i].text}`;
-      try { await API.voiceTts(presets[i].text, presets[i].slot, presets[i].sub || '', $('voice-voice').value, $('cine_tts_fx').checked); } catch (err) { failed++; toast(esc(err.message)); }
-    }
-    $('cine-msg').textContent = failed ? `${presets.length - failed} line(s) generated, ${failed} failed` : `${presets.length} line(s) generated`;
-    $('voice-gen-all').disabled = false; $('voice-gen').disabled = false;
-    await reloadVoice();
-  };
-  $('cine-join').onclick = async () => {
-    $('cine-join').disabled = true; $('cine-msg').textContent = 'joining the cinematic clips… this takes a minute or two';
-    try {
-      const r = await API.longVideo(id, null, true);
-      await loadVideos();
-      $('cine-msg').textContent = '';
-      $('music-modal').style.display = 'none';
-      toast(`🎬 <b>${esc(r.description)}</b> (${r.seconds}s) is in the list under the toolbar${r.exported ? ' and in your clips folder' : ''}.`, 7000);
-    } catch (e) { $('cine-msg').textContent = e.message; }
-    $('cine-join').disabled = false;
   };
   function collectCine() {
     const settings = {};
