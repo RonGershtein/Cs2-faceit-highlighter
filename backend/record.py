@@ -386,10 +386,15 @@ def concat_reencode_args(clips: list[dict], out: Path, width: int, height: int, 
     return args
 
 
-def pick_long_clips(index: dict, highlight_ids: list[int], cinematic: bool) -> list[dict]:
-    """Recorded clips for the given highlights, in match order; cinematic versions when asked and available."""
-    want = set(highlight_ids)
-    vids = sorted((v for v in index.get("videos", []) if v["highlight_id"] in want), key=lambda v: v["start_tick"])
+def pick_long_clips(index: dict, highlight_ids: list[int] | None, cinematic: bool) -> list[dict]:
+    """Recorded clips for the given highlights, in match order; cinematic versions when asked and available.
+    highlight_ids None -> every recorded clip (with cinematic=True: only the ones that have a cinematic version)."""
+    if highlight_ids is None:
+        vids = [v for v in index.get("videos", []) if v.get("cine") or not cinematic]
+    else:
+        want = set(highlight_ids)
+        vids = [v for v in index.get("videos", []) if v["highlight_id"] in want]
+    vids = sorted(vids, key=lambda v: v["start_tick"])
     clips = []
     for v in vids:
         use_cine = bool(cinematic and v.get("cine"))
@@ -401,8 +406,8 @@ def pick_long_clips(index: dict, highlight_ids: list[int], cinematic: bool) -> l
     return clips
 
 
-def compile_long_video(demo_id: str, highlight_ids: list[int], cinematic: bool = False) -> dict:
-    """Join the recorded clips of the selected highlights into one MP4 and register it in videos.json."""
+def compile_long_video(demo_id: str, highlight_ids: list[int] | None, cinematic: bool = False) -> dict:
+    """Join the recorded clips of the selected highlights (None = all) into one MP4 and register it in videos.json."""
     if not FFMPEG_EXE.exists():
         raise RuntimeError("FFmpeg is not installed (Install HLAE + FFmpeg)")
     out_dir = VIDEOS_DIR / demo_id
@@ -410,7 +415,8 @@ def compile_long_video(demo_id: str, highlight_ids: list[int], cinematic: bool =
     clips = pick_long_clips(index, highlight_ids, cinematic)
     clips = [c for c in clips if (out_dir / c["file"]).exists()]
     if len(clips) < 2:
-        raise RuntimeError("select at least two highlights that already have a recorded clip")
+        raise RuntimeError("at least two cinematic clips are needed" if highlight_ids is None and cinematic
+                           else "select at least two highlights that already have a recorded clip")
     cfg = load_config()
     out = out_dir / long_video_name(len(clips), cinematic)
     files = [out_dir / c["file"] for c in clips]
@@ -637,13 +643,15 @@ def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = N
             idx = videos_index(demo_id)
             cines = [{"file": v["cine"]} for v in idx["videos"] if v.get("cine")]
             if len(cines) > 1:
-                lst = VIDEOS_DIR / demo_id / "reel_cine_list.txt"
-                lst.write_text("".join(f"file '{(VIDEOS_DIR / demo_id / c['file']).as_posix()}'\n" for c in cines), encoding="utf-8")
+                cfg = load_config()
                 reel = VIDEOS_DIR / demo_id / "reel_cinematic.mp4"
-                r = subprocess.run([str(FFMPEG_EXE), "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy",
-                                    "-movflags", "+faststart", str(reel)], capture_output=True, text=True)
-                lst.unlink(missing_ok=True)
-                if r.returncode == 0:
+                clips = [{"path": VIDEOS_DIR / demo_id / v["cine"], "audio": True,
+                          "seconds": float((v.get("cine_info") or {}).get("seconds") or 0)}
+                         for v in sorted(idx["videos"], key=lambda v: v["start_tick"]) if v.get("cine")]
+                r = subprocess.run(concat_reencode_args(clips, reel, int(cfg.get("record_width", 1920)),
+                                                        int(cfg.get("record_height", 1080)), int(cfg.get("record_fps", 60)),
+                                                        int(cfg.get("record_crf", 20))), capture_output=True, text=True)
+                if r.returncode == 0 and reel.exists():
                     idx["reel_cine"] = {"file": reel.name, "size": reel.stat().st_size}
                     (VIDEOS_DIR / demo_id / "videos.json").write_text(json.dumps(idx, indent=1), encoding="utf-8")
                     try:

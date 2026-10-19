@@ -447,7 +447,9 @@
   function cineCounts() {
     const nAll = videos.videos.filter(v => !v.cine).length;
     const nSel = selectedHighlights().filter(h => videoFor(h)).length;
-    $('cine-n-all').textContent = nAll; $('cine-n-sel').textContent = nSel;
+    const nCine = videos.videos.filter(v => v.cine).length;
+    $('cine-n-all').textContent = nAll; $('cine-n-sel').textContent = nSel; $('cine-n-join').textContent = nCine;
+    $('cine-join').disabled = nCine < 2;
     $('cine-which-all').disabled = nAll === 0; $('cine-which-sel').disabled = nSel === 0;
     $('cine-which-sel').checked = nSel > 0; $('cine-which-all').checked = nSel === 0;
     return { nAll, nSel };
@@ -539,6 +541,17 @@
     $('cine-msg').textContent = failed ? `${presets.length - failed} line(s) generated, ${failed} failed` : `${presets.length} line(s) generated`;
     $('voice-gen-all').disabled = false; $('voice-gen').disabled = false;
     await reloadVoice();
+  };
+  $('cine-join').onclick = async () => {
+    $('cine-join').disabled = true; $('cine-msg').textContent = 'joining the cinematic clips… this takes a minute or two';
+    try {
+      const r = await API.longVideo(id, null, true);
+      await loadVideos();
+      $('cine-msg').textContent = '';
+      $('music-modal').style.display = 'none';
+      toast(`🎬 <b>${esc(r.description)}</b> (${r.seconds}s) is in the list under the toolbar${r.exported ? ' and in your clips folder' : ''}.`, 7000);
+    } catch (e) { $('cine-msg').textContent = e.message; }
+    $('cine-join').disabled = false;
   };
   function collectCine() {
     const settings = {};

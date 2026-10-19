@@ -101,3 +101,14 @@ def test_delete_clips_removes_files_and_index_entries(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(RuntimeError):
         rec.delete_clips("demo1", [5])
+
+
+def test_pick_long_clips_all_cinematic():
+    from backend.record import pick_long_clips
+    index = {"videos": [
+        {"highlight_id": 1, "file": "a.mp4", "start_tick": 5000, "seconds": 10.0, "audio": True},
+        {"highlight_id": 2, "file": "b.mp4", "start_tick": 9000, "seconds": 8.0, "audio": True, "cine": "b_cine.mp4", "cine_info": {"seconds": 12.5}},
+        {"highlight_id": 3, "file": "c.mp4", "start_tick": 1000, "seconds": 8.0, "audio": True, "cine": "c_cine.mp4", "cine_info": {"seconds": 9.0}},
+    ]}
+    assert [c["file"] for c in pick_long_clips(index, None, cinematic=True)] == ["c_cine.mp4", "b_cine.mp4"]
+    assert [c["file"] for c in pick_long_clips(index, None, cinematic=False)] == ["c.mp4", "a.mp4", "b.mp4"]

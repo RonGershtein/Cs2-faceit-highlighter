@@ -385,7 +385,7 @@ def delete_clips(demo_id: str, body: DeleteClipsIn):
 
 
 class LongIn(BaseModel):
-    highlight_ids: list[int]
+    highlight_ids: list[int] | None = None   # None -> every recorded clip (with cinematic: every cinematic clip)
     cinematic: bool = False
 
 
