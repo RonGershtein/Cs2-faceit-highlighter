@@ -41,10 +41,19 @@ def speakable(name: str) -> str | None:
         worst = max(worst, run)
     if vowels / len(letters) < 0.2 or worst >= 5 or len(letters) > 14:
         return None
-    # inner capitals (vALenk, InvviS) make a voice spell the letters: speak them as one lowercase word
-    if sum(1 for ch in n[1:] if ch.isupper()) >= 1:
-        n = n[0] + n[1:].lower()
     return n
+
+
+def for_speech(text: str) -> str:
+    """What the voice gets: mixed-case words (vALenk, InvviS, LufDomingo) spelled letter by letter by a TTS engine
+    become one lowercase word; all-caps shouts (ACE, CLUTCHES) are left alone."""
+    out = []
+    for w in text.split(" "):
+        core = w.strip("!?.,;:'\"")
+        if len(core) > 2 and any(ch.isupper() for ch in core[1:]) and any(ch.islower() for ch in core):
+            w = w.replace(core, core[0] + core[1:].lower())
+        out.append(w)
+    return " ".join(out)
 
 
 def spoken_names(meta_players: list[dict]) -> dict[str, str | None]:
@@ -227,8 +236,25 @@ def write_script(tl: dict, rng: random.Random | None = None, duo: bool = True) -
     return lines
 
 
+class _Picker:
+    """rng.choice that avoids repeating a phrase within one script while alternatives remain."""
+
+    def __init__(self, rng: random.Random):
+        self.rng, self.used = rng, set()
+
+    def choice(self, options: list[str]) -> str:
+        fresh = [o for o in options if o not in self.used] or list(options)
+        pick = self.rng.choice(fresh)
+        self.used.add(pick)
+        return pick
+
+    def random(self) -> float:
+        return self.rng.random()
+
+
 def _write_calls(tl: dict, rng: random.Random) -> list[dict]:
     """The play-by-play lines (who = 1)."""
+    rng = _Picker(rng)   # .choice -> no repeats; .random still needed below
     typ = tl["type"] if tl["type"] in INTRO else ("ace" if tl["n"] >= 5 else "multikill" if tl["n"] >= 2 else "kill")
     ctx = {"player": tl["player"], "n": tl["n"], "round": tl["round"]}
     lines = [{"t": 0.0, "text": _fmt(rng.choice(INTRO[typ]), ctx), "kind": "intro", "priority": 2,
@@ -282,6 +308,7 @@ COMMENTARY_RATE = "+25%"   # casters talk fast
 
 
 def tts_cached(text: str, voice_id: str, ffmpeg: Path | None, fx: bool, rate: str = COMMENTARY_RATE) -> Path:
+    text = for_speech(text)
     TTS_CACHE.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha1(f"{voice_id}|{int(fx)}|{rate}|{text}".encode("utf-8")).hexdigest()[:16]
     for ext in (".mp3", ".wav"):

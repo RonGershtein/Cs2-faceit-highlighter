@@ -73,7 +73,8 @@ def test_schedule_prefers_the_short_form_over_dropping():
 def test_speakable_names():
     assert caster.speakable("qwqwqwqwwqwq") is None          # no vowels -> spelled out by a voice
     assert caster.speakable("Sniiitch_") == "Sniiitch"
-    assert caster.speakable("vALenk") == "valenk" and caster.speakable("InvviS") == "Invvis"
+    assert caster.speakable("vALenk") == "vALenk" and caster.for_speech("vALenk takes it! ACE!") == "valenk takes it! ACE!"
+    assert caster.for_speech("And LufDomingo! One tap!") == "And Lufdomingo! One tap!"
     assert caster.speakable("s1mple") == "s1mple" and caster.speakable("holyshnizel") == "holyshnizel"
     assert caster.speakable("xXx_Pr0_xXx") is None and caster.speakable("Devqin") == "Devqin"
 
@@ -91,3 +92,12 @@ def test_script_without_a_speakable_name_uses_our_man():
     text = " ".join(l["text"] for l in caster.write_script(tl, random.Random(1)))
     assert "qwqwqwqwwqwq" not in text and "xxxxxxxx" not in text and "our man" in text.lower()
     assert "None" not in text
+
+
+def test_no_repeated_phrasing_in_one_script():
+    ev = _events()
+    ev["bomb"] += [{"type": "begindefuse", "tick": 2500, "round": 8, "player": "e2"}]
+    tl = caster.timeline(ev, _meta(), HL, 1000, 3000)
+    for seed in range(6):
+        lines = [l["text"] for l in caster.write_script(tl, random.Random(seed)) if l["kind"] == "bomb"]
+        assert len(lines) == len(set(lines)), lines
