@@ -97,8 +97,11 @@ highlights you ticked (those are remade). A `reel_cinematic.mp4` of all cinemati
   2 s before each kill. Nothing is re-recorded; the clip's kill ticks from the demo decide where the action is.
 - **Slow motion** on the final kill or every kill, with a speed ramp in and out.
 - **Effects:** zoom punch and flash on each kill, vignette and colour grade, fade in/out.
-- **Text:** a title card for the first seconds (TRIPLE KILL / ACE / 1v3 CLUTCH, then "3K · player · map · round") and a kill counter.
+- **Text:** a title card for the first seconds (TRIPLE KILL / ACE / 1v3 CLUTCH, then "3K · map · round") and a kill counter.
   Uses Bahnschrift or Arial from Windows; drop any `.ttf` into `assets/fonts/` to use that instead.
+- **Player card:** a round avatar with the player's nickname at the bottom left, like a pro-match lower third. Photos go in
+  `data/players/<steam64>.png` (or .jpg); without one a blank circle with the initial is shown. Optional `data/players.json`
+  (`{"<steam64>": {"name": "nickname", "photo": "file.png"}}`) overrides the in-game name.
 - **Music:** add MP3/M4A/WAV files (royalty-free if you plan to publish). A random track or the one you pick plays under the game sound.
   With "start the track at its drop" the app measures the track's loudness, finds the biggest sustained rise (the drop) and starts the
   music so the drop lands exactly on the slow-motion kill.

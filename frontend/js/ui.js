@@ -430,7 +430,7 @@
   // ---- cinematic (slow-motion + music) -------------------------------------------------------------
   const CINE_NUM = ['cine_slow', 'cine_game_volume', 'cine_music_volume', 'cine_trim_lead', 'cine_fast', 'cine_voice_volume'];
   const CINE_STR = ['cine_kills', 'cine_music', 'cine_trim'];
-  const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_voice'];
+  const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_card', 'cine_voice'];
   const VOICE_SLOTS = ['start', 'kill', 'final'];
   const VOICE_SUB_LABEL = { ace: 'ace', clutch: 'clutch', multikill: 'multikill', knife: 'knife', ninja_defuse: 'ninja', 2: '2nd kill', 3: '3rd kill', 4: '4th kill', 5: '5th kill' };
   let cineInfo = null;
@@ -460,7 +460,7 @@
     document.querySelectorAll('#music-modal input[type=range]').forEach(cineRangeLabel);
     const fontOk = info.font !== false;
     $('cine-font-warn').style.display = fontOk ? 'none' : '';
-    for (const k of ['cine_title', 'cine_counter']) { $(k).disabled = !fontOk; $(k + '-opt').classList.toggle('off', !fontOk); }
+    for (const k of ['cine_title', 'cine_counter', 'cine_card']) { $(k).disabled = !fontOk; $(k + '-opt').classList.toggle('off', !fontOk); }
     cinePaceVis();
   }
   function renderMusicList(files, dir) {

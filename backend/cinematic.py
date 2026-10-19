@@ -25,11 +25,16 @@ from .config import DATA_DIR, ROOT, load as load_config
 MUSIC_DIR = DATA_DIR / "music"
 MUSIC_EXT = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac", ".opus"}
 FONT_DIR = ROOT / "assets" / "fonts"   # drop any .ttf/.otf here to use it for the overlays
+PLAYERS_DIR = DATA_DIR / "players"     # <steam64>.png|jpg -> photo in the player card; players.json -> nicknames
+PLAYERS_JSON = DATA_DIR / "players.json"
+PHOTO_EXT = (".png", ".jpg", ".jpeg", ".webp")
+ACCENT = "0xf5a623"                    # ring colour of the player card (the app's orange)
+CARD_BG = "0x2a2f3a"                   # blank avatar colour
 
 # cine_* keys of config.toml that the UI can change per job (see options())
 OPTION_KEYS = ("cine_slow", "cine_kills", "cine_smooth", "cine_game_volume", "cine_music_volume", "cine_music",
                "cine_music_sync", "cine_trim", "cine_trim_lead", "cine_fast", "cine_ramp", "cine_impact", "cine_look",
-               "cine_fade", "cine_title", "cine_counter", "cine_voice", "cine_voice_volume")
+               "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice", "cine_voice_volume")
 TRIM_MODES = ("off", "cut", "fast")   # dead time between kills: keep / drop / fast-forward
 
 Seg = tuple[float, float, float]   # (start, end, speed) in source seconds; speed 1.0 = normal, 0.35 = slow motion
@@ -283,8 +288,8 @@ def pretty_map(name: str) -> str:
     return n.replace("_", " ").title() or "?"
 
 
-def title_for(h: dict, map_name: str = "") -> tuple[str, str]:
-    """(big label, sub line) of the title card for a highlight."""
+def title_for(h: dict, map_name: str = "", with_player: bool = True) -> tuple[str, str]:
+    """(big label, sub line) of the title card for a highlight. with_player=False leaves the name to the player card."""
     typ = str(h.get("type") or "")
     n = int(h.get("n") or len(h.get("kills") or []) or 0)
     if typ == "ace" or (typ == "multikill" and n >= 5):
@@ -299,7 +304,7 @@ def title_for(h: dict, map_name: str = "") -> tuple[str, str]:
         big = {2: "DOUBLE KILL", 3: "TRIPLE KILL", 4: "QUAD KILL"}.get(n, f"{n} KILLS")
     else:
         big = "KILL"
-    parts = [str(h.get("player_name") or "").strip() or "?"]
+    parts = [str(h.get("player_name") or "").strip() or "?"] if with_player else []
     if typ in ("multikill", "ace") and n >= 2:
         parts.insert(0, f"{n}K")
     if map_name:
@@ -307,6 +312,33 @@ def title_for(h: dict, map_name: str = "") -> tuple[str, str]:
     if h.get("round"):
         parts.append(f"round {h['round']}")
     return big, "  ·  ".join(parts)
+
+
+def player_card(h: dict | None) -> dict | None:
+    """{"name", "photo": Path|None, "steamid"} for the highlight's player. Nickname from data/players.json
+    ({steam64: {"name": ..., "photo": ...}}) when present, else the in-game name; photo data/players/<steam64>.<ext>."""
+    if not h:
+        return None
+    sid = str(h.get("player") or "")
+    name = str(h.get("player_name") or "").strip() or "?"
+    photo = None
+    try:
+        reg = json.loads(PLAYERS_JSON.read_text(encoding="utf-8")) if PLAYERS_JSON.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        reg = {}
+    entry = reg.get(sid) if isinstance(reg, dict) else None
+    if isinstance(entry, dict):
+        name = str(entry.get("name") or name).strip() or name
+        if entry.get("photo"):
+            cand = PLAYERS_DIR / Path(str(entry["photo"])).name
+            photo = cand if cand.is_file() else None
+    if photo is None and sid and PLAYERS_DIR.is_dir():
+        for ext in PHOTO_EXT:
+            cand = PLAYERS_DIR / f"{sid}{ext}"
+            if cand.is_file():
+                photo = cand
+                break
+    return {"name": name, "photo": photo, "steamid": sid}
 
 
 def _fesc(s: str) -> str:
@@ -367,9 +399,12 @@ def _impact(kills_rel: list[float], fps: float) -> str:
 
 def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth: bool, kills: list[float],
                  impact: bool, look: bool, fade: bool, has_music: bool, game_vol: float, music_vol: float,
-                 texts: list[dict], voices: list[float] | None = None, voice_vol: float = 1.0) -> str:
+                 texts: list[dict], voices: list[float] | None = None, voice_vol: float = 1.0,
+                 card: dict | None = None) -> str:
     """texts: [{"file": Path, "size": int, "x": str, "y": str, "alpha": str|None, "enable": str|None, "font": Path}]
-    voices: output-time offsets of the extra audio inputs that follow the clip (and the music, when there is one)."""
+    voices: output-time offsets of the extra audio inputs that follow the clip (and the music, when there is one).
+    card: {"idx": input index of the photo or None, "d": avatar px, "x", "y", "initial": Path|None, "font": Path}
+    for the circular player card, shown with the title card."""
     total = total_duration(segs)
     parts, labels = [], []
     for i, (a, b, s) in enumerate(segs):
@@ -388,15 +423,20 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
         parts.append(au + f"[a{i}]")
         labels.append(f"[v{i}][a{i}]")
     parts.append("".join(labels) + f"concat=n={len(segs)}:v=1:a=1[vc0][ac0]")
-    post = []
+    cur = "[vc0]"
     if look:
-        post.append("eq=contrast=1.06:saturation=1.18:gamma=0.98,vignette=angle=PI/4.6")
-    for t in texts:
-        post.append(_drawtext(t["font"], t["file"], t["size"], t["x"], t["y"], t.get("alpha"), t.get("enable")))
+        parts.append(f"{cur}eq=contrast=1.06:saturation=1.18:gamma=0.98,vignette=angle=PI/4.6[vl]")
+        cur = "[vl]"
+    if card:
+        parts += _card_chain(card, fps)
+        parts.append(f"{cur}[card]overlay=x={card['x']}:y={card['y']}:eof_action=pass:"
+                     f"enable='between(t\\,0\\,{TITLE_SECONDS:.2f})'[vcard]")
+        cur = "[vcard]"
+    post = [_drawtext(t["font"], t["file"], t["size"], t["x"], t["y"], t.get("alpha"), t.get("enable")) for t in texts]
     if fade:
         post.append(f"fade=t=in:st=0:d=0.5,fade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7")
     post.append(f"fps={fps:g}")   # constant frame rate: speed changes leave irregular timestamps behind
-    parts.append("[vc0]" + ",".join(post) + "[vc]")
+    parts.append(cur + ",".join(post) + "[vc]")
     ag = f"volume={game_vol:.2f}" if has_music else "anull"
     if fade:
         ag += f",afade=t=in:st=0:d=0.4,afade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7"
@@ -418,12 +458,38 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
     return ";".join(parts)
 
 
+def _circle_alpha(d: int) -> str:
+    r = d / 2
+    return f"a='if(lte((X-{r:.1f})*(X-{r:.1f})+(Y-{r:.1f})*(Y-{r:.1f})\\,{r * r:.1f})\\,255\\,0)'"
+
+
+def _card_chain(card: dict, fps: float) -> list[str]:
+    """Filter chains producing [card]: an orange ring with the photo (or a blank circle with the initial) inside,
+    fading in and out with the title card."""
+    d, ring = card["d"], card["d"] + 6
+    rgb = "r='r(X,Y)':g='g(X,Y)':b='b(X,Y)'"
+    if card.get("idx") is not None:
+        av = (f"[{card['idx']}:v]scale={d}:{d}:force_original_aspect_ratio=increase,crop={d}:{d},format=rgba,"
+              f"geq={rgb}:{_circle_alpha(d)}[av]")
+    else:
+        av = f"color=c={CARD_BG}:s={d}x{d}:r={fps:g},format=rgba"
+        if card.get("initial"):
+            av += "," + _drawtext(card["font"], card["initial"], int(d * 0.5), "(w-tw)/2", "(h-th)/2", color="white@0.9")
+        av += f",geq={rgb}:{_circle_alpha(d)}[av]"
+    return [av,
+            f"color=c={ACCENT}:s={ring}x{ring}:r={fps:g},format=rgba,geq={rgb}:{_circle_alpha(ring)}[ring]",
+            f"[ring][av]overlay=3:3:format=auto,fade=t=in:st=0:d=0.3:alpha=1,"
+            f"fade=t=out:st={TITLE_SECONDS - 0.5:.2f}:d=0.5:alpha=1[card]"]
+
+
 def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, title: tuple[str, str] | None,
-               counter: bool, font: Path, tmp_base: Path) -> tuple[list[dict], list[Path]]:
-    """Describe the drawtext calls (title card, kill counter). The texts are written to small files next to the
-    output (drawtext's textfile= needs no escaping); the caller deletes them after the encode."""
+               counter: bool, font: Path, tmp_base: Path, card: dict | None = None) -> tuple[list[dict], list[Path], dict | None]:
+    """Describe the drawtext calls (title card, player card texts, kill counter) and the player card geometry.
+    The texts are written to small files next to the output (drawtext's textfile= needs no escaping); the caller
+    deletes them after the encode. card: {"name", "photo"} -> returned spec has d/x/y/initial/idx(None)."""
     texts: list[dict] = []
     files: list[Path] = []
+    card_spec: dict | None = None
 
     def tf(s: str) -> Path:
         p = tmp_base.with_name(f"{tmp_base.name}.t{len(files)}.txt")
@@ -431,16 +497,35 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
         files.append(p)
         return p
     h = height
-    if title:
+    env = (f"if(lt(t,0.3),t/0.3,if(lt(t,{TITLE_SECONDS - 0.5:.2f}),1,"
+           f"if(lt(t,{TITLE_SECONDS:.2f}),({TITLE_SECONDS:.2f}-t)/0.5,0)))")
+    en = f"between(t,0,{TITLE_SECONDS:.2f})"
+    x0, bottom = int(h * 0.06), int(h * 0.11)        # left margin; bottom margin clears the demo playback bar
+    if card:
+        # lower third: [ring+avatar] NICKNAME / details, with the big label above it
+        d = int(h * 0.11)
+        ring = d + 6
+        cy = h - bottom - ring
+        name_px, det_px = int(h * 0.05), int(h * 0.026)
+        tx = x0 + ring + int(h * 0.016)
+        texts.append({"font": font, "file": tf(card["name"]), "size": name_px, "x": str(tx),
+                      "y": str(cy + int(ring * 0.12)), "alpha": env, "enable": en})
+        if title:
+            texts.append({"font": font, "file": tf(title[1]), "size": det_px, "x": str(tx),
+                          "y": str(cy + int(ring * 0.12) + name_px + 8), "alpha": env, "enable": en})
+            big_px = int(h * 0.075)
+            texts.append({"font": font, "file": tf(title[0]), "size": big_px, "x": str(x0),
+                          "y": str(cy - 12 - big_px), "alpha": env, "enable": en})
+        initial = (card["name"].strip()[:1] or "?").upper()
+        card_spec = {"d": d, "x": x0, "y": cy, "idx": None, "font": font,
+                     "initial": None if card.get("photo") else tf(initial)}
+    elif title:
         big, sub = title
-        big_px, sub_px, margin = int(h * 0.075), int(h * 0.028), int(h * 0.11)
-        env = (f"if(lt(t,0.3),t/0.3,if(lt(t,{TITLE_SECONDS - 0.5:.2f}),1,"
-               f"if(lt(t,{TITLE_SECONDS:.2f}),({TITLE_SECONDS:.2f}-t)/0.5,0)))")
-        en = f"between(t,0,{TITLE_SECONDS:.2f})"
-        texts.append({"font": font, "file": tf(big), "size": big_px, "x": str(margin),
-                      "y": str(h - margin - sub_px - 10 - big_px), "alpha": env, "enable": en})
-        texts.append({"font": font, "file": tf(sub), "size": sub_px, "x": str(margin),
-                      "y": str(h - margin - sub_px), "alpha": env, "enable": en})
+        big_px, sub_px = int(h * 0.075), int(h * 0.028)
+        texts.append({"font": font, "file": tf(big), "size": big_px, "x": str(x0),
+                      "y": str(h - bottom - sub_px - 10 - big_px), "alpha": env, "enable": en})
+        texts.append({"font": font, "file": tf(sub), "size": sub_px, "x": str(x0),
+                      "y": str(h - bottom - sub_px), "alpha": env, "enable": en})
     if counter and kills:
         outs = [out_time(segs, k) for k in sorted(kills)]
         num_px, lab_px, margin = int(h * 0.09), int(h * 0.024), int(h * 0.05)
@@ -454,7 +539,7 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
                           "y": str(margin), "alpha": f"min(1,(t-{o:.3f})/0.12)", "enable": f"between(t,{o:.3f},{end:.3f})"})
         texts.append({"font": font, "file": label, "size": lab_px, "x": f"w-tw-{margin}",
                       "y": str(margin + num_px + 2), "alpha": "0.85", "enable": f"gte(t,{outs[0]:.3f})"})
-    return texts, files
+    return texts, files, card_spec
 
 
 def voice_prefs(highlight: dict | None) -> list[str]:
@@ -492,7 +577,7 @@ def plan_voices(segs: list[Seg], kills: list[float], total: float,
 
 def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times: list[float], music: Path | None,
                    opts: dict, title: tuple[str, str] | None = None, fps_hint: float | None = None,
-                   crf: int = 20, highlight: dict | None = None) -> dict:
+                   crf: int = 20, highlight: dict | None = None, card: dict | None = None) -> dict:
     info = probe_video(ffprobe, src)
     duration, width, height = info["duration"], info["width"], info["height"]
     fps = info["fps"] or fps_hint or 60.0
@@ -509,9 +594,12 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         segs = [(0.0, duration, 1.0)]
     total_out = total_duration(segs)
     has_music = music is not None and music.exists()
-    font = find_font() if (opts.get("cine_title") or opts.get("cine_counter")) else None
-    texts, text_files = plan_texts(segs, kills, width=width, height=height, title=title if opts.get("cine_title") else None,
-                                   counter=bool(opts.get("cine_counter")), font=font, tmp_base=dst) if font else ([], [])
+    want_text = opts.get("cine_title") or opts.get("cine_counter") or (opts.get("cine_card") and card)
+    font = find_font() if want_text else None
+    texts, text_files, card_spec = plan_texts(
+        segs, kills, width=width, height=height, title=title if opts.get("cine_title") else None,
+        counter=bool(opts.get("cine_counter")), font=font, tmp_base=dst,
+        card=card if opts.get("cine_card") else None) if font else ([], [], None)
     offset = 0.0
     if has_music and opts.get("cine_music_sync") and slow_kills:
         offset = music_offset(ffmpeg, music, out_time(segs, slow_kills[0]), total_out)
@@ -521,11 +609,15 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         args += ["-stream_loop", "-1"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + ["-i", str(music)]
     for p, _ in voices:
         args += ["-i", str(p)]
+    if card_spec and card and card.get("photo"):
+        card_spec["idx"] = 1 + (1 if has_music else 0) + len(voices)
+        args += ["-loop", "1", "-framerate", f"{fps:g}", "-i", str(card["photo"])]
     graph = build_filter(segs, fps=fps, width=width, height=height, smooth=bool(opts.get("cine_smooth")), kills=kills,
                          impact=bool(opts.get("cine_impact")), look=bool(opts.get("cine_look")),
                          fade=bool(opts.get("cine_fade")), has_music=has_music,
                          game_vol=float(opts["cine_game_volume"]), music_vol=float(opts["cine_music_volume"]), texts=texts,
-                         voices=[at for _, at in voices], voice_vol=float(opts.get("cine_voice_volume", 1.0)))
+                         voices=[at for _, at in voices], voice_vol=float(opts.get("cine_voice_volume", 1.0)),
+                         card=card_spec)
     args += ["-filter_complex", graph, "-map", "[vc]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast",
              "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
              "-t", f"{total_out:.3f}", str(dst)]
@@ -539,9 +631,11 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         raise RuntimeError("ffmpeg failed: " + r.stderr[-800:])
     effects = [k[5:] for k in ("cine_ramp", "cine_impact", "cine_look", "cine_fade", "cine_title", "cine_counter")
                if opts.get(k)]
+    if card_spec:
+        effects.append("card" + (" (photo)" if card.get("photo") else " (no photo yet)"))
     if mode != "off":
         effects.insert(0, mode)
-    if (opts.get("cine_title") or opts.get("cine_counter")) and not font:
+    if want_text and not font:
         effects.append("no font found: text overlays skipped")
     if voices:
         effects.append(f"{len(voices)} voice line(s)")
@@ -589,10 +683,11 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
     src = videos_dir / demo_id / video["file"]
     dst = src.with_name(src.stem + "_cine.mp4")
     ctx = clip_context(demo_id, video["highlight_id"], int(video["start_tick"]), video.get("end_tick"))
-    title = title_for(ctx["highlight"], ctx["map"]) if ctx["highlight"] else None
+    card = player_card(ctx["highlight"]) if opts.get("cine_card") else None
+    title = title_for(ctx["highlight"], ctx["map"], with_player=card is None) if ctx["highlight"] else None
     info = make_cinematic(ffmpeg, ffprobe, src, dst, ctx["kills"], pick_music(opts), opts, title=title,
                           fps_hint=float(cfg.get("record_fps", 60)), crf=int(cfg.get("record_crf", 20)),
-                          highlight=ctx["highlight"])
+                          highlight=ctx["highlight"], card=card)
     video = dict(video)
     video["cine"] = dst.name
     video["cine_info"] = info

@@ -72,6 +72,8 @@ def test_find_drop_prefers_the_rise_that_fits_the_clip():
 def test_title_for():
     assert c.title_for({"type": "multikill", "n": 3, "player_name": "s1mple", "round": 12}, "de_mirage") == \
         ("TRIPLE KILL", "3K  ·  s1mple  ·  Mirage  ·  round 12")
+    assert c.title_for({"type": "multikill", "n": 3, "player_name": "s1mple", "round": 12}, "de_mirage", with_player=False)[1] == \
+        "3K  ·  Mirage  ·  round 12"
     assert c.title_for({"type": "ace", "n": 5, "player_name": "x", "round": 2}, "de_inferno")[0] == "ACE"
     assert c.title_for({"type": "clutch", "n": 3, "player_name": "x", "round": 2}, "")[0] == "1v3 CLUTCH"
     assert c.title_for({"type": "ninja_defuse", "player_name": "x"}, "de_nuke") == ("NINJA DEFUSE", "x  ·  Nuke")
@@ -88,8 +90,9 @@ def test_build_filter_structure(tmp_path):
     segs = [(0.0, 1.0, 6.0), (1.0, 3.0, 1.0), (3.0, 4.0, 0.35), (4.0, 5.0, 1.0)]
     f = tmp_path / "f.ttf"
     f.write_bytes(b"x")
-    texts, files = c.plan_texts(segs, [3.4], width=1920, height=1080, title=("ACE", "x  ·  Mirage"), counter=True,
-                                font=f, tmp_base=tmp_path / "out.mp4")
+    texts, files, card = c.plan_texts(segs, [3.4], width=1920, height=1080, title=("ACE", "x  ·  Mirage"), counter=True,
+                                      font=f, tmp_base=tmp_path / "out.mp4")
+    assert card is None
     g = c.build_filter(segs, fps=60, width=1920, height=1080, smooth=False, kills=[3.4], impact=True, look=True,
                        fade=True, has_music=True, game_vol=0.3, music_vol=0.7, texts=texts, voices=[0.3, 2.5])
     assert "concat=n=4:v=1:a=1" in g
@@ -102,6 +105,37 @@ def test_build_filter_structure(tmp_path):
     assert ",fps=60[vc]" in g
     assert len(files) == 4 and all(p.exists() for p in files)
     assert files[0].read_text(encoding="utf-8") == "ACE"
+
+
+def test_plan_texts_player_card_layout(tmp_path):
+    f = tmp_path / "f.ttf"
+    f.write_bytes(b"x")
+    segs = [(0.0, 5.0, 1.0)]
+    texts, files, card = c.plan_texts(segs, [], width=1920, height=1080, title=("1v3 CLUTCH", "Dust2  ·  round 8"),
+                                      counter=False, font=f, tmp_base=tmp_path / "o.mp4", card={"name": "ron", "photo": None})
+    assert card["d"] == 118 and card["idx"] is None and card["initial"].read_text(encoding="utf-8") == "R"
+    assert [p.read_text(encoding="utf-8") for p in files] == ["ron", "Dust2  ·  round 8", "1v3 CLUTCH", "R"]
+    assert int(texts[2]["y"]) < card["y"] < int(texts[0]["y"])          # big label above the card, name inside it
+    g = c.build_filter(segs, fps=60, width=1920, height=1080, smooth=False, kills=[], impact=False, look=True, fade=False,
+                       has_music=False, game_vol=1, music_vol=1, texts=texts, card=card)
+    assert "color=c=0x2a2f3a:s=118x118" in g and "[ring][av]overlay=3:3" in g and "[vl][card]overlay=x=64:y=" in g
+    assert g.count("geq=") == 2 and "[vcard]drawtext=" in g
+    # with a photo the avatar comes from an input stream instead of a blank circle
+    card["idx"], card["initial"] = 3, None
+    g = c.build_filter(segs, fps=60, width=1920, height=1080, smooth=False, kills=[], impact=False, look=False, fade=False,
+                       has_music=False, game_vol=1, music_vol=1, texts=texts, card=card)
+    assert "[3:v]scale=118:118:force_original_aspect_ratio=increase,crop=118:118" in g and "[vc0][card]overlay" in g
+
+
+def test_player_card_lookup(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "PLAYERS_DIR", tmp_path)
+    monkeypatch.setattr(c, "PLAYERS_JSON", tmp_path / "players.json")
+    h = {"player": "765", "player_name": "ingame"}
+    assert c.player_card(h) == {"name": "ingame", "photo": None, "steamid": "765"}
+    (tmp_path / "765.jpg").write_bytes(b"x")
+    (tmp_path / "players.json").write_text('{"765": {"name": "Ron"}}', encoding="utf-8")
+    assert c.player_card(h) == {"name": "Ron", "photo": tmp_path / "765.jpg", "steamid": "765"}
+    assert c.player_card(None) is None
 
 
 def test_fesc_escapes_filtergraph_specials():

@@ -46,6 +46,7 @@ DEFAULTS: dict = {
     "cine_fade": True,         # fade in/out at the clip edges
     "cine_title": True,        # title card (3K / ACE / clutch, player, map, round)
     "cine_counter": True,      # kill counter in the corner
+    "cine_card": True,         # player card: round avatar (data/players/<steam64>.png, blank until added) + nickname
     "cine_voice": True,        # play voice lines from data/voice (start / kill / final) when there are any
     "cine_voice_volume": 1.0,
 }
