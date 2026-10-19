@@ -633,16 +633,39 @@ def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = N
     global _cine_job
     if _cine_job and _cine_job.get("status") == "running":
         raise RuntimeError("cinematic processing already running")
-    _cine_job = {"demo_id": demo_id, "status": "running", "total": len(videos), "done": 0, "current": videos[0]["file"], "error": None}
+    _cine_job = {"demo_id": demo_id, "status": "running", "total": len(videos), "done": 0, "current": videos[0]["file"],
+                 "error": None, "stage": "starting", "clip_progress": 0.0, "progress": 0.0, "eta": None,
+                 "started": time.time()}
 
     def run():
         global _cine_job
         from . import cinematic as cine
         ffprobe = FFMPEG_DIR / "bin" / "ffprobe.exe"
+        clip_times: list[float] = []
         try:
             for i, v in enumerate(videos):
-                _cine_job.update({"current": v["file"], "done": i})
-                nv = cine.cinematic_for_video(demo_id, v, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides)
+                t_clip = time.time()
+                _cine_job.update({"current": v["file"], "done": i, "stage": "starting", "clip_progress": 0.0})
+
+                def on_progress(stage: str, frac: float | None, i=i, t_clip=t_clip) -> None:
+                    # the encode is ~85 % of a clip's time; the preparation (speech, music analysis) the rest
+                    cp = 0.15 + 0.85 * frac if frac is not None else (0.1 if stage != "done" else 1.0)
+                    overall = (i + cp) / len(videos)
+                    elapsed = time.time() - t_clip
+                    per_clip = (sum(clip_times) / len(clip_times)) if clip_times else None
+                    if frac is not None and frac > 0.05:
+                        this_left = elapsed / cp * (1 - cp)
+                    elif per_clip:
+                        this_left = max(0.0, per_clip - elapsed)
+                    else:
+                        this_left = None
+                    rest = (len(videos) - i - 1) * (per_clip if per_clip else (elapsed / cp if (frac and frac > 0.2) else 60.0))
+                    eta = (this_left + rest) if this_left is not None else None
+                    _cine_job.update({"stage": stage, "clip_progress": round(cp, 3), "progress": round(overall, 3),
+                                      "eta": round(eta) if eta is not None else None})
+                nv = cine.cinematic_for_video(demo_id, v, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides,
+                                              progress=on_progress)
+                clip_times.append(time.time() - t_clip)
                 idx = videos_index(demo_id)
                 idx["videos"] = [nv if x["highlight_id"] == nv["highlight_id"] else x for x in idx["videos"]]
                 (VIDEOS_DIR / demo_id / "videos.json").write_text(json.dumps(idx, indent=1), encoding="utf-8")
@@ -653,6 +676,7 @@ def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = N
             idx = videos_index(demo_id)
             cines = [{"file": v["cine"]} for v in idx["videos"] if v.get("cine")]
             if len(cines) > 1:
+                _cine_job.update({"stage": "joining the cinematic reel", "clip_progress": 1.0, "progress": 0.98, "eta": 20})
                 cfg = load_config()
                 reel = VIDEOS_DIR / demo_id / "reel_cinematic.mp4"
                 clips = [{"path": VIDEOS_DIR / demo_id / v["cine"], "audio": True,
@@ -668,7 +692,7 @@ def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = N
                         export_clips(demo_id, [], {"file": reel.name})
                     except Exception:  # noqa: BLE001
                         pass
-            _cine_job.update({"status": "done", "done": len(videos)})
+            _cine_job.update({"status": "done", "done": len(videos), "stage": "done", "progress": 1.0, "eta": 0})
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
             _cine_job.update({"status": "error", "error": str(e)})

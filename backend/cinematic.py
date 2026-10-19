@@ -607,6 +607,28 @@ def plan_voices(segs: list[Seg], kills: list[float], total: float, highlight: di
     return out
 
 
+def run_ffmpeg_with_progress(args: list[str], total_seconds: float, on_fraction) -> tuple[int, str]:
+    """Run an ffmpeg command, reporting the encoded position as a fraction of `total_seconds` through
+    `-progress pipe:1`. Returns (return code, stderr tail)."""
+    cmd = list(args)
+    cmd[1:1] = ["-nostats", "-progress", "pipe:1"]     # right after the executable, before -y
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    last = -1.0
+    try:
+        for line in proc.stdout:   # key=value lines; out_time_us advances as frames are written
+            if line.startswith("out_time_us=") and total_seconds > 0:
+                try:
+                    frac = min(0.99, int(line.split("=", 1)[1]) / 1_000_000 / total_seconds)
+                except ValueError:
+                    continue
+                if frac - last >= 0.01:
+                    last = frac
+                    on_fraction(frac)
+    finally:
+        _, err = proc.communicate()
+    return proc.returncode, err or ""
+
+
 def caster_lines(cplan: dict, voices: list[tuple[Path, float]]) -> list[str]:
     """The texts of the commentary lines that made it into the clip, in order."""
     by_file = {}
@@ -620,9 +642,17 @@ def caster_lines(cplan: dict, voices: list[tuple[Path, float]]) -> list[str]:
 def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times: list[float], music: Path | None,
                    opts: dict, title: tuple[str, str] | None = None, fps_hint: float | None = None,
                    crf: int = 20, highlight: dict | None = None, card: dict | None = None,
-                   commentary_ctx: dict | None = None) -> dict:
+                   commentary_ctx: dict | None = None, progress=None) -> dict:
     """commentary_ctx: {"demo_id", "start_tick", "end_tick", "script": lines|None} enables the full play-by-play
-    (opts cine_commentary); a saved script (edited in the app) replaces the generated one."""
+    (opts cine_commentary); a saved script (edited in the app) replaces the generated one.
+    progress(stage: str, fraction: float | None) is called as the work advances (fraction only while encoding)."""
+    def report(stage: str, frac: float | None = None) -> None:
+        if progress:
+            try:
+                progress(stage, frac)
+            except Exception:  # noqa: BLE001
+                pass
+    report("planning the clip")
     info = probe_video(ffprobe, src)
     duration, width, height = info["duration"], info["width"], info["height"]
     fps = info["fps"] or fps_hint or 60.0
@@ -643,6 +673,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     cplan = None
     if opts.get("cine_voice") and opts.get("cine_commentary") and highlight and commentary_ctx:
         from . import caster
+        report("writing and speaking the commentary")
         final_real = voice.pick("final", voice_prefs(highlight), pins.get("final"))
         cplan = caster.plan(commentary_ctx["demo_id"], highlight, int(commentary_ctx["start_tick"]),
                             commentary_ctx.get("end_tick"), voice_id=str(opts.get("cine_tts_voice") or ""), ffmpeg=ffmpeg,
@@ -682,6 +713,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         card=card if opts.get("cine_card") else None) if font else ([], [], None)
     offset = 0.0
     if has_music and opts.get("cine_music_sync") and slow_kills:
+        report("finding the drop in the music")
         offset = music_offset(ffmpeg, music, out_time(segs, slow_kills[0]), total_out)
     args = [str(ffmpeg), "-y", "-i", str(src)]
     if has_music:
@@ -702,13 +734,15 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
              "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
              "-t", f"{total_out:.3f}", str(dst)]
     t0 = time.time()
+    report("encoding", 0.0)
     try:
-        r = subprocess.run(args, capture_output=True, text=True)
+        code, err = run_ffmpeg_with_progress(args, total_out, lambda f: report("encoding", f))
     finally:
         for p in text_files:
             p.unlink(missing_ok=True)
-    if r.returncode != 0 or not dst.exists():
-        raise RuntimeError("ffmpeg failed: " + r.stderr[-800:])
+    if code != 0 or not dst.exists():
+        raise RuntimeError("ffmpeg failed: " + err[-800:])
+    report("done", 1.0)
     effects = [k[5:] for k in ("cine_ramp", "cine_impact", "cine_look", "cine_fade", "cine_title", "cine_counter")
                if opts.get(k)]
     if card_spec:
@@ -773,7 +807,7 @@ def load_script(demo_id: str, highlight_id: int) -> list[dict] | None:
 
 
 def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, videos_dir: Path,
-                        smooth: bool | None = None, overrides: dict | None = None) -> dict:
+                        smooth: bool | None = None, overrides: dict | None = None, progress=None) -> dict:
     """Create <name>_cine.mp4 next to the clip and return the updated video entry."""
     cfg = load_config()
     opts = options(cfg, overrides)
@@ -789,7 +823,8 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
                           highlight=ctx["highlight"], card=card,
                           commentary_ctx={"demo_id": demo_id, "start_tick": int(video["start_tick"]),
                                           "end_tick": int(video.get("end_tick") or 0) or None,
-                                          "script": load_script(demo_id, int(video["highlight_id"]))})
+                                          "script": load_script(demo_id, int(video["highlight_id"]))},
+                          progress=progress)
     video = dict(video)
     video["cine"] = dst.name
     video["cine_info"] = info

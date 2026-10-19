@@ -35,8 +35,18 @@
     mapFilter = sel.value;
     const list = demos.filter(d => !mapFilter || d.map === mapFilter);
     $('match-count').textContent = list.length ? `${list.length}` : '';
-    if (!list.length) { $('matches').innerHTML = '<div class="card empty">No demos yet. Drop a FACEIT demo above to get started.</div>'; return; }
-    $('matches').innerHTML = list.map(d => {
+    $('matches').setAttribute('aria-busy', 'false');
+    if (!list.length) {
+      $('matches').innerHTML = mapFilter ? '<div class="card empty">No matches on this map yet.</div>' : `<div class="card empty start">
+        <div class="start-title">No matches yet</div>
+        <ol class="start-steps">
+          <li><b>Drop a demo</b> from FACEIT above, or point the watch folder at your downloads in Settings.</li>
+          <li><b>Open the match</b> to watch the 2D replay and see your highlights ranked.</li>
+          <li><b>Record a highlight</b> as an MP4 with CS2 and make it cinematic: slow motion, music, casters.</li>
+        </ol></div>`;
+      return;
+    }
+    $('matches').innerHTML = list.map((d, i) => {
       const done = d.status === 'done';
       const ms = myScore(d);
       const me = d.me;
@@ -44,7 +54,8 @@
       if (d.status === 'error') status = `<span class="badge err" title="${esc(d.error)}">error</span><span class="muted" style="font-size:12px">${esc((d.error || '').slice(0, 60))}</span>`;
       else if (!done) status = `<span class="progress" style="width:140px"><div style="width:${Math.round((d.progress || 0) * 100)}%"></div></span><span class="muted" style="font-size:12px">${esc(d.stage || d.status)}</span>`;
       const hs = me && me.kills ? Math.round(100 * me.headshots / me.kills) : 0;
-      return `<div class="card match ${done ? '' : 'pending'}" data-id="${d.id}" data-done="${done ? 1 : 0}">
+      return `<div class="card match ${done ? '' : 'pending'}" data-id="${d.id}" data-done="${done ? 1 : 0}" style="--i:${Math.min(i, 9)}">
+        ${done ? `<a class="link" href="/match.html?id=${esc(d.id)}" aria-label="Open ${esc(d.map || 'match')} ${fmtDate(d.date)}"></a>` : ''}
         ${d.map ? `<div class="radar" style="background-image:url('/api/radars/${esc(d.map)}.png')"></div>` : ''}
         <div class="body">
           <div class="head"><span class="map">${esc(d.map || 'parsing…')}</span>${ms ? `<span class="pill ${ms.result}">${ms.result.toUpperCase()}</span>` : ''}<span class="spacer"></span><span class="date">${fmtDate(d.date)}</span></div>
@@ -54,7 +65,7 @@
           ${d.top_highlight ? `<div class="top"><b>★</b> ${esc(d.top_highlight.description)}</div>` : ''}
           ${status ? `<div class="foot">${status}</div>` : ''}
         </div>
-        <button class="small ghost del" data-id="${d.id}" title="delete demo">✕</button>
+        <button class="small ghost del" data-id="${d.id}" title="delete demo" aria-label="Remove this match">✕</button>
       </div>`;
     }).join('');
   }
@@ -67,9 +78,19 @@
   $('matches').addEventListener('click', async (ev) => {
     const del = ev.target.closest('.del');
     if (del) { ev.stopPropagation(); if (!confirm('Remove this match from the app?\n\nDeletes the app\'s copy of the demo and the parsed data. Your original download and any recorded clips are kept.')) return; await API.deleteDemo(del.dataset.id); refresh(); return; }
+    if (ev.target.closest('a.link')) return;            // the real link handles navigation (Cmd/Ctrl+click works)
     const card = ev.target.closest('.match');
     if (card && card.dataset.done === '1') location.href = `/match.html?id=${card.dataset.id}`;
   });
+  // spotlight border: the card's glow follows the pointer (fine pointers only)
+  if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    document.addEventListener('pointermove', (e) => {
+      const c = e.target.closest?.('.card'); if (!c) return;
+      const r = c.getBoundingClientRect();
+      c.style.setProperty('--mx', `${((e.clientX - r.left) / r.width * 100).toFixed(1)}%`);
+      c.style.setProperty('--my', `${((e.clientY - r.top) / r.height * 100).toFixed(1)}%`);
+    }, { passive: true });
+  }
 
   // ---- uploads --------------------------------------------------------------
   const drop = $('drop'), fileInput = $('file');

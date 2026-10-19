@@ -6,7 +6,7 @@
   if (!id) { $('title').textContent = 'no demo id'; return; }
   const status = $('status');
   const toast = (html, ms = 8000) => {
-    const el = document.createElement('div'); el.className = 'toast'; el.innerHTML = html;
+    const el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite'); el.innerHTML = html;
     document.body.appendChild(el); setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 160); }, ms);
   };
 
@@ -79,7 +79,7 @@
     $('csdm-all').href = API.csdmUrl(id, filter === 'mine' ? me : null);
     const cur = replay.tick;
     $('hl-list').innerHTML = listed.length ? listed.map((h, i) => `
-      <div class="hl ${cur >= h.start_tick && cur <= h.end_tick ? 'current' : ''} ${selected.has(h.id) ? 'selected' : ''}" data-i="${i}">
+      <div class="hl ${cur >= h.start_tick && cur <= h.end_tick ? 'current' : ''} ${selected.has(h.id) ? 'selected' : ''}" data-i="${i}" role="button" tabindex="0" aria-label="Play highlight: ${esc(h.description)}" style="--i:${Math.min(i, 9)}">
         <label class="chk" title="${videoFor(h) ? 'select for a long video' : 'select for recording'}"><input type="checkbox" class="sel" data-id="${h.id}" ${selected.has(h.id) ? 'checked' : ''}></label>
         <div>
           <div class="head"><span class="type ${h.type}">${esc(h.type.replace('_', ' '))}${h.n ? ` ${h.type === 'clutch' ? '1v' + h.n : h.n + 'K'}` : ''}</span>
@@ -96,6 +96,7 @@
       </div>`).join('') : '<div class="muted">No highlights for this filter.</div>';
     timeline.setHighlights(listed);
     updateSelCount();
+    if (!renderHighlights.done) { renderHighlights.done = true; $('hl-list').classList.add('enter'); setTimeout(() => $('hl-list').classList.remove('enter'), 900); }
   }
   function playHighlight(i) {
     const h = listed[i]; if (!h) return;
@@ -202,7 +203,7 @@
   function renderKillfeed(tick, round) {
     const ks = replay.kills.filter(k => k.round === round.num);
     $('panel-killfeed').innerHTML = `<div class="teamname">Round ${round.num} · ${round.winner} win (${esc(round.reason)})</div>` +
-      ks.map(k => `<div class="k ${k.tick > tick ? 'future' : ''}" data-tick="${k.tick}" style="cursor:pointer">
+      ks.map(k => `<div class="k ${k.tick > tick ? 'future' : ''}" data-tick="${k.tick}" role="button" tabindex="0" style="cursor:pointer">
         <span class="muted" style="width:44px">${fmtTick(k.tick - round.freeze_end)}</span>
         <span class="${(k.attacker_team || '').toLowerCase()}">${esc(k.attacker_name || '?')}</span>
         <span class="w">${esc(wname(k.weapon))}${k.headshot ? ' HS' : ''}${k.penetrated ? ' wall' : ''}${k.thrusmoke ? ' smoke' : ''}${k.noscope ? ' noscope' : ''}${k.attackerblind ? ' blind' : ''}</span>
@@ -235,8 +236,9 @@
 
   // ---- resizable side panel -----------------------------------------------------------------------------
   const viewerEl = document.querySelector('.viewer');
-  const setSideW = (px) => { const w = Math.max(360, Math.min(window.innerWidth * 0.7, px)); viewerEl.style.setProperty('--side-w', w + 'px'); try { localStorage.setItem('sideW', String(w)); } catch (_) { /* */ } };
-  try { const saved = +localStorage.getItem('sideW'); if (saved) viewerEl.style.setProperty('--side-w', saved + 'px'); else setSideW(Math.round(window.innerWidth * 0.4)); } catch (_) { setSideW(Math.round(window.innerWidth * 0.4)); }
+  // the side panel (highlights, scoreboard, kill feed) is the main working area: it takes ~62 % by default, the map the rest
+  const setSideW = (px) => { const w = Math.max(360, Math.min(window.innerWidth * 0.78, px)); viewerEl.style.setProperty('--side-w', w + 'px'); try { localStorage.setItem('sideW2', String(w)); } catch (_) { /* ignore */ } };
+  try { const saved = +localStorage.getItem('sideW2'); if (saved) viewerEl.style.setProperty('--side-w', saved + 'px'); else setSideW(Math.round(window.innerWidth * 0.62)); } catch (_) { setSideW(Math.round(window.innerWidth * 0.62)); }
   const divider = $('divider');
   let dragging = false;
   divider.addEventListener('pointerdown', (e) => { dragging = true; divider.classList.add('active'); divider.setPointerCapture(e.pointerId); });
@@ -428,14 +430,20 @@
   $('del-close').onclick = $('del-cancel').onclick = () => $('del-modal').style.display = 'none';
   $('del-modal').addEventListener('click', (e) => { if (e.target === $('del-modal')) $('del-modal').style.display = 'none'; });
   $('long-modal').addEventListener('click', (e) => { if (e.target === $('long-modal')) $('long-modal').style.display = 'none'; });
+  // keyboard activation for the clickable cards (Enter / Space act like a click on the card itself)
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const t = e.target; if (!(t instanceof HTMLElement) || t.getAttribute('role') !== 'button' || t.tagName === 'BUTTON') return;
+    e.preventDefault(); t.click();
+  });
   // ---- full caster: editable commentary per highlight ------------------------------------------------
   let casterH = null, casterLines = [], cinePoll = null;
   function renderCasterLines() {
     $('caster-lines').innerHTML = casterLines.map((l, i) => `<div class="caster-line ${l.who === 2 ? 'c2' : 'c1'}" data-i="${i}">
-      <input type="number" class="cl-t" value="${(+l.t).toFixed(1)}" step="0.1" min="0" title="seconds from the clip start">
+      <input type="number" class="cl-t" value="${(+l.t).toFixed(1)}" step="0.1" min="0" inputmode="decimal" title="seconds from the clip start" aria-label="Time in seconds">
       <button class="small ghost cl-who" title="who says it: caster 1 calls, caster 2 reacts">${l.who === 2 ? 'C2' : 'C1'}</button>
-      <input type="text" class="cl-text" value="${esc(l.text)}" maxlength="300">
-      <button class="small ghost cl-del" title="delete this line">✕</button></div>`).join('') || '<span class="muted">no lines</span>';
+      <input type="text" class="cl-text" value="${esc(l.text)}" maxlength="300" autocomplete="off" aria-label="Line ${i + 1}">
+      <button class="small ghost cl-del" title="delete this line" aria-label="Delete this line">✕</button></div>`).join('') || '<span class="muted">no lines</span>';
   }
   function collectCasterLines() {
     return [...document.querySelectorAll('.caster-line')].map((el, i) => ({ ...casterLines[i], t: parseFloat(el.querySelector('.cl-t').value) || 0, text: el.querySelector('.cl-text').value }));
@@ -475,7 +483,7 @@
       const settings = { ...st.settings, cine_voice: true, cine_commentary: true };
       const r = await API.cinematic(id, [casterH.id], settings);
       $('caster-go').disabled = false; $('caster-modal').style.display = 'none';
-      toast(`🎙 Making the cinematic clip with commentary (${r.count} clip)… about a minute.`, 6000);
+      toast(`🎙 Working on your cinematic clip with commentary… about a minute or two. Progress shows above the highlights.`, 6000);
       startCinePoll();
     } catch (e) { $('caster-go').disabled = false; $('caster-msg').textContent = e.message; }
   };
@@ -540,7 +548,7 @@
   $('music-modal').addEventListener('change', cineSummary);
   function renderMusicList(files, dir) {
     $('music-dir').textContent = dir || '';
-    $('music-list').innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${esc(f)}</span><button class="small ghost del-music" data-name="${esc(f)}" title="remove">✕</button></span>`).join('') : '<span class="muted">none yet — slow motion only</span>';
+    $('music-list').innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${esc(f)}</span><button class="small ghost del-music" data-name="${esc(f)}" title="remove" aria-label="Remove ${esc(f)}">✕</button></span>`).join('') : '<span class="muted">none yet — slow motion only</span>';
     const sel = $('cine_music'); const cur = sel.value;
     sel.innerHTML = '<option value="">random track</option>' + files.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
     sel.value = files.includes(cur) ? cur : '';
@@ -555,7 +563,7 @@
       const label = (f) => { const i = f.indexOf('/'); return i < 0 ? esc(f) : `<b class="voice-tag">${esc(VOICE_SUB_LABEL[f.slice(0, i)] || f.slice(0, i))}</b> ${esc(f.slice(i + 1))}`; };
       voicePins[slot] = (voicePins[slot] || []).filter(n => files.includes(n));
       $('voice-list-' + slot).innerHTML = files.length ? files.map(f => `<span class="pill voice-pill ${voicePins[slot].includes(f) ? 'pinned' : ''}" data-slot="${slot}" data-name="${esc(f)}" title="${esc(f)} — click to pin / unpin"><span class="pill-name">${voicePins[slot].includes(f) ? '📌 ' : ''}${label(f)}</span>
-        <button class="small ghost voice-play" data-slot="${slot}" data-name="${esc(f)}" title="preview">▶</button><button class="small ghost voice-del" data-slot="${slot}" data-name="${esc(f)}" title="delete">✕</button></span>`).join('') : '<span class="muted">none</span>';
+        <button class="small ghost voice-play" data-slot="${slot}" data-name="${esc(f)}" title="preview" aria-label="Play ${esc(f)}">▶</button><button class="small ghost voice-del" data-slot="${slot}" data-name="${esc(f)}" title="delete" aria-label="Delete ${esc(f)}">✕</button></span>`).join('') : '<span class="muted">none</span>';
     }
     $('voice-dir').textContent = v?.dir || '';
     const tts = !!v?.tts;
@@ -589,9 +597,9 @@
   $('music-close').onclick = () => $('music-modal').style.display = 'none';
   $('music-modal').addEventListener('click', async (e) => {
     if (e.target === $('music-modal')) $('music-modal').style.display = 'none';
-    const d = e.target.closest('.del-music'); if (d) { try { await API.deleteMusic(d.dataset.name); } catch (err) { toast(esc(err.message)); } renderMusic(); return; }
+    const d = e.target.closest('.del-music'); if (d) { if (!confirm(`Remove the track "${d.dataset.name}"?`)) return; try { await API.deleteMusic(d.dataset.name); } catch (err) { toast(esc(err.message)); } renderMusic(); return; }
     const pl = e.target.closest('.voice-play'); if (pl) { new Audio(API.voiceUrl(pl.dataset.slot, pl.dataset.name)).play().catch(err => toast(esc(err.message))); return; }
-    const vd = e.target.closest('.voice-del'); if (vd) { try { await API.deleteVoice(vd.dataset.slot, vd.dataset.name); } catch (err) { toast(esc(err.message)); } reloadVoice(); return; }
+    const vd = e.target.closest('.voice-del'); if (vd) { if (!confirm(`Delete the voice line "${vd.dataset.name}"?`)) return; try { await API.deleteVoice(vd.dataset.slot, vd.dataset.name); } catch (err) { toast(esc(err.message)); } reloadVoice(); return; }
     const vp = e.target.closest('.voice-pill'); if (vp) {
       const { slot, name } = vp.dataset; const arr = voicePins[slot] || (voicePins[slot] = []);
       const i = arr.indexOf(name); if (i < 0) arr.push(name); else arr.splice(i, 1);
@@ -632,7 +640,7 @@
       const r = await API.cinematic(id, ids, collectCine());
       $('cine-go').disabled = false; $('cine-msg').textContent = '';
       $('music-modal').style.display = 'none';
-      toast(`Processing ${r.count} clip(s)… about half a minute per clip (longer with smooth frames).`, 5000);
+      toast(`✨ Working on your cinematic video… this takes about a minute per clip. Progress shows above the highlights.`, 6000);
       startCinePoll();
     } catch (e) { $('cine-go').disabled = false; $('cine-msg').textContent = e.message; }
   };
@@ -642,9 +650,16 @@
         const st = await API.recordStatus().catch(() => null); const c = st?.cinematic;
         if (!c) return;
         $('recstatus').classList.toggle('err', c.status === 'error');
-        $('recstatus').innerHTML = c.status === 'running' ? `✨ cinematic ${c.done + 1}/${c.total}: ${esc(c.current)}<span class="progress"><div style="width:${Math.round(100 * c.done / c.total)}%"></div></span>` : c.status === 'error' ? `cinematic failed: ${esc(c.error)}` : `✨ cinematic done: ${c.total} clip(s)`;
+        if (c.status === 'running') {
+          const pct = Math.round(100 * (c.progress ?? (c.done / c.total)));
+          const stage = c.stage === 'encoding' ? `encoding ${Math.round(100 * Math.max(0, ((c.clip_progress ?? 0) - 0.15) / 0.85))}%` : (c.stage || 'working');
+          const eta = c.eta == null ? '' : c.eta < 5 ? ' · almost done' : c.eta < 60 ? ` · about ${Math.round(c.eta / 5) * 5} s left` : ` · about ${Math.ceil(c.eta / 60)} min left`;
+          $('recstatus').innerHTML = `✨ Working on your cinematic video… ${c.total > 1 ? `clip ${c.done + 1}/${c.total} · ` : ''}${esc(stage)}${eta}<span class="progress live"><div style="width:${Math.max(2, pct)}%"></div></span>`;
+        } else {
+          $('recstatus').innerHTML = c.status === 'error' ? `cinematic failed: ${esc(c.error)}` : `✨ cinematic done: ${c.total} clip(s)`;
+        }
         if (c.status !== 'running') { clearInterval(cinePoll); cinePoll = null; await loadVideos(); renderHighlights(); }
-      }, 2000);
+      }, 1000);
   }
   $('btn-export').onclick = async () => {
     try { const r = await API.exportVideos(id); toast(`${r.count} file(s) saved to <b>${esc(r.folder)}</b>`, 6000); }

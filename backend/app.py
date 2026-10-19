@@ -639,4 +639,9 @@ def radar_png(name: str):
     return FileResponse(p, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(Path(__file__).resolve().parent.parent / "assets" / "icon.ico")
+
+
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
