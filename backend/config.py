@@ -29,12 +29,25 @@ DEFAULTS: dict = {
     "record_fps": 60,
     "record_crf": 20,          # x264 quality (lower = better/bigger)
     "record_close_game": True, # quit CS2 when the last highlight is recorded
-    "export_folder": "",
+    "export_folder": "",       # where finished clips are copied; empty -> <Downloads>/cs2-watcher/<map>_<date>_<id>
     "cine_slow": 0.35,         # slow-motion speed around kills (0.35 = 35 % speed)
     "cine_kills": "last",      # which kills get slow motion: "last" (the final kill of the clip) or "all"
     "cine_smooth": False,      # motion-interpolate slow segments (smoother but ~40x slower to encode)
     "cine_game_volume": 0.35,  # game audio level under the music
-    "cine_music_volume": 0.7,       # where finished clips are copied; empty -> <Downloads>/cs2-watcher/<map>_<date>_<id>
+    "cine_music_volume": 0.7,
+    "cine_music": "",          # music file name in data/music; empty -> a random track per clip
+    "cine_music_sync": True,   # start the track at its drop so the drop lands on the slow-motion kill
+    "cine_trim": "fast",       # dead time between kills: "off" (keep), "cut" (drop it) or "fast" (fast-forward it)
+    "cine_trim_lead": 2.0,     # seconds of normal speed kept before each kill when trimming
+    "cine_fast": 6.0,          # fast-forward speed for dead time (cine_trim = "fast")
+    "cine_ramp": True,         # ease in and out of slow motion instead of a hard cut
+    "cine_impact": True,       # zoom punch + flash on each kill
+    "cine_look": True,         # vignette + colour grade
+    "cine_fade": True,         # fade in/out at the clip edges
+    "cine_title": True,        # title card (3K / ACE / clutch, player, map, round)
+    "cine_counter": True,      # kill counter in the corner
+    "cine_voice": True,        # play voice lines from data/voice (start / kill / final) when there are any
+    "cine_voice_volume": 1.0,
 }
 
 

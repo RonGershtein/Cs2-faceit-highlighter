@@ -612,7 +612,8 @@ def cinematic_status() -> dict | None:
     return dict(_cine_job) if _cine_job else None
 
 
-def start_cinematic(demo_id: str, videos: list[dict]) -> dict:
+def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = None) -> dict:
+    """Process the given clips in a background thread; `overrides` are cine_* options on top of config.toml."""
     global _cine_job
     if _cine_job and _cine_job.get("status") == "running":
         raise RuntimeError("cinematic processing already running")
@@ -625,7 +626,7 @@ def start_cinematic(demo_id: str, videos: list[dict]) -> dict:
         try:
             for i, v in enumerate(videos):
                 _cine_job.update({"current": v["file"], "done": i})
-                nv = cine.cinematic_for_video(demo_id, v, FFMPEG_EXE, ffprobe, VIDEOS_DIR)
+                nv = cine.cinematic_for_video(demo_id, v, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides)
                 idx = videos_index(demo_id)
                 idx["videos"] = [nv if x["highlight_id"] == nv["highlight_id"] else x for x in idx["videos"]]
                 (VIDEOS_DIR / demo_id / "videos.json").write_text(json.dumps(idx, indent=1), encoding="utf-8")

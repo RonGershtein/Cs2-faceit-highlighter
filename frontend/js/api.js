@@ -9,6 +9,7 @@ const API = (() => {
     }
     return r.json();
   }
+  const get = (url) => json(url);
   const post = (url, body) => json(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   return {
     listDemos: () => json('/api/demos'),
@@ -32,10 +33,16 @@ const API = (() => {
     deleteClips: (id, highlight_ids, downloads) => post(`/api/demos/${id}/videos/delete`, { highlight_ids, downloads }),
     longVideo: (id, highlight_ids, cinematic) => post(`/api/demos/${id}/videos/long`, { highlight_ids, cinematic }),
     deleteLongVideo: (id, name) => json(`/api/demos/${id}/videos/long/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-    cinematic: (id, highlight_ids) => post(`/api/demos/${id}/videos/cinematic`, { highlight_ids }),
+    cinematic: (id, highlight_ids, settings) => post(`/api/demos/${id}/videos/cinematic`, { highlight_ids, settings }),
+    cineSettings: () => get('/api/cinematic/settings'),
     music: () => json('/api/music'),
     deleteMusic: (name) => json(`/api/music/${encodeURIComponent(name)}`, { method: 'DELETE' }),
     uploadMusic(file) { const fd = new FormData(); fd.append('file', file, file.name); return fetch('/api/music', { method: 'POST', body: fd }).then(r => r.ok ? r.json() : r.json().then(j => { throw new Error(j.detail || 'upload failed'); })); },
+    voice: () => json('/api/voice'),
+    deleteVoice: (slot, name) => json(`/api/voice/${encodeURIComponent(slot)}/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    uploadVoice(slot, file) { const fd = new FormData(); fd.append('file', file, file.name); return fetch(`/api/voice/${encodeURIComponent(slot)}`, { method: 'POST', body: fd }).then(r => r.ok ? r.json() : r.json().then(j => { throw new Error(j.detail || 'upload failed'); })); },
+    voiceTts: (text, slot) => post('/api/voice/tts', { text, slot }),
+    voiceUrl: (slot, name) => `/api/voice/${encodeURIComponent(slot)}/${encodeURIComponent(name)}`,
     videoUrl: (id, name) => `/api/demos/${id}/videos/${encodeURIComponent(name)}`,
     getConfig: () => json('/api/config'),
     pickFolder: (start, title) => post('/api/pick-folder', { start, title }),

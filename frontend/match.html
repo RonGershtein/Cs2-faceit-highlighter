@@ -102,11 +102,76 @@
   </ul>
   <div class="modal-foot"><button class="ghost" id="rec-cancel-btn">Cancel</button><button class="primary" id="rec-go"><i class="rec-dot"></i> Start recording</button></div>
 </div></div>
-<div class="modal" id="music-modal" style="display:none"><div class="modal-box">
+<div class="modal" id="music-modal" style="display:none"><div class="modal-box cine">
   <div class="modal-head">✨ Cinematic clips <span class="spacer"></span><button class="small ghost" id="music-close">✕</button></div>
-  <p class="muted" style="margin:0 0 10px">Every kill gets a slow-motion moment and a music track plays under the game sound. Add your own music (MP3 / M4A / WAV); one track is picked at random per clip. Without music you still get the slow motion.</p>
-  <div class="field"><label>Music tracks</label><div id="music-list" class="muted">none yet</div>
-    <div class="row" style="margin-top:6px"><input type="file" id="music-file" accept=".mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" multiple><span class="hint" id="music-dir"></span></div></div>
+  <p class="muted" style="margin:0 0 12px">Slow motion on the kills, music under the game sound, a title card and effects. Your settings are remembered.</p>
+
+  <div class="field"><label>Clips</label>
+    <label class="opt"><input type="radio" name="cine-which" id="cine-which-all" value="all"> <span>all clips without a cinematic version (<span id="cine-n-all">0</span>)</span></label>
+    <label class="opt"><input type="radio" name="cine-which" id="cine-which-sel" value="sel"> <span>the selected highlights (<span id="cine-n-sel">0</span>) – existing cinematic versions are remade</span></label>
+  </div>
+
+  <div class="cine-grid">
+    <div class="field"><label>Pace</label>
+      <div class="row"><span class="opt-text">dead time between kills</span>
+        <select id="cine_trim"><option value="off">keep everything</option><option value="fast">fast-forward it</option><option value="cut">cut it out</option></select></div>
+      <div class="row cine-trim-opt"><span class="opt-text">normal speed from <b id="cine_trim_lead-val">2</b> s before each kill</span>
+        <input type="range" id="cine_trim_lead" min="1" max="8" step="0.5" value="2" data-fmt="s"></div>
+      <div class="row cine-fast-opt"><span class="opt-text">fast-forward speed</span>
+        <select id="cine_fast"><option value="4">4×</option><option value="6">6×</option><option value="8">8×</option><option value="12">12×</option></select></div>
+    </div>
+    <div class="field"><label>Slow motion</label>
+      <div class="row"><span class="opt-text">speed <b id="cine_slow-val">35%</b></span>
+        <input type="range" id="cine_slow" min="0.15" max="0.8" step="0.05" value="0.35" data-fmt="pct"></div>
+      <div class="row"><span class="opt-text">slow down</span>
+        <select id="cine_kills"><option value="last">the final kill</option><option value="all">every kill</option></select></div>
+      <label class="opt"><input type="checkbox" id="cine_ramp"> ease in and out</label>
+      <label class="opt"><input type="checkbox" id="cine_smooth"> smooth frames (much slower to make)</label>
+    </div>
+    <div class="field"><label>Effects</label>
+      <label class="opt"><input type="checkbox" id="cine_impact"> zoom punch + flash on each kill</label>
+      <label class="opt"><input type="checkbox" id="cine_look"> cinematic look (vignette + colour grade)</label>
+      <label class="opt"><input type="checkbox" id="cine_fade"> fade in and out</label>
+      <label class="opt" id="cine_title-opt"><input type="checkbox" id="cine_title"> title card (TRIPLE KILL / ACE / 1v3 CLUTCH, player, map, round)</label>
+      <label class="opt" id="cine_counter-opt"><input type="checkbox" id="cine_counter"> kill counter</label>
+      <span class="hint" id="cine-font-warn" style="display:none">text overlays need a font – none was found, so the title card and kill counter are skipped</span>
+    </div>
+    <div class="field"><label>Music</label>
+      <div class="row"><span class="opt-text">track</span><select id="cine_music"><option value="">random track</option></select></div>
+      <label class="opt"><input type="checkbox" id="cine_music_sync"> start the track at its drop so the drop lands on the slow-motion kill</label>
+      <div class="row"><span class="opt-text">game sound <b id="cine_game_volume-val">35%</b></span>
+        <input type="range" id="cine_game_volume" min="0" max="1" step="0.05" value="0.35" data-fmt="pct"></div>
+      <div class="row"><span class="opt-text">music <b id="cine_music_volume-val">70%</b></span>
+        <input type="range" id="cine_music_volume" min="0" max="1" step="0.05" value="0.7" data-fmt="pct"></div>
+      <div id="music-list" class="muted">none yet</div>
+      <div class="row" style="margin-top:2px;flex-wrap:wrap"><input type="file" id="music-file" accept=".mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" multiple><span class="hint" id="music-dir"></span></div>
+    </div>
+  </div>
+
+  <div class="field"><label>Voice lines</label>
+    <div class="row" style="flex-wrap:wrap;align-items:center;gap:12px">
+      <label class="opt" style="margin:0"><input type="checkbox" id="cine_voice"> play voice lines</label>
+      <span class="opt-text">volume <b id="cine_voice_volume-val">100%</b></span>
+      <input type="range" id="cine_voice_volume" min="0" max="1.5" step="0.05" value="1" data-fmt="pct" style="flex:1;min-width:120px">
+    </div>
+    <div class="cine-grid cine-slots">
+      <div class="cine-slot" data-slot="start"><div class="slot-name">at the start</div><div class="slot-list muted" id="voice-list-start">none</div>
+        <input type="file" class="voice-file" data-slot="start" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" multiple></div>
+      <div class="cine-slot" data-slot="kill"><div class="slot-name">on each kill (not the last)</div><div class="slot-list muted" id="voice-list-kill">none</div>
+        <input type="file" class="voice-file" data-slot="kill" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" multiple></div>
+      <div class="cine-slot" data-slot="final"><div class="slot-name">after the final kill</div><div class="slot-list muted" id="voice-list-final">none</div>
+        <input type="file" class="voice-file" data-slot="final" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" multiple></div>
+    </div>
+    <div id="voice-tts" class="row" style="flex-wrap:wrap;align-items:center">
+      <input type="text" id="voice-text" placeholder="type a line, e.g. Are you kidding me?!" maxlength="200">
+      <select id="voice-slot"><option value="start">at the start</option><option value="kill">on each kill</option><option value="final" selected>after the final kill</option></select>
+      <button class="small" id="voice-gen" title="generate this line with the Windows voice">🗣 Generate</button>
+      <button class="small" id="voice-gen-all" title="generate every built-in caster line">Generate the caster lines</button>
+    </div>
+    <span class="hint" id="voice-tts-hint" style="display:none">generating lines from text needs Windows</span>
+    <span class="hint" id="voice-dir"></span>
+  </div>
+
   <div class="modal-foot"><span class="muted" id="cine-msg"></span><button class="primary" id="cine-go">✨ Make cinematic versions</button></div>
 </div></div>
 <div class="modal" id="long-modal" style="display:none"><div class="modal-box">

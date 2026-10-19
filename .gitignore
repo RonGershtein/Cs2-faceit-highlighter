@@ -16,6 +16,11 @@ config.toml
 *.dem.bz2
 *:Zone.Identifier
 
+# local audio dropped in the repo root (caster compilations etc.)
+/*.mp3
+/*.m4a
+/*.wav
+
 # OS / editor
 .DS_Store
 Thumbs.db

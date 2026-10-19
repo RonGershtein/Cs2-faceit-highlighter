@@ -336,6 +336,16 @@ def export_videos(demo_id: str):
 
 class CineIn(BaseModel):
     highlight_ids: list[int] | None = None   # None -> every clip without a cinematic version
+    settings: dict | None = None             # cine_* options; saved to config.toml and used for this job
+
+
+@app.get("/api/cinematic/settings")
+def cinematic_settings():
+    """Current cine_* options plus the music and voice libraries (what the Cinematic dialog shows)."""
+    from . import cinematic as cine, voice
+
+    return {"settings": cine.options(), "music": [m.name for m in cine.music_files()], "music_dir": str(cine.MUSIC_DIR),
+            "voice": voice.listing(), "font": bool(cine.find_font())}
 
 
 @app.post("/api/demos/{demo_id}/videos/cinematic")
@@ -352,7 +362,10 @@ def make_cinematic_videos(demo_id: str, body: CineIn):
         raise HTTPException(400, "no clips to process (record a highlight first)")
     if not r.FFMPEG_EXE.exists():
         raise HTTPException(400, "FFmpeg is not installed (Install HLAE + FFmpeg)")
-    r.start_cinematic(demo_id, todo)
+    opts = cine.options(overrides=body.settings or {})
+    if body.settings:
+        cfgmod.update(**{k: opts[k] for k in cine.OPTION_KEYS if k in body.settings})
+    r.start_cinematic(demo_id, todo, opts)
     return {"ok": True, "count": len(todo), "music": [m.name for m in cine.music_files()], "music_dir": str(cine.MUSIC_DIR)}
 
 
@@ -428,6 +441,77 @@ def delete_music(name: str):
     if p.exists():
         p.unlink()
     return {"ok": True}
+
+
+# ---- voice lines (sound bites for cinematic clips) --------------------------------------------
+
+@app.get("/api/voice")
+def list_voice():
+    from . import voice
+
+    return voice.listing()
+
+
+class TtsIn(BaseModel):
+    text: str
+    slot: str = "final"
+
+
+@app.post("/api/voice/tts")
+def voice_tts(body: TtsIn):
+    """Generate a voice line from text with the Windows voice."""
+    from . import voice
+
+    if body.slot not in voice.SLOTS:
+        raise HTTPException(400, "unknown slot")
+    try:
+        p = voice.tts(body.text, body.slot)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
+    return {"ok": True, "file": p.name, "slot": body.slot}
+
+
+@app.post("/api/voice/{slot}")
+async def upload_voice(slot: str, file: UploadFile = File(...)):
+    from . import voice
+
+    if slot not in voice.SLOTS:
+        raise HTTPException(400, "unknown slot")
+    name = Path(file.filename or "line").name
+    if Path(name).suffix.lower() not in voice.VOICE_EXT:
+        raise HTTPException(400, "unsupported audio format")
+    dst = voice.slot_dir(slot) / name
+    with open(dst, "wb") as out:
+        while True:
+            chunk = await file.read(1 << 20)
+            if not chunk:
+                break
+            out.write(chunk)
+    return {"ok": True, "file": name}
+
+
+@app.delete("/api/voice/{slot}/{name}")
+def delete_voice(slot: str, name: str):
+    from . import voice
+
+    if slot not in voice.SLOTS:
+        raise HTTPException(400, "unknown slot")
+    p = voice.slot_dir(slot) / Path(name).name
+    if p.exists():
+        p.unlink()
+    return {"ok": True}
+
+
+@app.get("/api/voice/{slot}/{name}")
+def get_voice(slot: str, name: str):
+    from . import voice
+
+    if slot not in voice.SLOTS or "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(400, "bad name")
+    p = voice.slot_dir(slot) / name
+    if not p.exists():
+        raise HTTPException(404, "no such file")
+    return FileResponse(p)
 
 
 @app.get("/api/demos/{demo_id}/videos/{name}")

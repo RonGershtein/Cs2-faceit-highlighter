@@ -1,0 +1,109 @@
+from pathlib import Path
+
+import pytest
+
+from backend import cinematic as c
+
+
+def spans(segs):
+    return [(round(a, 2), round(b, 2), round(s, 2)) for a, b, s in segs]
+
+
+def test_keep_windows_merges_close_kills_and_cuts_dead_time():
+    # kills 3 s apart stay in one window; a 9 s walk between kills is cut
+    assert c.keep_windows([5.0, 8.0], 20.0, lead=2.0, tail=2.5) == [(3.0, 10.5)]
+    assert c.keep_windows([2.0, 15.0], 20.0, lead=2.0, tail=2.5) == [(0.0, 4.5), (13.0, 17.5)]
+    assert c.keep_windows([], 10.0) == [(0.0, 10.0)]
+
+
+def test_speed_segments_cover_each_window_without_gaps():
+    segs = c.speed_segments([11.0], [(0.0, 14.0)], 0.35, ramp=False)
+    assert spans(segs) == [(0.0, 10.3, 1.0), (10.3, 11.5, 0.35), (11.5, 14.0, 1.0)]
+    for (a, b, _), (a2, _, _) in zip(segs, segs[1:]):
+        assert b == pytest.approx(a2)
+
+
+def test_speed_segments_ramp_is_symmetric_and_between_1_and_slow():
+    segs = c.speed_segments([11.0], [(0.0, 14.0)], 0.35, ramp=True)
+    speeds = [s for _, _, s in segs]
+    assert speeds[0] == 1.0 and speeds[-1] == 1.0
+    ramp_in = speeds[1:4]
+    ramp_out = speeds[5:8]
+    assert ramp_in == sorted(ramp_in, reverse=True) and ramp_out == sorted(ramp_out)
+    assert all(0.35 < s < 1.0 for s in ramp_in + ramp_out)
+    assert speeds[4] == 0.35
+    assert sum(b - a for a, b, _ in segs) == pytest.approx(14.0)
+
+
+def test_speed_segments_ramps_share_a_short_gap():
+    # two slow windows 0.4 s apart: each ramp gets at most half the gap, no overlap
+    segs = c.speed_segments([5.0, 6.6], [(0.0, 10.0)], 0.35, ramp=True)
+    for (a, b, _), (a2, _, _) in zip(segs, segs[1:]):
+        assert a2 >= b - 1e-9
+    assert sum(b - a for a, b, _ in segs) == pytest.approx(10.0)
+
+
+def test_fill_gaps_fast_forwards_dead_time():
+    keep = c.keep_windows([3.0, 11.0], 14.0, lead=2.0, tail=2.5)
+    segs = c.fill_gaps(c.speed_segments([11.0], keep, 0.35), 14.0, 6.0)
+    assert segs[0] == (0.0, 1.0, 6.0)
+    assert (5.5, 9.0, 6.0) in segs
+    assert segs[-1] == (13.5, 14.0, 6.0)
+    assert sum(b - a for a, b, _ in segs) == pytest.approx(14.0)
+
+
+def test_out_time_maps_through_cuts_and_speeds():
+    segs = [(0.0, 2.0, 1.0), (4.0, 5.0, 0.5), (5.0, 7.0, 4.0)]
+    assert c.out_time(segs, 1.0) == 1.0
+    assert c.out_time(segs, 3.0) == 2.0          # inside the cut -> start of the next segment
+    assert c.out_time(segs, 4.5) == pytest.approx(3.0)
+    assert c.out_time(segs, 7.0) == pytest.approx(4.5)
+    assert c.total_duration(segs) == pytest.approx(4.5)
+
+
+def test_find_drop_prefers_the_rise_that_fits_the_clip():
+    curve = [0.05] * 30 + [0.8] * 50       # quiet 15 s, loud from 15 s (0.5 s windows)
+    assert c.find_drop(curve, 0.5, hit_time=4.0, clip_len=12.0) == 15.0
+    # the drop must be at or after the kill time so the song can start at drop - hit
+    assert c.find_drop(curve, 0.5, hit_time=20.0, clip_len=5.0) >= 20.0
+    assert c.find_drop([], 0.5) == 0.0
+
+
+def test_title_for():
+    assert c.title_for({"type": "multikill", "n": 3, "player_name": "s1mple", "round": 12}, "de_mirage") == \
+        ("TRIPLE KILL", "3K  ·  s1mple  ·  Mirage  ·  round 12")
+    assert c.title_for({"type": "ace", "n": 5, "player_name": "x", "round": 2}, "de_inferno")[0] == "ACE"
+    assert c.title_for({"type": "clutch", "n": 3, "player_name": "x", "round": 2}, "")[0] == "1v3 CLUTCH"
+    assert c.title_for({"type": "ninja_defuse", "player_name": "x"}, "de_nuke") == ("NINJA DEFUSE", "x  ·  Nuke")
+
+
+def test_options_coerces_and_clamps():
+    o = c.options({}, {"cine_slow": "0.05", "cine_trim": True, "cine_impact": "false", "cine_kills": "ALL", "bogus": 1})
+    assert o["cine_slow"] == 0.1 and o["cine_trim"] == "cut" and o["cine_impact"] is False and o["cine_kills"] == "all"
+    assert "bogus" not in o
+    assert c.options({}, {"cine_trim": "fast"})["cine_trim"] == "fast"
+
+
+def test_build_filter_structure(tmp_path):
+    segs = [(0.0, 1.0, 6.0), (1.0, 3.0, 1.0), (3.0, 4.0, 0.35), (4.0, 5.0, 1.0)]
+    f = tmp_path / "f.ttf"
+    f.write_bytes(b"x")
+    texts, files = c.plan_texts(segs, [3.4], width=1920, height=1080, title=("ACE", "x  ·  Mirage"), counter=True,
+                                font=f, tmp_base=tmp_path / "out.mp4")
+    g = c.build_filter(segs, fps=60, width=1920, height=1080, smooth=False, kills=[3.4], impact=True, look=True,
+                       fade=True, has_music=True, game_vol=0.3, music_vol=0.7, texts=texts, voices=[0.3, 2.5])
+    assert "concat=n=4:v=1:a=1" in g
+    assert "atempo=2,atempo=2,atempo=1.5000" in g          # 6x as a chain of gentle steps
+    assert "atempo=0.5,atempo=0.7000" in g                 # 0.35x
+    assert g.count("zoompan=") == 1 and "s=1920x1080" in g  # impact only in the segment that has the kill
+    assert "vignette" in g and "fade=t=in" in g and g.count("drawtext=") == 4
+    assert "[2:a]adelay=300:all=1" in g and "[3:a]adelay=2500:all=1" in g
+    assert "amix=inputs=4" in g and g.rstrip().endswith("[aout]")
+    assert ",fps=60[vc]" in g
+    assert len(files) == 4 and all(p.exists() for p in files)
+    assert files[0].read_text(encoding="utf-8") == "ACE"
+
+
+def test_fesc_escapes_filtergraph_specials():
+    assert c._fesc("C:\\Windows\\Fonts\\a.ttf") == "C\\:/Windows/Fonts/a.ttf"
+    assert c._fesc("a,b;c[d]'") == r"a\,b\;c\[d\]\'"

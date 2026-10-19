@@ -428,29 +428,133 @@
   $('del-modal').addEventListener('click', (e) => { if (e.target === $('del-modal')) $('del-modal').style.display = 'none'; });
   $('long-modal').addEventListener('click', (e) => { if (e.target === $('long-modal')) $('long-modal').style.display = 'none'; });
   // ---- cinematic (slow-motion + music) -------------------------------------------------------------
-  async function renderMusic() {
-    try {
-      const m = await API.music();
-      $('music-dir').textContent = m.dir;
-      $('music-list').innerHTML = m.files.length ? m.files.map(f => `<span class="pill" style="margin:2px">${esc(f)} <button class="small ghost del-music" data-name="${esc(f)}" title="remove">✕</button></span>`).join('') : '<span class="muted">none yet — slow motion only</span>';
-    } catch (_) { /* ignore */ }
+  const CINE_NUM = ['cine_slow', 'cine_game_volume', 'cine_music_volume', 'cine_trim_lead', 'cine_fast', 'cine_voice_volume'];
+  const CINE_STR = ['cine_kills', 'cine_music', 'cine_trim'];
+  const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_voice'];
+  const VOICE_SLOTS = ['start', 'kill', 'final'];
+  let cineInfo = null;
+  function cineRangeLabel(el) {
+    const lab = $(el.id + '-val'); if (!lab) return;
+    const v = parseFloat(el.value);
+    lab.textContent = el.dataset.fmt === 'pct' ? `${Math.round(v * 100)}%` : String(v);
   }
-  $('btn-cine').onclick = () => { $('music-modal').style.display = ''; renderMusic(); };
+  function cinePaceVis() {
+    const t = $('cine_trim').value;
+    document.querySelectorAll('.cine-trim-opt').forEach(el => { el.style.display = t === 'off' ? 'none' : ''; });
+    document.querySelectorAll('.cine-fast-opt').forEach(el => { el.style.display = t === 'fast' ? '' : 'none'; });
+  }
+  function cineCounts() {
+    const nAll = videos.videos.filter(v => !v.cine).length;
+    const nSel = selectedHighlights().filter(h => videoFor(h)).length;
+    $('cine-n-all').textContent = nAll; $('cine-n-sel').textContent = nSel;
+    $('cine-which-all').disabled = nAll === 0; $('cine-which-sel').disabled = nSel === 0;
+    $('cine-which-sel').checked = nSel > 0; $('cine-which-all').checked = nSel === 0;
+    return { nAll, nSel };
+  }
+  function fillCine(info) {
+    const st = info.settings || {};
+    for (const k of CINE_NUM) if (st[k] != null) { $(k).value = st[k]; }
+    for (const k of CINE_STR) if (st[k] != null) $(k).value = st[k];
+    for (const k of CINE_BOOL) if (st[k] != null) $(k).checked = !!st[k];
+    document.querySelectorAll('#music-modal input[type=range]').forEach(cineRangeLabel);
+    const fontOk = info.font !== false;
+    $('cine-font-warn').style.display = fontOk ? 'none' : '';
+    for (const k of ['cine_title', 'cine_counter']) { $(k).disabled = !fontOk; $(k + '-opt').classList.toggle('off', !fontOk); }
+    cinePaceVis();
+  }
+  function renderMusicList(files, dir) {
+    $('music-dir').textContent = dir || '';
+    $('music-list').innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${esc(f)}</span><button class="small ghost del-music" data-name="${esc(f)}" title="remove">✕</button></span>`).join('') : '<span class="muted">none yet — slow motion only</span>';
+    const sel = $('cine_music'); const cur = sel.value;
+    sel.innerHTML = '<option value="">random track</option>' + files.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+    sel.value = files.includes(cur) ? cur : '';
+  }
+  async function renderMusic() {
+    try { const m = await API.music(); renderMusicList(m.files, m.dir); } catch (_) { /* ignore */ }
+  }
+  function renderVoice(v) {
+    const slots = v?.slots || {};
+    for (const slot of VOICE_SLOTS) {
+      const files = slots[slot] || [];
+      $('voice-list-' + slot).innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${esc(f)}</span>
+        <button class="small ghost voice-play" data-slot="${slot}" data-name="${esc(f)}" title="preview">▶</button><button class="small ghost voice-del" data-slot="${slot}" data-name="${esc(f)}" title="delete">✕</button></span>`).join('') : '<span class="muted">none</span>';
+    }
+    $('voice-dir').textContent = v?.dir || '';
+    const tts = !!v?.tts;
+    $('voice-tts').style.display = tts ? '' : 'none';
+    $('voice-tts-hint').style.display = tts ? 'none' : '';
+    $('voice-gen-all').style.display = (v?.presets || []).length ? '' : 'none';
+  }
+  async function reloadVoice() {
+    try { const v = await API.voice(); if (cineInfo) cineInfo.voice = v; renderVoice(v); } catch (err) { toast(esc(err.message)); }
+  }
+  document.querySelectorAll('#music-modal input[type=range]').forEach(el => el.addEventListener('input', () => cineRangeLabel(el)));
+  $('cine_trim').addEventListener('change', cinePaceVis);
+  $('btn-cine').onclick = async () => {
+    $('cine-msg').textContent = '';
+    $('music-modal').style.display = '';
+    cineCounts();
+    try {
+      cineInfo = await API.cineSettings();
+      renderMusicList(cineInfo.music || [], cineInfo.music_dir);
+      fillCine(cineInfo);
+      renderVoice(cineInfo.voice);
+    } catch (e) { $('cine-msg').textContent = e.message; renderMusic(); }
+  };
   $('music-close').onclick = () => $('music-modal').style.display = 'none';
   $('music-modal').addEventListener('click', async (e) => {
     if (e.target === $('music-modal')) $('music-modal').style.display = 'none';
-    const d = e.target.closest('.del-music'); if (d) { await API.deleteMusic(d.dataset.name); renderMusic(); }
+    const d = e.target.closest('.del-music'); if (d) { try { await API.deleteMusic(d.dataset.name); } catch (err) { toast(esc(err.message)); } renderMusic(); return; }
+    const pl = e.target.closest('.voice-play'); if (pl) { new Audio(API.voiceUrl(pl.dataset.slot, pl.dataset.name)).play().catch(err => toast(esc(err.message))); return; }
+    const vd = e.target.closest('.voice-del'); if (vd) { try { await API.deleteVoice(vd.dataset.slot, vd.dataset.name); } catch (err) { toast(esc(err.message)); } reloadVoice(); }
   });
   $('music-file').addEventListener('change', async () => {
     for (const f of $('music-file').files) { try { await API.uploadMusic(f); } catch (err) { toast(esc(err.message)); } }
     $('music-file').value = ''; renderMusic();
   });
+  document.querySelectorAll('.voice-file').forEach(inp => inp.addEventListener('change', async () => {
+    for (const f of inp.files) { try { await API.uploadVoice(inp.dataset.slot, f); } catch (err) { toast(esc(err.message)); } }
+    inp.value = ''; reloadVoice();
+  }));
+  $('voice-gen').onclick = async () => {
+    const text = $('voice-text').value.trim(); if (!text) { $('voice-text').focus(); return; }
+    $('voice-gen').disabled = true; $('cine-msg').textContent = 'generating…';
+    try { await API.voiceTts(text, $('voice-slot').value); $('voice-text').value = ''; $('cine-msg').textContent = ''; await reloadVoice(); }
+    catch (err) { $('cine-msg').textContent = err.message; }
+    $('voice-gen').disabled = false;
+  };
+  $('voice-gen-all').onclick = async () => {
+    const presets = cineInfo?.voice?.presets || [];
+    $('voice-gen-all').disabled = true; $('voice-gen').disabled = true;
+    let failed = 0;
+    for (let i = 0; i < presets.length; i++) {
+      $('cine-msg').textContent = `generating ${i + 1}/${presets.length}: ${presets[i].text}`;
+      try { await API.voiceTts(presets[i].text, presets[i].slot); } catch (err) { failed++; toast(esc(err.message)); }
+    }
+    $('cine-msg').textContent = failed ? `${presets.length - failed} line(s) generated, ${failed} failed` : `${presets.length} line(s) generated`;
+    $('voice-gen-all').disabled = false; $('voice-gen').disabled = false;
+    await reloadVoice();
+  };
+  function collectCine() {
+    const settings = {};
+    for (const k of CINE_NUM) { const v = parseFloat($(k).value); if (!Number.isNaN(v)) settings[k] = v; }
+    for (const k of CINE_STR) settings[k] = String($(k).value);
+    for (const k of CINE_BOOL) settings[k] = !!$(k).checked;
+    return settings;
+  }
   let cinePoll = null;
   $('cine-go').onclick = async () => {
     try {
-      const r = await API.cinematic(id, null);
+      const which = $('cine-which-sel').checked ? 'sel' : 'all';
+      const ids = which === 'sel' ? selectedHighlights().filter(h => videoFor(h)).map(h => h.id) : null;
+      if (ids && !ids.length) { $('cine-msg').textContent = 'select at least one recorded highlight'; return; }
+      if (!ids && !videos.videos.some(v => !v.cine)) { $('cine-msg').textContent = 'every clip already has a cinematic version'; return; }
+      $('cine-go').disabled = true; $('cine-msg').textContent = 'starting…';
+      const r = await API.cinematic(id, ids, collectCine());
+      $('cine-go').disabled = false; $('cine-msg').textContent = '';
       $('music-modal').style.display = 'none';
-      toast(`Processing ${r.count} clip(s)… this takes a few minutes per clip.`, 5000);
+      toast(`Processing ${r.count} clip(s)… about half a minute per clip (longer with smooth frames).`, 5000);
+      if (cinePoll) clearInterval(cinePoll);
       cinePoll = setInterval(async () => {
         const st = await API.recordStatus().catch(() => null); const c = st?.cinematic;
         if (!c) return;
@@ -458,7 +562,7 @@
         $('recstatus').innerHTML = c.status === 'running' ? `✨ cinematic ${c.done + 1}/${c.total}: ${esc(c.current)}<span class="progress"><div style="width:${Math.round(100 * c.done / c.total)}%"></div></span>` : c.status === 'error' ? `cinematic failed: ${esc(c.error)}` : `✨ cinematic done: ${c.total} clip(s)`;
         if (c.status !== 'running') { clearInterval(cinePoll); cinePoll = null; await loadVideos(); renderHighlights(); }
       }, 2000);
-    } catch (e) { $('cine-msg').textContent = e.message; }
+    } catch (e) { $('cine-go').disabled = false; $('cine-msg').textContent = e.message; }
   };
   $('btn-export').onclick = async () => {
     try { const r = await API.exportVideos(id); toast(`${r.count} file(s) saved to <b>${esc(r.folder)}</b>`, 6000); }

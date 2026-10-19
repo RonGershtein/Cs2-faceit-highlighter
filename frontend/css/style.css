@@ -136,6 +136,7 @@ kbd { background: var(--bg-3); border: 1px solid var(--border-2); border-bottom-
 .modal[style*="none"] { opacity: 0; transition-duration: 150ms; }
 .modal[style*="none"] .modal-box { transform: scale(.98); transition-duration: 150ms; }
 .modal-box.wide { width: min(96vw, 1100px); }
+.modal-box.cine { width: min(96vw, 720px); max-height: 90vh; overflow-y: auto; }
 .modal-head { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; font-weight: 700; font-family: var(--font-display); font-size: 18px; text-transform: uppercase; letter-spacing: .06em; }
 .modal video { width: 100%; max-height: 78vh; background: #000; border-radius: 10px; }
 .field { display: grid; gap: 6px; margin-bottom: 12px; }
@@ -259,6 +260,38 @@ button.primary .rec-dot { background: var(--accent-ink); box-shadow: 0 0 0 2px r
 
 .field .row { display: flex; gap: 6px; }
 .field .row input { flex: 1; min-width: 0; }
+
+/* ---------- cinematic dialog ---------- */
+.opt { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--text); cursor: pointer; }
+.field .opt { font-size: 13px; font-weight: 500; color: var(--text); }
+.opt input[type=checkbox], .opt input[type=radio] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); cursor: pointer; }
+.opt:has(input:disabled), .opt.off { opacity: .45; cursor: not-allowed; }
+.opt-text { font-size: 13px; color: var(--text-2); white-space: nowrap; }
+.opt-text b { color: var(--text); font-variant-numeric: tabular-nums; }
+.cine-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; }
+.cine-grid > * { min-width: 0; }
+#music-dir, #voice-dir { overflow-wrap: anywhere; min-width: 0; }
+#music-list { display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; }
+.cine-grid .field { grid-template-columns: minmax(0, 1fr); padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-s); background: rgba(255,255,255,.02); align-content: start; }
+.cine-grid .field > label:first-child { font-family: var(--font-display); text-transform: uppercase; letter-spacing: .06em; font-size: 12px; }
+.cine-grid .field .row { align-items: center; gap: 8px; flex-wrap: wrap; }
+.cine-grid .field .row input[type=range] { flex: 1 1 110px; min-width: 110px; }
+.cine-grid .field .row select { flex: 1; min-width: 0; padding: 5px 26px 5px 8px; font-size: 13px; }
+.cine-slots { gap: 8px; margin: 2px 0 8px; grid-template-columns: repeat(3, 1fr); }
+.cine-slot { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-s); background: rgba(255,255,255,.02); align-content: start; min-width: 0; }
+.cine-slot .slot-name { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.cine-slot .slot-list { display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; }
+.cine-slot .pill, #music-list .pill { text-transform: none; letter-spacing: 0; font-family: var(--font); font-weight: 500; max-width: 100%; padding: 2px 4px 2px 8px; gap: 2px; }
+.cine-slot .pill .pill-name, #music-list .pill .pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.cine-slot .pill button, #music-list .pill button { padding: 1px 5px; }
+.cine-slot input[type=file], #music-file { font-size: 12px; color: var(--muted); max-width: 100%; }
+#voice-tts input[type=text] { flex: 1; min-width: 160px; padding: 6px 10px; font-size: 13px; }
+#voice-tts select { padding: 6px 26px 6px 8px; font-size: 13px; }
+input[type=range] { accent-color: var(--accent); flex: 1; min-width: 80px; height: 20px; margin: 0; cursor: pointer; background: transparent; }
+@media (max-width: 640px) {
+  .cine-grid, .cine-slots { grid-template-columns: 1fr; }
+  .opt-text { white-space: normal; }
+}
 
 /* ---------- motion preferences ---------- */
 @media (prefers-reduced-motion: reduce) {

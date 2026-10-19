@@ -7,7 +7,8 @@ Drop a FACEIT (or Valve MM) CS2 demo into a local web app and get:
 - per-match **stats** (K/D/A, ADR, HS%, KAST, rating) and a library of all your matches
 - **Open in CS2** at any highlight, or watch the whole demo in the game
 - **MP4 recording** of selected highlights (CS2 + HLAE + FFmpeg, first-person, with game audio), a combined reel, a **long video** from any clips you pick,
-  and a **cinematic** version with slow-motion on the final kill and your own music
+  and a **cinematic** version: slow motion on the kills, dead time fast-forwarded or cut, your own music started at its drop,
+  zoom punch and flash on kills, title card ("TRIPLE KILL", "ACE", "1v3 CLUTCH"), kill counter and voice lines
 
 Everything runs on your PC. Nothing is uploaded anywhere.
 
@@ -87,9 +88,23 @@ Match cards show the score from your side, win/loss, your K/D/A, ADR, HS% and ra
 
 CS2 runs with `-insecure` while recording, which only disables VAC for that session. When you want to play, start CS2 normally from Steam as usual.
 
-### Cinematic clips (slow motion + music)
-Click **✨ Cinematic**, add one or more music files (MP3/M4A/WAV; use royalty-free music if you plan to publish), then **Make cinematic versions**.
-The final kill of each clip gets a slow-motion moment, the music plays under the game sound, and a `reel_cinematic.mp4` is built. Takes ~5 s per clip.
+### Cinematic clips
+Click **✨ Cinematic**. The dialog has every option, remembers them, and processes either all clips without a cinematic version or the
+highlights you ticked (those are remade). A `reel_cinematic.mp4` of all cinematic clips is built afterwards. Takes ~15-30 s per clip
+(much longer with "smooth frames").
+
+- **Pace:** dead time between kills (walking, waiting) is fast-forwarded at 6x by default, or cut out, with normal speed from
+  2 s before each kill. Nothing is re-recorded; the clip's kill ticks from the demo decide where the action is.
+- **Slow motion** on the final kill or every kill, with a speed ramp in and out.
+- **Effects:** zoom punch and flash on each kill, vignette and colour grade, fade in/out.
+- **Text:** a title card for the first seconds (TRIPLE KILL / ACE / 1v3 CLUTCH, then "3K · player · map · round") and a kill counter.
+  Uses Bahnschrift or Arial from Windows; drop any `.ttf` into `assets/fonts/` to use that instead.
+- **Music:** add MP3/M4A/WAV files (royalty-free if you plan to publish). A random track or the one you pick plays under the game sound.
+  With "start the track at its drop" the app measures the track's loudness, finds the biggest sustained rise (the drop) and starts the
+  music so the drop lands exactly on the slow-motion kill.
+- **Voice lines:** short sound bites in `data/voice/start`, `data/voice/kill` and `data/voice/final` play at the clip start, on every
+  kill but the last, and right after the final kill. Add your own files, or type a line ("Are you kidding me?!") and generate it with the
+  Windows voice; the famous caster lines are there as one-click presets.
 
 ### Config file
 `config.toml` is created next to `start.bat` on first run. Most of it is editable from Settings; the rest:
@@ -100,10 +115,7 @@ The final kill of each clip gets a slow-motion moment, the music plays under the
 | `record_width` / `record_height` / `record_fps` | 1920 / 1080 / 60 | recording resolution and frame rate |
 | `record_crf` | 20 | x264 quality, lower = better and bigger |
 | `record_close_game` | true | quit CS2 after the last clip |
-| `cine_slow` | 0.35 | slow-motion speed |
-| `cine_kills` | "last" | `last` or `all` kills get slow motion |
-| `cine_smooth` | false | motion-interpolated slow motion (much slower to encode) |
-| `cine_game_volume` / `cine_music_volume` | 0.35 / 0.7 | audio mix |
+| `cine_*` | | every option of the Cinematic dialog (slow motion, pace, effects, text, music, voice); the dialog writes them |
 
 Restart the app after editing the file by hand.
 
