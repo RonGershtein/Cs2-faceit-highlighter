@@ -112,8 +112,9 @@ highlights you ticked (those are remade). A `reel_cinematic.mp4` of all cinemati
   (`ace`, `clutch`, `multikill`, `knife`, `ninja_defuse`) or, for the kill slot, the kill number (`2`, `3`, `4`, `5`) wins when it has
   files, otherwise a general line from the slot plays. Click a line in the dialog to pin it: a slot with pinned lines only uses those.
   The "new lines are for" selector puts uploads and generated lines in the right folder. Type a line ("Are you kidding me?!") and
-  generate it with a neural voice (Microsoft Edge's online voices through `edge-tts`; the offline Windows voice is the fallback);
-  the famous caster lines are one-click presets. Untick "play caster voice lines" for a clean clip. The clip runs on until the last
+  generate it with a neural voice (Microsoft Edge's online voices through `edge-tts`; the offline Windows voice is the fallback).
+  "Stadium sound" pushes the generated line through broadcast compression, a little arena echo and a crowd bed
+  (`data/voice/_crowd.mp3` if you put one there, otherwise synthetic noise). The famous caster lines are one-click presets. Untick "play caster voice lines" for a clean clip. The clip runs on until the last
   line has finished.
 
 ### Config file

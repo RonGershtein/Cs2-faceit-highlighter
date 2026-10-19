@@ -35,7 +35,7 @@ CARD_BG = "0x2a2f3a"                   # blank avatar colour
 OPTION_KEYS = ("cine_slow", "cine_kills", "cine_smooth", "cine_game_volume", "cine_music_volume", "cine_music",
                "cine_music_sync", "cine_trim", "cine_trim_lead", "cine_fast", "cine_ramp", "cine_impact", "cine_look",
                "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice", "cine_voice_volume",
-               "cine_voice_pick", "cine_tts_voice")
+               "cine_voice_pick", "cine_tts_voice", "cine_tts_fx")
 TRIM_MODES = ("off", "cut", "fast")   # dead time between kills: keep / drop / fast-forward
 
 Seg = tuple[float, float, float]   # (start, end, speed) in source seconds; speed 1.0 = normal, 0.35 = slow motion

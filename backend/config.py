@@ -51,6 +51,7 @@ DEFAULTS: dict = {
     "cine_voice_volume": 1.0,
     "cine_voice_pick": "",      # JSON {"start": [...], "kill": [...], "final": [...]} of pinned lines; empty = random
     "cine_tts_voice": "en-US-ChristopherNeural",   # voice for generated lines ("windows" = offline voice)
+    "cine_tts_fx": True,        # stadium treatment for generated lines: compression, arena echo, crowd bed
 }
 
 

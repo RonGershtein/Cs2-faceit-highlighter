@@ -457,6 +457,7 @@ class TtsIn(BaseModel):
     slot: str = "final"
     sub: str = ""          # situation sub-folder: highlight type for start/final, kill number for kill
     voice: str = ""        # TTS voice id (see voice.TTS_VOICES); empty -> the saved cine_tts_voice
+    fx: bool | None = None  # stadium treatment; None -> the saved cine_tts_fx
 
 
 @app.post("/api/voice/tts")
@@ -466,11 +467,14 @@ def voice_tts(body: TtsIn):
 
     if body.slot not in voice.SLOTS:
         raise HTTPException(400, "unknown slot")
-    vid = body.voice or str(cfgmod.load().get("cine_tts_voice") or "")
-    if body.voice:
-        cfgmod.update(cine_tts_voice=body.voice)
+    cfg = cfgmod.load()
+    vid = body.voice or str(cfg.get("cine_tts_voice") or "")
+    fx = bool(cfg.get("cine_tts_fx", True)) if body.fx is None else bool(body.fx)
+    changes = {k: v for k, v in (("cine_tts_voice", body.voice or None), ("cine_tts_fx", body.fx)) if v is not None}
+    if changes:
+        cfgmod.update(**changes)
     try:
-        p = voice.tts(body.text, body.slot, sub=body.sub, voice_id=vid)
+        p = voice.tts(body.text, body.slot, sub=body.sub, voice_id=vid, ffmpeg=_rec().FFMPEG_EXE, fx=fx)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, str(e))
     return {"ok": True, "file": (body.sub + "/" if body.sub else "") + p.name, "slot": body.slot}

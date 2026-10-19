@@ -70,7 +70,7 @@ def subs_present(slot: str) -> list[str]:
 def listing() -> dict:
     """Names are relative to the slot: 'x.mp3' is generic, 'ace/x.mp3' plays only for aces."""
     return {"dir": str(VOICE_DIR), "slots": {s: listing_names(s) for s in SLOTS}, "subs": SUBS, "tts": tts_available(),
-            "tts_voices": TTS_VOICES, "presets": PRESETS}
+            "tts_voices": TTS_VOICES, "presets": PRESETS, "crowd_bed": CROWD_BED.is_file()}
 
 
 def split_name(name: str) -> tuple[str, str]:
@@ -167,7 +167,7 @@ def edge_available() -> bool:
         return False
 
 
-def tts_edge(text: str, dst: Path, voice_id: str, rate: str = "+12%", pitch: str = "+8Hz") -> Path:
+def tts_edge(text: str, dst: Path, voice_id: str, rate: str = "+18%", pitch: str = "+10Hz") -> Path:
     import asyncio
     import edge_tts
 
@@ -195,9 +195,55 @@ def _win_path(p: Path) -> str:
     return r.stdout.strip() or str(p)
 
 
-def tts(text: str, slot: str, rate: int = 2, sub: str = "", voice_id: str = "") -> Path:
+CROWD_BED = VOICE_DIR / "_crowd.mp3"   # optional crowd-noise bed for the stadium effect (any audio file works)
+
+
+def caster_fx_args(ffmpeg: Path, src: Path, dst: Path, bed: Path | None, crowd_vol: float = 0.22) -> list[str]:
+    """FFmpeg command that makes a dry TTS line sound like a caster on a stage mic: push and compress the voice,
+    a little arena slap-back, a crowd bed underneath (the file `bed`, or synthetic noise), loudness-normalised.
+    Pure function; unit-tested."""
+    voice = ("[0:a]aresample=44100,highpass=f=110,lowpass=f=9000,"
+             "acompressor=threshold=-20dB:ratio=5:attack=4:release=90:makeup=4,"
+             "aecho=0.75:0.35:45|85:0.22|0.12,volume=1.2[v]")
+    args = [str(ffmpeg), "-y", "-i", str(src)]
+    if bed and bed.is_file():
+        args += ["-stream_loop", "-1", "-i", str(bed)]
+        crowd = f"[1:a]aresample=44100,volume={crowd_vol:.2f}[c]"
+    else:
+        args += ["-f", "lavfi", "-i", "anoisesrc=color=pink:sample_rate=44100:amplitude=0.5"]
+        crowd = f"[1:a]bandpass=f=900:width_type=o:w=2.2,tremolo=f=0.6:d=0.4,volume={crowd_vol * 0.5:.2f}[c]"
+    graph = (f"{voice};{crowd};[v][c]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+             "afade=t=in:st=0:d=0.05,loudnorm=I=-16:TP=-1.5:LRA=7[out]")
+    return args + ["-filter_complex", graph, "-map", "[out]", "-c:a", "libmp3lame", "-q:a", "2", str(dst)]
+
+
+def caster_fx(ffmpeg: Path, src: Path) -> Path:
+    """Apply the stadium treatment in place (the result is always an .mp3 next to `src`; a .wav source is removed)."""
+    dst = src.with_suffix(".mp3")
+    tmp = src.with_name(src.stem + ".fx.tmp.mp3")
+    r = subprocess.run(caster_fx_args(ffmpeg, src, tmp, CROWD_BED if CROWD_BED.is_file() else None),
+                       capture_output=True, text=True)
+    if r.returncode != 0 or not tmp.exists():
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError("ffmpeg failed: " + r.stderr[-300:])
+    if src != dst:
+        src.unlink(missing_ok=True)
+    tmp.replace(dst)
+    return dst
+
+
+def tts(text: str, slot: str, rate: int = 2, sub: str = "", voice_id: str = "", ffmpeg: Path | None = None,
+        fx: bool = False) -> Path:
     """Speak `text` into data/voice/<slot>[/<sub>]/<slug>.mp3 with a neural voice (edge-tts), or .wav with the
-    Windows voice when voice_id is "windows" or edge-tts is unavailable / offline."""
+    Windows voice when voice_id is "windows" or edge-tts is unavailable / offline. fx=True (needs ffmpeg) runs the
+    stadium treatment afterwards (caster_fx)."""
+    p = _tts_raw(text, slot, rate, sub, voice_id)
+    if fx and ffmpeg and Path(ffmpeg).exists():
+        p = caster_fx(Path(ffmpeg), p)
+    return p
+
+
+def _tts_raw(text: str, slot: str, rate: int, sub: str, voice_id: str) -> Path:
     text = " ".join(str(text).split())
     if not text:
         raise ValueError("empty text")

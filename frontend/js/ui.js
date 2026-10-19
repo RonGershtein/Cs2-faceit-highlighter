@@ -431,7 +431,7 @@
   const CINE_NUM = ['cine_slow', 'cine_game_volume', 'cine_music_volume', 'cine_trim_lead', 'cine_fast', 'cine_voice_volume'];
   const CINE_STR = ['cine_kills', 'cine_music', 'cine_trim'];
   let voicePins = { start: [], kill: [], final: [] };   // cine_voice_pick: pinned lines per slot (empty = random)
-  const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_card', 'cine_voice'];
+  const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_card', 'cine_voice', 'cine_tts_fx'];
   const VOICE_SLOTS = ['start', 'kill', 'final'];
   const VOICE_SUB_LABEL = { ace: 'ace', clutch: 'clutch', multikill: 'multikill', knife: 'knife', ninja_defuse: 'ninja', 2: '2nd kill', 3: '3rd kill', 4: '4th kill', 5: '5th kill' };
   let cineInfo = null;
@@ -537,7 +537,7 @@
   $('voice-gen').onclick = async () => {
     const text = $('voice-text').value.trim(); if (!text) { $('voice-text').focus(); return; }
     $('voice-gen').disabled = true; $('cine-msg').textContent = 'generating…';
-    try { await API.voiceTts(text, $('voice-slot').value, $('voice-sub').value, $('voice-voice').value); $('voice-text').value = ''; $('cine-msg').textContent = ''; await reloadVoice(); }
+    try { await API.voiceTts(text, $('voice-slot').value, $('voice-sub').value, $('voice-voice').value, $('cine_tts_fx').checked); $('voice-text').value = ''; $('cine-msg').textContent = ''; await reloadVoice(); }
     catch (err) { $('cine-msg').textContent = err.message; }
     $('voice-gen').disabled = false;
   };
@@ -547,7 +547,7 @@
     let failed = 0;
     for (let i = 0; i < presets.length; i++) {
       $('cine-msg').textContent = `generating ${i + 1}/${presets.length}: ${presets[i].text}`;
-      try { await API.voiceTts(presets[i].text, presets[i].slot, presets[i].sub || '', $('voice-voice').value); } catch (err) { failed++; toast(esc(err.message)); }
+      try { await API.voiceTts(presets[i].text, presets[i].slot, presets[i].sub || '', $('voice-voice').value, $('cine_tts_fx').checked); } catch (err) { failed++; toast(esc(err.message)); }
     }
     $('cine-msg').textContent = failed ? `${presets.length - failed} line(s) generated, ${failed} failed` : `${presets.length} line(s) generated`;
     $('voice-gen-all').disabled = false; $('voice-gen').disabled = false;
