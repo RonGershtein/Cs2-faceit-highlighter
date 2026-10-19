@@ -41,6 +41,9 @@ def speakable(name: str) -> str | None:
         worst = max(worst, run)
     if vowels / len(letters) < 0.2 or worst >= 5 or len(letters) > 14:
         return None
+    # inner capitals (vALenk, InvviS) make a voice spell the letters: speak them as one lowercase word
+    if sum(1 for ch in n[1:] if ch.isupper()) >= 1:
+        n = n[0] + n[1:].lower()
     return n
 
 

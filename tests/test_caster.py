@@ -73,6 +73,7 @@ def test_schedule_prefers_the_short_form_over_dropping():
 def test_speakable_names():
     assert caster.speakable("qwqwqwqwwqwq") is None          # no vowels -> spelled out by a voice
     assert caster.speakable("Sniiitch_") == "Sniiitch"
+    assert caster.speakable("vALenk") == "valenk" and caster.speakable("InvviS") == "Invvis"
     assert caster.speakable("s1mple") == "s1mple" and caster.speakable("holyshnizel") == "holyshnizel"
     assert caster.speakable("xXx_Pr0_xXx") is None and caster.speakable("Devqin") == "Devqin"
 
