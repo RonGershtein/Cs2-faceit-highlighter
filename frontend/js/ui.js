@@ -462,6 +462,7 @@
     $('cine-font-warn').style.display = fontOk ? 'none' : '';
     for (const k of ['cine_title', 'cine_counter', 'cine_card']) { $(k).disabled = !fontOk; $(k + '-opt').classList.toggle('off', !fontOk); }
     cinePaceVis();
+    voiceVis();
   }
   function renderMusicList(files, dir) {
     $('music-dir').textContent = dir || '';
@@ -492,6 +493,8 @@
   }
   document.querySelectorAll('#music-modal input[type=range]').forEach(el => el.addEventListener('input', () => cineRangeLabel(el)));
   $('cine_trim').addEventListener('change', cinePaceVis);
+  const voiceVis = () => { const on = $('cine_voice').checked; $('voice-body').classList.toggle('off', !on); $('cine_voice_volume').disabled = !on; };
+  $('cine_voice').addEventListener('change', voiceVis);
   $('btn-cine').onclick = async () => {
     $('cine-msg').textContent = '';
     $('music-modal').style.display = '';

@@ -152,10 +152,11 @@
   <div class="field"><label>Voice lines</label>
     <p class="muted" style="margin:0 0 6px">Lines are picked by what happened: an ace gets the ace lines, a clutch the clutch lines, the 3rd kill the "3rd kill" lines. Without a matching line a general one plays.</p>
     <div class="row" style="flex-wrap:wrap;align-items:center;gap:12px">
-      <label class="opt" style="margin:0"><input type="checkbox" id="cine_voice"> play voice lines</label>
+      <label class="opt" style="margin:0;font-weight:700"><input type="checkbox" id="cine_voice"> play caster voice lines <span class="hint" style="font-weight:500">(untick for a clean cinematic clip with just the game sound and music)</span></label>
       <span class="opt-text">volume <b id="cine_voice_volume-val">100%</b></span>
       <input type="range" id="cine_voice_volume" min="0" max="1.5" step="0.05" value="1" data-fmt="pct" style="flex:1;min-width:120px">
     </div>
+    <div id="voice-body">
     <div class="cine-grid cine-slots">
       <div class="cine-slot" data-slot="start"><div class="slot-name">at the start</div><div class="slot-list muted" id="voice-list-start">none</div>
         <input type="file" class="voice-file" data-slot="start" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" multiple></div>
@@ -176,6 +177,7 @@
     </div>
     <span class="hint" id="voice-tts-hint" style="display:none">generating lines from text needs Windows</span>
     <span class="hint" id="voice-dir"></span>
+    </div>
   </div>
 
   <div class="modal-foot"><span class="muted" id="cine-msg"></span><button class="primary" id="cine-go">✨ Make cinematic versions</button></div>
