@@ -104,13 +104,15 @@ def slug(text: str) -> str:
     return (s[:48].rstrip("-") or "line")
 
 
-def cut(ffmpeg: Path, src: Path, start: float, end: float, slot: str, name: str, pad: float = 0.08,
-        sub: str = "") -> Path:
-    """Cut [start, end] of a longer recording into data/voice/<slot>[/<sub>]/<name>.mp3 with a short fade on both ends."""
+def cut(ffmpeg: Path, src: Path, start: float, end: float, slot: str, name: str, pad: float = 0.25,
+        sub: str = "", fade_out: float = 0.35) -> Path:
+    """Cut [start, end] of a longer recording into data/voice/<slot>[/<sub>]/<name>.mp3.
+    `end` should be where the voice actually stops (not the last word's end); `pad` is added after it and the
+    tail fades over `fade_out` seconds so crowd noise tapers instead of stopping dead."""
     dst = slot_dir(slot, sub) / f"{slug(name)}.mp3"
-    a, b = max(0.0, start - pad), end + pad
+    a, b = max(0.0, start - 0.1), end + pad
     r = subprocess.run([str(ffmpeg), "-v", "error", "-y", "-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", str(src),
-                        "-af", f"afade=t=in:st=0:d=0.05,afade=t=out:st={max(0.0, b - a - 0.12):.3f}:d=0.12",
+                        "-af", f"afade=t=in:st=0:d=0.08,afade=t=out:st={max(0.0, b - a - fade_out):.3f}:d={fade_out:.2f}",
                         "-c:a", "libmp3lame", "-q:a", "3", str(dst)], capture_output=True, text=True)
     if r.returncode != 0 or not dst.exists():
         raise RuntimeError("ffmpeg failed: " + r.stderr[-300:])
