@@ -26,6 +26,15 @@ def test_build_cfg_schedules_in_order_and_quits():
     assert rec_name == "cs2watcher/demo/seq1" and ":" not in rec_name and " " not in rec_name
 
 
+def test_build_cfg_hides_demo_ui_once_before_recording():
+    hs = [hl(0, 5000, 5600), hl(1, 9000, 9500)]
+    text, _ = build_cfg(hs, Path("C:/x/raw"), {}, {}, 64)
+    lines = text.splitlines()
+    assert lines.count("mirv_cmd addAtTick 4952 demoui") == 1           # toggle: exactly once, at the first setup
+    assert "demoui" not in "".join(lines[:lines.index("mirv_cmd enabled 1") + 1])
+    assert lines.index("mirv_cmd addAtTick 4952 demoui") < lines.index("mirv_cmd addAtTick 5000 mirv_streams record start")
+
+
 def test_build_cfg_separates_overlapping_windows():
     hs = [hl(0, 5000, 5600), hl(1, 5610, 5800)]
     text, seqs = build_cfg(hs, Path("C:/x/raw"), {}, {}, 64)

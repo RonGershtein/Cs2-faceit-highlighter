@@ -255,6 +255,12 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
             f'spec_mode 1; spec_player {token}; echo [cs2watcher] seq {i} ready"',
             f"mirv_cmd addAtTick {jump_from} demo_gototick {setup - 1}",
             f"mirv_cmd addAtTick {setup} hl_s{i}",
+        ]
+        if i == 1:
+            # the demo playback panel is open while the demo plays; `demoui` toggles it, so close it once
+            # (scheduled on a demo tick: run straight from the cfg it would fire before the demo has loaded)
+            lines.append(f"mirv_cmd addAtTick {setup} demoui")
+        lines += [
             f"mirv_cmd addAtTick {start} mirv_streams record start",
             f"mirv_cmd addAtTick {end} mirv_streams record end",
         ]
