@@ -535,7 +535,8 @@
     const fx = [on('cine_impact') && 'kill punch', on('cine_look') && 'cinematic look', on('cine_fade') && 'fades'].filter(Boolean); if (fx.length) parts.push(fx.join(', '));
     const txt = [on('cine_title') && 'title card', on('cine_counter') && 'kill counter', on('cine_card') && 'player card'].filter(Boolean); if (txt.length) parts.push(txt.join(', '));
     const nMusic = $('cine_music').options.length - 1; parts.push(nMusic ? ($('cine_music').value ? `music: ${$('cine_music').value}` : 'music: random track') : 'no music yet');
-    parts.push(!on('cine_voice') ? 'casters off' : on('cine_commentary') ? 'full caster commentary' : 'caster voice lines');
+    const pinned = Object.values(voicePins).reduce((a, l) => a + l.length, 0);
+    parts.push(!on('cine_voice') ? 'casters off' : on('cine_commentary') ? 'full caster commentary' : `caster voice lines${pinned ? ` (${pinned} ticked)` : ' (random)'}`);
     $('cine-summary').innerHTML = parts.map(x => `<span class="pill">${esc(x)}</span>`).join('');
   }
   function fillCine(info) {
@@ -574,7 +575,7 @@
       const files = slots[slot] || [];
       const label = (f) => { const i = f.indexOf('/'); return i < 0 ? esc(f) : `<b class="voice-tag">${esc(VOICE_SUB_LABEL[f.slice(0, i)] || f.slice(0, i))}</b> ${esc(f.slice(i + 1))}`; };
       voicePins[slot] = (voicePins[slot] || []).filter(n => files.includes(n));
-      $('voice-list-' + slot).innerHTML = files.length ? files.map(f => `<span class="pill voice-pill ${voicePins[slot].includes(f) ? 'pinned' : ''}" data-slot="${slot}" data-name="${esc(f)}" title="${esc(f)} — click to pin / unpin"><span class="pill-name">${voicePins[slot].includes(f) ? '📌 ' : ''}${label(f)}</span>
+      $('voice-list-' + slot).innerHTML = files.length ? files.map(f => `<span class="pill voice-pill ${voicePins[slot].includes(f) ? 'pinned' : ''}" data-slot="${slot}" data-name="${esc(f)}" title="${esc(f)} — tick to use only this line (and other ticked ones); none ticked = any line of the slot"><input type="checkbox" class="voice-use" ${voicePins[slot].includes(f) ? 'checked' : ''} aria-label="Use ${esc(f)}"><span class="pill-name">${label(f)}</span>
         <button class="small ghost voice-play" data-slot="${slot}" data-name="${esc(f)}" title="preview" aria-label="Play ${esc(f)}">▶</button><button class="small ghost voice-del" data-slot="${slot}" data-name="${esc(f)}" title="delete" aria-label="Delete ${esc(f)}">✕</button></span>`).join('') : '<span class="muted">none</span>';
     }
     $('voice-dir').textContent = v?.dir || '';
@@ -591,7 +592,7 @@
   }
   document.querySelectorAll('#music-modal input[type=range]').forEach(el => el.addEventListener('input', () => cineRangeLabel(el)));
   $('cine_trim').addEventListener('change', cinePaceVis);
-  const voiceVis = () => { const on = $('cine_voice').checked; $('voice-body').classList.toggle('off', !on); $('cine_voice_volume').disabled = !on; };
+  const voiceVis = () => { const on = $('cine_voice').checked; $('voice-body').classList.toggle('off', !on); $('cine_voice_volume').disabled = !on; $('voice-off-hint').style.display = on ? 'none' : ''; };
   $('cine_voice').addEventListener('change', voiceVis);
   $('btn-cine').onclick = async () => {
     $('cine-msg').textContent = '';
@@ -609,13 +610,14 @@
   $('music-close').onclick = () => $('music-modal').style.display = 'none';
   $('music-modal').addEventListener('click', async (e) => {
     if (e.target === $('music-modal')) $('music-modal').style.display = 'none';
+    if (e.target.classList?.contains('voice-use')) e.preventDefault();   // the pill click below does the toggle
     const d = e.target.closest('.del-music'); if (d) { if (!confirm(`Remove the track "${d.dataset.name}"?`)) return; try { await API.deleteMusic(d.dataset.name); } catch (err) { toast(esc(err.message)); } renderMusic(); return; }
     const pl = e.target.closest('.voice-play'); if (pl) { new Audio(API.voiceUrl(pl.dataset.slot, pl.dataset.name)).play().catch(err => toast(esc(err.message))); return; }
     const vd = e.target.closest('.voice-del'); if (vd) { if (!confirm(`Delete the voice line "${vd.dataset.name}"?`)) return; try { await API.deleteVoice(vd.dataset.slot, vd.dataset.name); } catch (err) { toast(esc(err.message)); } reloadVoice(); return; }
     const vp = e.target.closest('.voice-pill'); if (vp) {
       const { slot, name } = vp.dataset; const arr = voicePins[slot] || (voicePins[slot] = []);
       const i = arr.indexOf(name); if (i < 0) arr.push(name); else arr.splice(i, 1);
-      renderVoice(cineInfo?.voice);
+      renderVoice(cineInfo?.voice); cineSummary();
     }
   });
   $('music-file').addEventListener('change', async () => {
