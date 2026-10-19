@@ -507,6 +507,17 @@
     $('cine-which-sel').checked = nSel > 0; $('cine-which-all').checked = nSel === 0;
     return { nAll, nSel };
   }
+  function cineSummary() {
+    const on = (k) => $(k).checked;
+    const parts = [];
+    parts.push(`slow motion ${Math.round(parseFloat($('cine_slow').value) * 100)}% on ${$('cine_kills').value === 'all' ? 'every kill' : 'the final kill'}`);
+    const trim = $('cine_trim').value; parts.push(trim === 'fast' ? `dead time fast-forwarded ${$('cine_fast').value}×` : trim === 'cut' ? 'dead time cut out' : 'full length');
+    const fx = [on('cine_impact') && 'kill punch', on('cine_look') && 'cinematic look', on('cine_fade') && 'fades'].filter(Boolean); if (fx.length) parts.push(fx.join(', '));
+    const txt = [on('cine_title') && 'title card', on('cine_counter') && 'kill counter', on('cine_card') && 'player card'].filter(Boolean); if (txt.length) parts.push(txt.join(', '));
+    const nMusic = $('cine_music').options.length - 1; parts.push(nMusic ? ($('cine_music').value ? `music: ${$('cine_music').value}` : 'music: random track') : 'no music yet');
+    parts.push(!on('cine_voice') ? 'casters off' : on('cine_commentary') ? 'full caster commentary' : 'caster voice lines');
+    $('cine-summary').innerHTML = parts.map(x => `<span class="pill">${esc(x)}</span>`).join('');
+  }
   function fillCine(info) {
     const st = info.settings || {};
     for (const k of CINE_NUM) if (st[k] != null) { $(k).value = st[k]; }
@@ -518,7 +529,15 @@
     for (const k of ['cine_title', 'cine_counter', 'cine_card']) { $(k).disabled = !fontOk; $(k + '-opt').classList.toggle('off', !fontOk); }
     cinePaceVis();
     voiceVis();
+    cineSummary();
   }
+  $('cine-advanced-btn').onclick = () => {
+    const adv = $('cine-advanced'); const open = adv.style.display === 'none';
+    adv.style.display = open ? '' : 'none';
+    $('cine-advanced-btn').textContent = open ? '▲ Hide the options' : '⚙ Edit cinematic options';
+    if (!open) cineSummary();
+  };
+  $('music-modal').addEventListener('change', cineSummary);
   function renderMusicList(files, dir) {
     $('music-dir').textContent = dir || '';
     $('music-list').innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${esc(f)}</span><button class="small ghost del-music" data-name="${esc(f)}" title="remove">✕</button></span>`).join('') : '<span class="muted">none yet — slow motion only</span>';
@@ -557,6 +576,7 @@
   $('btn-cine').onclick = async () => {
     $('cine-msg').textContent = '';
     $('music-modal').style.display = '';
+    $('cine-advanced').style.display = 'none'; $('cine-advanced-btn').textContent = '⚙ Edit cinematic options';
     cineCounts();
     try {
       cineInfo = await API.cineSettings();

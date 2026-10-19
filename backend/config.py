@@ -47,7 +47,7 @@ DEFAULTS: dict = {
     "cine_title": True,        # title card (3K / ACE / clutch, player, map, round)
     "cine_counter": True,      # kill counter in the corner
     "cine_card": True,         # player card: round avatar (data/players/<steam64>.png, blank until added) + nickname
-    "cine_voice": True,        # play voice lines from data/voice (start / kill / final) when there are any
+    "cine_voice": False,       # caster voice lines from data/voice (start / kill / final); off until turned on
     "cine_voice_volume": 1.0,
     "cine_voice_pick": "",      # JSON {"start": [...], "kill": [...], "final": [...]} of pinned lines; empty = random
     "cine_tts_voice": "en-US-ChristopherNeural",   # voice for generated lines ("windows" = offline voice)

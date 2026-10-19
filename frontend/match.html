@@ -104,13 +104,16 @@
 </div></div>
 <div class="modal" id="music-modal" style="display:none"><div class="modal-box cine">
   <div class="modal-head">✨ Cinematic clips <span class="spacer"></span><button class="small ghost" id="music-close">✕</button></div>
-  <p class="muted" style="margin:0 0 12px">Slow motion on the kills, music under the game sound, a title card and effects. Your settings are remembered.</p>
+  <p class="muted" style="margin:0 0 12px">One click makes the cinematic version: slow motion on the kills, dead time fast-forwarded, music under the game sound, title card, kill counter and player card. The casters are off unless you turn them on in the options.</p>
 
   <div class="field"><label>Clips</label>
     <label class="opt"><input type="radio" name="cine-which" id="cine-which-all" value="all"> <span>all clips without a cinematic version (<span id="cine-n-all">0</span>)</span></label>
     <label class="opt"><input type="radio" name="cine-which" id="cine-which-sel" value="sel"> <span>the selected highlights (<span id="cine-n-sel">0</span>) – existing cinematic versions are remade</span></label>
   </div>
 
+  <div class="cine-summary" id="cine-summary"></div>
+  <div class="row" style="margin:4px 0 12px"><button class="small" id="cine-advanced-btn">⚙ Edit cinematic options</button></div>
+  <div id="cine-advanced" style="display:none">
   <div class="cine-grid">
     <div class="field"><label>Pace</label>
       <div class="row"><span class="opt-text">dead time between kills</span>
@@ -181,7 +184,9 @@
     </div>
   </div>
 
-  <div class="modal-foot"><span class="muted" id="cine-msg"></span><button class="small" id="cine-join" title="join every cinematic clip of this match, in match order, into one video">🎬 One video of all cinematic clips (<span id="cine-n-join">0</span>)</button><button class="primary" id="cine-go">✨ Make cinematic versions</button></div>
+  <div class="row" style="margin:6px 0 10px"><button class="small" id="cine-join" title="join every cinematic clip of this match, in match order, into one video">🎬 One video of all cinematic clips (<span id="cine-n-join">0</span>)</button></div>
+  </div>
+  <div class="modal-foot"><span class="muted" id="cine-msg"></span><button class="primary" id="cine-go">✨ Create cinematic</button></div>
 </div></div>
 <div class="modal" id="caster-modal" style="display:none"><div class="modal-box cine">
   <div class="modal-head">🎙 Full caster <span class="spacer"></span><button class="small ghost" id="caster-close">✕</button></div>
