@@ -536,7 +536,7 @@
     const txt = [on('cine_title') && 'title card', on('cine_counter') && 'kill counter', on('cine_card') && 'player card'].filter(Boolean); if (txt.length) parts.push(txt.join(', '));
     const nMusic = $('cine_music').options.length - 1; parts.push(nMusic ? ($('cine_music').value ? `music: ${$('cine_music').value}` : 'music: random track') : 'no music yet');
     const pinned = Object.values(voicePins).reduce((a, l) => a + l.length, 0);
-    parts.push(!on('cine_voice') ? 'casters off' : on('cine_commentary') ? 'full caster commentary' : `caster voice lines${pinned ? ` (${pinned} ticked)` : ' (random)'}`);
+    parts.push(!on('cine_voice') ? 'casters off' : `real caster lines${pinned ? ` (${pinned} ticked)` : ' (random)'}`);
     $('cine-summary').innerHTML = parts.map(x => `<span class="pill">${esc(x)}</span>`).join('');
   }
   function fillCine(info) {
@@ -641,6 +641,7 @@
     for (const k of CINE_STR) settings[k] = String($(k).value);
     for (const k of CINE_BOOL) settings[k] = !!$(k).checked;
     settings.cine_voice_pick = JSON.stringify(voicePins);
+    settings.cine_commentary = false;   // the plain Cinematic dialog never generates commentary; only 🎙 Full caster does
     settings.cine_tts_voice = $('voice-voice').value || '';
     return settings;
   }
