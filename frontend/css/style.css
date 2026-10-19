@@ -285,6 +285,8 @@ button.primary .rec-dot { background: var(--accent-ink); box-shadow: 0 0 0 2px r
 .cine-slot .pill .pill-name, #music-list .pill .pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .cine-slot .pill button, #music-list .pill button { padding: 1px 5px; }
 #voice-body.off { opacity: .4; pointer-events: none; }
+.voice-pill { cursor: pointer; }
+.voice-pill.pinned { border-color: rgba(245,166,35,.7); background: rgba(245,166,35,.12); color: var(--text); }
 .voice-tag { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .cine-slot input[type=file], #music-file { font-size: 12px; color: var(--muted); max-width: 100%; }
 #voice-tts input[type=text] { flex: 1; min-width: 160px; padding: 6px 10px; font-size: 13px; }

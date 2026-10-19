@@ -69,13 +69,8 @@ def subs_present(slot: str) -> list[str]:
 
 def listing() -> dict:
     """Names are relative to the slot: 'x.mp3' is generic, 'ace/x.mp3' plays only for aces."""
-    slots = {}
-    for s in SLOTS:
-        names = [p.name for p in files(s)]
-        for sub in subs_present(s):
-            names += [f"{sub}/{p.name}" for p in files(s, sub)]
-        slots[s] = names
-    return {"dir": str(VOICE_DIR), "slots": slots, "subs": SUBS, "tts": tts_available(), "presets": PRESETS}
+    return {"dir": str(VOICE_DIR), "slots": {s: listing_names(s) for s in SLOTS}, "subs": SUBS, "tts": tts_available(),
+            "tts_voices": TTS_VOICES, "presets": PRESETS}
 
 
 def split_name(name: str) -> tuple[str, str]:
@@ -86,8 +81,18 @@ def split_name(name: str) -> tuple[str, str]:
     return (parts[0], parts[1]) if len(parts) == 2 else ("", parts[0])
 
 
-def pick(slot: str, prefer: list[str] | None = None) -> Path | None:
-    """A random line: from the first preferred sub-folder that has files, else a generic one."""
+def pick(slot: str, prefer: list[str] | None = None, pinned: list[str] | None = None) -> Path | None:
+    """A random line for a slot. `pinned` (slot-relative names such as 'x.mp3' or 'ace/x.mp3') restricts the choice
+    to those lines; among them a line from the first preferred sub-folder wins, else any pinned line. Without pins:
+    the first preferred sub-folder that has files, else a generic line from the slot root."""
+    pins = set(pinned or [])
+    if pins:
+        avail = {n: slot_dir(slot) / n for n in listing_names(slot) if n in pins}
+        for sub in prefer or []:
+            hit = [p for n, p in avail.items() if n.startswith(sub + "/")]
+            if hit:
+                return random.choice(hit)
+        return random.choice(list(avail.values())) if avail else None
     for sub in prefer or []:
         try:
             fs = files(slot, sub)
@@ -97,6 +102,26 @@ def pick(slot: str, prefer: list[str] | None = None) -> Path | None:
             return random.choice(fs)
     fs = files(slot)
     return random.choice(fs) if fs else None
+
+
+def listing_names(slot: str) -> list[str]:
+    names = [p.name for p in files(slot)]
+    for sub in subs_present(slot):
+        names += [f"{sub}/{p.name}" for p in files(slot, sub)]
+    return names
+
+
+def parse_pins(value) -> dict[str, list[str]]:
+    """cine_voice_pick: JSON {"start": [...], "kill": [...], "final": [...]} (or already a dict); unknown slots dropped."""
+    import json
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value.strip() else {}
+        except json.JSONDecodeError:
+            value = {}
+    if not isinstance(value, dict):
+        return {}
+    return {s: [str(n) for n in value.get(s) or [] if isinstance(n, str)] for s in SLOTS}
 
 
 def slug(text: str) -> str:
@@ -119,7 +144,39 @@ def cut(ffmpeg: Path, src: Path, start: float, end: float, slot: str, name: str,
     return dst
 
 
-# ---- text to speech (Windows voice) --------------------------------------------------------------
+# ---- text to speech ------------------------------------------------------------------------------
+# Neural voices through edge-tts (Microsoft Edge's online voices; needs internet) sound far more natural than the
+# built-in Windows voice, which stays as the offline fallback.
+
+TTS_VOICES = [
+    {"id": "en-US-ChristopherNeural", "label": "Christopher (deep, energetic)"},
+    {"id": "en-US-GuyNeural", "label": "Guy (broadcast)"},
+    {"id": "en-US-AndrewNeural", "label": "Andrew (warm)"},
+    {"id": "en-US-BrianNeural", "label": "Brian (young)"},
+    {"id": "en-GB-RyanNeural", "label": "Ryan (British)"},
+    {"id": "en-US-AriaNeural", "label": "Aria (female)"},
+    {"id": "windows", "label": "Windows voice (offline, robotic)"},
+]
+
+
+def edge_available() -> bool:
+    try:
+        import edge_tts  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def tts_edge(text: str, dst: Path, voice_id: str, rate: str = "+12%", pitch: str = "+8Hz") -> Path:
+    import asyncio
+    import edge_tts
+
+    async def run():
+        await edge_tts.Communicate(text, voice_id, rate=rate, pitch=pitch).save(str(dst))
+    asyncio.run(run())
+    if not dst.exists() or dst.stat().st_size < 100:
+        raise RuntimeError("edge-tts produced no audio")
+    return dst
 
 def _powershell() -> str | None:
     if platform.system() == "Windows":
@@ -128,7 +185,7 @@ def _powershell() -> str | None:
 
 
 def tts_available() -> bool:
-    return _powershell() is not None
+    return edge_available() or _powershell() is not None
 
 
 def _win_path(p: Path) -> str:
@@ -138,14 +195,22 @@ def _win_path(p: Path) -> str:
     return r.stdout.strip() or str(p)
 
 
-def tts(text: str, slot: str, rate: int = 2, sub: str = "") -> Path:
-    """Speak `text` into data/voice/<slot>[/<sub>]/<slug>.wav with the first installed English voice (or the default)."""
-    ps = _powershell()
-    if not ps:
-        raise RuntimeError("text-to-speech needs Windows (PowerShell with System.Speech)")
+def tts(text: str, slot: str, rate: int = 2, sub: str = "", voice_id: str = "") -> Path:
+    """Speak `text` into data/voice/<slot>[/<sub>]/<slug>.mp3 with a neural voice (edge-tts), or .wav with the
+    Windows voice when voice_id is "windows" or edge-tts is unavailable / offline."""
     text = " ".join(str(text).split())
     if not text:
         raise ValueError("empty text")
+    voice_id = voice_id or TTS_VOICES[0]["id"]
+    if voice_id != "windows" and edge_available():
+        try:
+            return tts_edge(text, slot_dir(slot, sub) / f"{slug(text)}.mp3", voice_id)
+        except Exception as e:  # noqa: BLE001  (offline, service hiccup) -> Windows voice
+            if not _powershell():
+                raise RuntimeError(f"neural voice failed ({e}); no offline voice available") from e
+    ps = _powershell()
+    if not ps:
+        raise RuntimeError("text-to-speech needs internet (neural voice) or Windows (offline voice)")
     dst = slot_dir(slot, sub) / f"{slug(text)}.wav"
     q = lambda s: str(s).replace("'", "''")  # noqa: E731
     script = (

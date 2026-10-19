@@ -430,6 +430,7 @@
   // ---- cinematic (slow-motion + music) -------------------------------------------------------------
   const CINE_NUM = ['cine_slow', 'cine_game_volume', 'cine_music_volume', 'cine_trim_lead', 'cine_fast', 'cine_voice_volume'];
   const CINE_STR = ['cine_kills', 'cine_music', 'cine_trim'];
+  let voicePins = { start: [], kill: [], final: [] };   // cine_voice_pick: pinned lines per slot (empty = random)
   const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_card', 'cine_voice'];
   const VOICE_SLOTS = ['start', 'kill', 'final'];
   const VOICE_SUB_LABEL = { ace: 'ace', clutch: 'clutch', multikill: 'multikill', knife: 'knife', ninja_defuse: 'ninja', 2: '2nd kill', 3: '3rd kill', 4: '4th kill', 5: '5th kill' };
@@ -481,7 +482,8 @@
     for (const slot of VOICE_SLOTS) {
       const files = slots[slot] || [];
       const label = (f) => { const i = f.indexOf('/'); return i < 0 ? esc(f) : `<b class="voice-tag">${esc(VOICE_SUB_LABEL[f.slice(0, i)] || f.slice(0, i))}</b> ${esc(f.slice(i + 1))}`; };
-      $('voice-list-' + slot).innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${label(f)}</span>
+      voicePins[slot] = (voicePins[slot] || []).filter(n => files.includes(n));
+      $('voice-list-' + slot).innerHTML = files.length ? files.map(f => `<span class="pill voice-pill ${voicePins[slot].includes(f) ? 'pinned' : ''}" data-slot="${slot}" data-name="${esc(f)}" title="${esc(f)} — click to pin / unpin"><span class="pill-name">${voicePins[slot].includes(f) ? '📌 ' : ''}${label(f)}</span>
         <button class="small ghost voice-play" data-slot="${slot}" data-name="${esc(f)}" title="preview">▶</button><button class="small ghost voice-del" data-slot="${slot}" data-name="${esc(f)}" title="delete">✕</button></span>`).join('') : '<span class="muted">none</span>';
     }
     $('voice-dir').textContent = v?.dir || '';
@@ -489,6 +491,9 @@
     $('voice-tts').style.display = tts ? '' : 'none';
     $('voice-tts-hint').style.display = tts ? 'none' : '';
     $('voice-gen-all').style.display = (v?.presets || []).length ? '' : 'none';
+    const vs = $('voice-voice'); const cur = (cineInfo?.settings?.cine_tts_voice) || vs.value || '';
+    vs.innerHTML = (v?.tts_voices || []).map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('');
+    if ([...vs.options].some(o => o.value === cur)) vs.value = cur;
   }
   async function reloadVoice() {
     try { const v = await API.voice(); if (cineInfo) cineInfo.voice = v; renderVoice(v); } catch (err) { toast(esc(err.message)); }
@@ -503,6 +508,7 @@
     cineCounts();
     try {
       cineInfo = await API.cineSettings();
+      try { const pk = JSON.parse(cineInfo.settings?.cine_voice_pick || '{}'); voicePins = { start: pk.start || [], kill: pk.kill || [], final: pk.final || [] }; } catch (_) { voicePins = { start: [], kill: [], final: [] }; }
       renderMusicList(cineInfo.music || [], cineInfo.music_dir);
       fillCine(cineInfo);
       renderVoice(cineInfo.voice);
@@ -513,7 +519,12 @@
     if (e.target === $('music-modal')) $('music-modal').style.display = 'none';
     const d = e.target.closest('.del-music'); if (d) { try { await API.deleteMusic(d.dataset.name); } catch (err) { toast(esc(err.message)); } renderMusic(); return; }
     const pl = e.target.closest('.voice-play'); if (pl) { new Audio(API.voiceUrl(pl.dataset.slot, pl.dataset.name)).play().catch(err => toast(esc(err.message))); return; }
-    const vd = e.target.closest('.voice-del'); if (vd) { try { await API.deleteVoice(vd.dataset.slot, vd.dataset.name); } catch (err) { toast(esc(err.message)); } reloadVoice(); }
+    const vd = e.target.closest('.voice-del'); if (vd) { try { await API.deleteVoice(vd.dataset.slot, vd.dataset.name); } catch (err) { toast(esc(err.message)); } reloadVoice(); return; }
+    const vp = e.target.closest('.voice-pill'); if (vp) {
+      const { slot, name } = vp.dataset; const arr = voicePins[slot] || (voicePins[slot] = []);
+      const i = arr.indexOf(name); if (i < 0) arr.push(name); else arr.splice(i, 1);
+      renderVoice(cineInfo?.voice);
+    }
   });
   $('music-file').addEventListener('change', async () => {
     for (const f of $('music-file').files) { try { await API.uploadMusic(f); } catch (err) { toast(esc(err.message)); } }
@@ -526,7 +537,7 @@
   $('voice-gen').onclick = async () => {
     const text = $('voice-text').value.trim(); if (!text) { $('voice-text').focus(); return; }
     $('voice-gen').disabled = true; $('cine-msg').textContent = 'generating…';
-    try { await API.voiceTts(text, $('voice-slot').value, $('voice-sub').value); $('voice-text').value = ''; $('cine-msg').textContent = ''; await reloadVoice(); }
+    try { await API.voiceTts(text, $('voice-slot').value, $('voice-sub').value, $('voice-voice').value); $('voice-text').value = ''; $('cine-msg').textContent = ''; await reloadVoice(); }
     catch (err) { $('cine-msg').textContent = err.message; }
     $('voice-gen').disabled = false;
   };
@@ -536,7 +547,7 @@
     let failed = 0;
     for (let i = 0; i < presets.length; i++) {
       $('cine-msg').textContent = `generating ${i + 1}/${presets.length}: ${presets[i].text}`;
-      try { await API.voiceTts(presets[i].text, presets[i].slot, presets[i].sub || ''); } catch (err) { failed++; toast(esc(err.message)); }
+      try { await API.voiceTts(presets[i].text, presets[i].slot, presets[i].sub || '', $('voice-voice').value); } catch (err) { failed++; toast(esc(err.message)); }
     }
     $('cine-msg').textContent = failed ? `${presets.length - failed} line(s) generated, ${failed} failed` : `${presets.length} line(s) generated`;
     $('voice-gen-all').disabled = false; $('voice-gen').disabled = false;
@@ -558,6 +569,8 @@
     for (const k of CINE_NUM) { const v = parseFloat($(k).value); if (!Number.isNaN(v)) settings[k] = v; }
     for (const k of CINE_STR) settings[k] = String($(k).value);
     for (const k of CINE_BOOL) settings[k] = !!$(k).checked;
+    settings.cine_voice_pick = JSON.stringify(voicePins);
+    settings.cine_tts_voice = $('voice-voice').value || '';
     return settings;
   }
   let cinePoll = null;

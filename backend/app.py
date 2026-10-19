@@ -456,6 +456,7 @@ class TtsIn(BaseModel):
     text: str
     slot: str = "final"
     sub: str = ""          # situation sub-folder: highlight type for start/final, kill number for kill
+    voice: str = ""        # TTS voice id (see voice.TTS_VOICES); empty -> the saved cine_tts_voice
 
 
 @app.post("/api/voice/tts")
@@ -465,8 +466,11 @@ def voice_tts(body: TtsIn):
 
     if body.slot not in voice.SLOTS:
         raise HTTPException(400, "unknown slot")
+    vid = body.voice or str(cfgmod.load().get("cine_tts_voice") or "")
+    if body.voice:
+        cfgmod.update(cine_tts_voice=body.voice)
     try:
-        p = voice.tts(body.text, body.slot, sub=body.sub)
+        p = voice.tts(body.text, body.slot, sub=body.sub, voice_id=vid)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, str(e))
     return {"ok": True, "file": (body.sub + "/" if body.sub else "") + p.name, "slot": body.slot}

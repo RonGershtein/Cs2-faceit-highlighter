@@ -41,7 +41,7 @@ const API = (() => {
     voice: () => json('/api/voice'),
     deleteVoice: (slot, name) => json(`/api/voice/${encodeURIComponent(slot)}/${name.split('/').map(encodeURIComponent).join('/')}`, { method: 'DELETE' }),
     uploadVoice(slot, file, sub) { const fd = new FormData(); fd.append('file', file, file.name); fd.append('sub', sub || ''); return fetch(`/api/voice/${encodeURIComponent(slot)}`, { method: 'POST', body: fd }).then(r => r.ok ? r.json() : r.json().then(j => { throw new Error(j.detail || 'upload failed'); })); },
-    voiceTts: (text, slot, sub) => post('/api/voice/tts', { text, slot, sub: sub || '' }),
+    voiceTts: (text, slot, sub, voice) => post('/api/voice/tts', { text, slot, sub: sub || '', voice: voice || '' }),
     voiceUrl: (slot, name) => `/api/voice/${encodeURIComponent(slot)}/${name.split('/').map(encodeURIComponent).join('/')}`,
     videoUrl: (id, name) => `/api/demos/${id}/videos/${encodeURIComponent(name)}`,
     getConfig: () => json('/api/config'),

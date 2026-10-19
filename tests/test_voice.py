@@ -62,3 +62,15 @@ def test_plan_voices_uses_type_and_kill_number(vdir):
     names = [p.name for p, _ in out]
     assert names == ["s.mp3", "k.mp3", "k2.mp3", "k.mp3", "f.mp3"]   # 1st kill generic, 2nd kill its folder, 3rd generic
     assert [round(t, 2) for _, t in out] == [0.3, 2.15, 5.15, 9.15, 14.4]
+
+
+def test_pick_respects_pins(vdir):
+    put(vdir, "final", "", "a.mp3")
+    put(vdir, "final", "", "b.mp3")
+    put(vdir, "final", "clutch", "c.mp3")
+    assert voice.pick("final", ["clutch"], pinned=["a.mp3"]).name == "a.mp3"          # pinned beats the type folder
+    assert voice.pick("final", ["clutch"], pinned=["a.mp3", "clutch/c.mp3"]).name == "c.mp3"
+    assert voice.pick("final", [], pinned=["missing.mp3"]) is None
+    assert voice.parse_pins('{"final": ["a.mp3"], "bogus": 1}') == {"start": [], "kill": [], "final": ["a.mp3"]}
+    assert voice.parse_pins("not json") == {"start": [], "kill": [], "final": []}
+    assert voice.parse_pins({"kill": ["2/x.mp3", 5]}) == {"start": [], "kill": ["2/x.mp3"], "final": []}

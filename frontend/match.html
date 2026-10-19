@@ -150,7 +150,7 @@
   </div>
 
   <div class="field"><label>Voice lines</label>
-    <p class="muted" style="margin:0 0 6px">Lines are picked by what happened: an ace gets the ace lines, a clutch the clutch lines, the 3rd kill the "3rd kill" lines. Without a matching line a general one plays.</p>
+    <p class="muted" style="margin:0 0 6px">Lines are picked by what happened: an ace gets the ace lines, a clutch the clutch lines, the 3rd kill the "3rd kill" lines. Without a matching line a general one plays. <b>Click a line to pin it</b>: a slot with pinned lines only uses those (one at random); with none pinned every line of the slot can play.</p>
     <div class="row" style="flex-wrap:wrap;align-items:center;gap:12px">
       <label class="opt" style="margin:0;font-weight:700"><input type="checkbox" id="cine_voice"> play caster voice lines <span class="hint" style="font-weight:500">(untick for a clean cinematic clip with just the game sound and music)</span></label>
       <span class="opt-text">volume <b id="cine_voice_volume-val">100%</b></span>
@@ -172,6 +172,7 @@
     <div id="voice-tts" class="row" style="flex-wrap:wrap;align-items:center">
       <input type="text" id="voice-text" placeholder="type a line, e.g. Are you kidding me?!" maxlength="200">
       <select id="voice-slot"><option value="start">at the start</option><option value="kill">on each kill</option><option value="final" selected>after the final kill</option></select>
+      <select id="voice-voice" title="voice for generated lines"></select>
       <button class="small" id="voice-gen" title="generate this line with the Windows voice">🗣 Generate</button>
       <button class="small" id="voice-gen-all" title="generate every built-in caster line">Generate the caster lines</button>
     </div>

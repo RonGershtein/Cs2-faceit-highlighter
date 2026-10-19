@@ -34,7 +34,8 @@ CARD_BG = "0x2a2f3a"                   # blank avatar colour
 # cine_* keys of config.toml that the UI can change per job (see options())
 OPTION_KEYS = ("cine_slow", "cine_kills", "cine_smooth", "cine_game_volume", "cine_music_volume", "cine_music",
                "cine_music_sync", "cine_trim", "cine_trim_lead", "cine_fast", "cine_ramp", "cine_impact", "cine_look",
-               "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice", "cine_voice_volume")
+               "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice", "cine_voice_volume",
+               "cine_voice_pick", "cine_tts_voice")
 TRIM_MODES = ("off", "cut", "fast")   # dead time between kills: keep / drop / fast-forward
 
 Seg = tuple[float, float, float]   # (start, end, speed) in source seconds; speed 1.0 = normal, 0.35 = slow motion
@@ -576,16 +577,17 @@ def voice_overrun(voices: list[tuple[Path, float]], durs: dict[Path, float], tot
 
 
 def plan_voices(segs: list[Seg], kills: list[float], total: float, highlight: dict | None = None,
-                choice: list[tuple[Path, float]] | None = None) -> list[tuple[Path, float]]:
+                choice: list[tuple[Path, float]] | None = None, pins: dict | None = None) -> list[tuple[Path, float]]:
     """(file, output time) of the voice lines: a 'start' line at the beginning, a 'kill' line on every kill but
     the last, a 'final' line right after the final kill. Lines from the sub-folder that matches the highlight
     (its type, or the kill number) are preferred; slots without files are silent."""
     out: list[tuple[Path, float]] = []
     prefs = voice_prefs(highlight)
     picked = iter([pth for pth, _ in choice]) if choice is not None else None
+    pins = pins or {}
 
     def pick(slot: str, prefer: list[str]) -> Path | None:
-        return next(picked, None) if picked is not None else voice.pick(slot, prefer)
+        return next(picked, None) if picked is not None else voice.pick(slot, prefer, pins.get(slot))
     p = pick("start", prefs)
     if p:
         out.append((p, 0.3))
@@ -620,7 +622,8 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
             sg = fill_gaps(sg, duration, float(opts.get("cine_fast", 6.0)))
         return sg or [(0.0, duration, 1.0)]
     segs = plan(keep)
-    voices = plan_voices(segs, kills, total_duration(segs), highlight) if opts.get("cine_voice") else []
+    pins = voice.parse_pins(opts.get("cine_voice_pick"))
+    voices = plan_voices(segs, kills, total_duration(segs), highlight, pins=pins) if opts.get("cine_voice") else []
     pad = 0.0
     if voices:
         # let the last voice line finish: keep more real footage after the final kill when the recording has it,
