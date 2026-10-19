@@ -310,10 +310,15 @@ def title_for(h: dict, map_name: str = "") -> tuple[str, str]:
 
 
 def _fesc(s: str) -> str:
-    """Escape a value for use inside a filtergraph option (paths, expressions)."""
+    r"""Escape a value for use inside a filtergraph option (paths, expressions).
+
+    The graph is parsed twice: first the filter's argument string is extracted (unescaping \, \; \[ \] \'),
+    then it is split into options on ':'. So ',' needs one backslash and ':' (Windows drive letters) needs two,
+    which is why 'C\\:/Windows/Fonts/x.ttf' is the form that works everywhere."""
     out = str(s).replace("\\", "/")
-    for ch in ("[", "]", ",", ";", ":", "'"):
+    for ch in ("[", "]", ",", ";"):
         out = out.replace(ch, "\\" + ch)
+    out = out.replace("'", "\\\\\\'").replace(":", "\\\\:")
     return out
 
 
@@ -428,7 +433,7 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
     h = height
     if title:
         big, sub = title
-        big_px, sub_px, margin = int(h * 0.075), int(h * 0.028), int(h * 0.06)
+        big_px, sub_px, margin = int(h * 0.075), int(h * 0.028), int(h * 0.11)
         env = (f"if(lt(t,0.3),t/0.3,if(lt(t,{TITLE_SECONDS - 0.5:.2f}),1,"
                f"if(lt(t,{TITLE_SECONDS:.2f}),({TITLE_SECONDS:.2f}-t)/0.5,0)))")
         en = f"between(t,0,{TITLE_SECONDS:.2f})"
@@ -452,20 +457,34 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
     return texts, files
 
 
-def plan_voices(segs: list[Seg], kills: list[float], total: float) -> list[tuple[Path, float]]:
+def voice_prefs(highlight: dict | None) -> list[str]:
+    """Voice sub-folders that fit a highlight, best first: its type (ace / clutch / multikill / knife / ninja_defuse)."""
+    if not highlight:
+        return []
+    typ = str(highlight.get("type") or "")
+    n = int(highlight.get("n") or len(highlight.get("kills") or []) or 0)
+    if typ == "multikill" and n >= 5:
+        return ["ace", "multikill"]
+    return [typ] if typ in voice.TYPE_SUBS else []
+
+
+def plan_voices(segs: list[Seg], kills: list[float], total: float,
+                highlight: dict | None = None) -> list[tuple[Path, float]]:
     """(file, output time) of the voice lines: a 'start' line at the beginning, a 'kill' line on every kill but
-    the last, a 'final' line right after the final kill. Slots without files are silent."""
+    the last, a 'final' line right after the final kill. Lines from the sub-folder that matches the highlight
+    (its type, or the kill number) are preferred; slots without files are silent."""
     out: list[tuple[Path, float]] = []
-    p = voice.pick("start")
+    prefs = voice_prefs(highlight)
+    p = voice.pick("start", prefs)
     if p:
         out.append((p, 0.3))
     ks = sorted(kills)
-    for k in ks[:-1]:
-        p = voice.pick("kill")
+    for j, k in enumerate(ks[:-1], start=1):
+        p = voice.pick("kill", [str(j)])
         if p:
             out.append((p, min(total, out_time(segs, k) + 0.15)))
     if ks:
-        p = voice.pick("final")
+        p = voice.pick("final", prefs)
         if p:
             out.append((p, min(total, out_time(segs, ks[-1]) + 0.4)))
     return out
@@ -473,7 +492,7 @@ def plan_voices(segs: list[Seg], kills: list[float], total: float) -> list[tuple
 
 def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times: list[float], music: Path | None,
                    opts: dict, title: tuple[str, str] | None = None, fps_hint: float | None = None,
-                   crf: int = 20) -> dict:
+                   crf: int = 20, highlight: dict | None = None) -> dict:
     info = probe_video(ffprobe, src)
     duration, width, height = info["duration"], info["width"], info["height"]
     fps = info["fps"] or fps_hint or 60.0
@@ -496,7 +515,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     offset = 0.0
     if has_music and opts.get("cine_music_sync") and slow_kills:
         offset = music_offset(ffmpeg, music, out_time(segs, slow_kills[0]), total_out)
-    voices = plan_voices(segs, kills, total_out) if opts.get("cine_voice") else []
+    voices = plan_voices(segs, kills, total_out, highlight) if opts.get("cine_voice") else []
     args = [str(ffmpeg), "-y", "-i", str(src)]
     if has_music:
         args += ["-stream_loop", "-1"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + ["-i", str(music)]
@@ -572,7 +591,8 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
     ctx = clip_context(demo_id, video["highlight_id"], int(video["start_tick"]), video.get("end_tick"))
     title = title_for(ctx["highlight"], ctx["map"]) if ctx["highlight"] else None
     info = make_cinematic(ffmpeg, ffprobe, src, dst, ctx["kills"], pick_music(opts), opts, title=title,
-                          fps_hint=float(cfg.get("record_fps", 60)), crf=int(cfg.get("record_crf", 20)))
+                          fps_hint=float(cfg.get("record_fps", 60)), crf=int(cfg.get("record_crf", 20)),
+                          highlight=ctx["highlight"])
     video = dict(video)
     video["cine"] = dst.name
     video["cine_info"] = info

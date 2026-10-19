@@ -284,6 +284,7 @@ button.primary .rec-dot { background: var(--accent-ink); box-shadow: 0 0 0 2px r
 .cine-slot .pill, #music-list .pill { text-transform: none; letter-spacing: 0; font-family: var(--font); font-weight: 500; max-width: 100%; padding: 2px 4px 2px 8px; gap: 2px; }
 .cine-slot .pill .pill-name, #music-list .pill .pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .cine-slot .pill button, #music-list .pill button { padding: 1px 5px; }
+.voice-tag { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .cine-slot input[type=file], #music-file { font-size: 12px; color: var(--muted); max-width: 100%; }
 #voice-tts input[type=text] { flex: 1; min-width: 160px; padding: 6px 10px; font-size: 13px; }
 #voice-tts select { padding: 6px 26px 6px 8px; font-size: 13px; }

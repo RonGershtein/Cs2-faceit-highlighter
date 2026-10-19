@@ -103,8 +103,10 @@ highlights you ticked (those are remade). A `reel_cinematic.mp4` of all cinemati
   With "start the track at its drop" the app measures the track's loudness, finds the biggest sustained rise (the drop) and starts the
   music so the drop lands exactly on the slow-motion kill.
 - **Voice lines:** short sound bites in `data/voice/start`, `data/voice/kill` and `data/voice/final` play at the clip start, on every
-  kill but the last, and right after the final kill. Add your own files, or type a line ("Are you kidding me?!") and generate it with the
-  Windows voice; the famous caster lines are there as one-click presets.
+  kill but the last, and right after the final kill. They are picked by what happened: a sub-folder named after the highlight type
+  (`ace`, `clutch`, `multikill`, `knife`, `ninja_defuse`) or, for the kill slot, the kill number (`2`, `3`, `4`, `5`) wins when it has
+  files, otherwise a general line from the slot plays. The dialog's "new lines are for" selector puts uploads and generated lines in the
+  right folder. Type a line ("Are you kidding me?!") and generate it with the Windows voice; the famous caster lines are one-click presets.
 
 ### Config file
 `config.toml` is created next to `start.bat` on first run. Most of it is editable from Settings; the rest:

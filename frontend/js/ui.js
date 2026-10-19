@@ -432,6 +432,7 @@
   const CINE_STR = ['cine_kills', 'cine_music', 'cine_trim'];
   const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_voice'];
   const VOICE_SLOTS = ['start', 'kill', 'final'];
+  const VOICE_SUB_LABEL = { ace: 'ace', clutch: 'clutch', multikill: 'multikill', knife: 'knife', ninja_defuse: 'ninja', 2: '2nd kill', 3: '3rd kill', 4: '4th kill', 5: '5th kill' };
   let cineInfo = null;
   function cineRangeLabel(el) {
     const lab = $(el.id + '-val'); if (!lab) return;
@@ -476,7 +477,8 @@
     const slots = v?.slots || {};
     for (const slot of VOICE_SLOTS) {
       const files = slots[slot] || [];
-      $('voice-list-' + slot).innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${esc(f)}</span>
+      const label = (f) => { const i = f.indexOf('/'); return i < 0 ? esc(f) : `<b class="voice-tag">${esc(VOICE_SUB_LABEL[f.slice(0, i)] || f.slice(0, i))}</b> ${esc(f.slice(i + 1))}`; };
+      $('voice-list-' + slot).innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${label(f)}</span>
         <button class="small ghost voice-play" data-slot="${slot}" data-name="${esc(f)}" title="preview">▶</button><button class="small ghost voice-del" data-slot="${slot}" data-name="${esc(f)}" title="delete">✕</button></span>`).join('') : '<span class="muted">none</span>';
     }
     $('voice-dir').textContent = v?.dir || '';
@@ -513,13 +515,13 @@
     $('music-file').value = ''; renderMusic();
   });
   document.querySelectorAll('.voice-file').forEach(inp => inp.addEventListener('change', async () => {
-    for (const f of inp.files) { try { await API.uploadVoice(inp.dataset.slot, f); } catch (err) { toast(esc(err.message)); } }
+    for (const f of inp.files) { try { await API.uploadVoice(inp.dataset.slot, f, $('voice-sub').value); } catch (err) { toast(esc(err.message)); } }
     inp.value = ''; reloadVoice();
   }));
   $('voice-gen').onclick = async () => {
     const text = $('voice-text').value.trim(); if (!text) { $('voice-text').focus(); return; }
     $('voice-gen').disabled = true; $('cine-msg').textContent = 'generating…';
-    try { await API.voiceTts(text, $('voice-slot').value); $('voice-text').value = ''; $('cine-msg').textContent = ''; await reloadVoice(); }
+    try { await API.voiceTts(text, $('voice-slot').value, $('voice-sub').value); $('voice-text').value = ''; $('cine-msg').textContent = ''; await reloadVoice(); }
     catch (err) { $('cine-msg').textContent = err.message; }
     $('voice-gen').disabled = false;
   };
@@ -529,7 +531,7 @@
     let failed = 0;
     for (let i = 0; i < presets.length; i++) {
       $('cine-msg').textContent = `generating ${i + 1}/${presets.length}: ${presets[i].text}`;
-      try { await API.voiceTts(presets[i].text, presets[i].slot); } catch (err) { failed++; toast(esc(err.message)); }
+      try { await API.voiceTts(presets[i].text, presets[i].slot, presets[i].sub || ''); } catch (err) { failed++; toast(esc(err.message)); }
     }
     $('cine-msg').textContent = failed ? `${presets.length - failed} line(s) generated, ${failed} failed` : `${presets.length} line(s) generated`;
     $('voice-gen-all').disabled = false; $('voice-gen').disabled = false;

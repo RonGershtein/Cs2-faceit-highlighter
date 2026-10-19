@@ -149,6 +149,7 @@
   </div>
 
   <div class="field"><label>Voice lines</label>
+    <p class="muted" style="margin:0 0 6px">Lines are picked by what happened: an ace gets the ace lines, a clutch the clutch lines, the 3rd kill the "3rd kill" lines. Without a matching line a general one plays.</p>
     <div class="row" style="flex-wrap:wrap;align-items:center;gap:12px">
       <label class="opt" style="margin:0"><input type="checkbox" id="cine_voice"> play voice lines</label>
       <span class="opt-text">volume <b id="cine_voice_volume-val">100%</b></span>
@@ -162,6 +163,10 @@
       <div class="cine-slot" data-slot="final"><div class="slot-name">after the final kill</div><div class="slot-list muted" id="voice-list-final">none</div>
         <input type="file" class="voice-file" data-slot="final" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" multiple></div>
     </div>
+    <div class="row" style="flex-wrap:wrap;align-items:center;margin-bottom:6px"><span class="opt-text">new lines (added or generated) are for</span>
+      <select id="voice-sub"><option value="">any highlight / any kill</option>
+        <optgroup label="highlight type (start / final)"><option value="ace">ace</option><option value="clutch">clutch</option><option value="multikill">multikill (2K-4K)</option><option value="knife">knife kill</option><option value="ninja_defuse">ninja defuse</option></optgroup>
+        <optgroup label="kill number (on each kill)"><option value="2">2nd kill</option><option value="3">3rd kill</option><option value="4">4th kill</option><option value="5">5th kill</option></optgroup></select></div>
     <div id="voice-tts" class="row" style="flex-wrap:wrap;align-items:center">
       <input type="text" id="voice-text" placeholder="type a line, e.g. Are you kidding me?!" maxlength="200">
       <select id="voice-slot"><option value="start">at the start</option><option value="kill">on each kill</option><option value="final" selected>after the final kill</option></select>

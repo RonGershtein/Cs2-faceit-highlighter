@@ -455,6 +455,7 @@ def list_voice():
 class TtsIn(BaseModel):
     text: str
     slot: str = "final"
+    sub: str = ""          # situation sub-folder: highlight type for start/final, kill number for kill
 
 
 @app.post("/api/voice/tts")
@@ -465,14 +466,14 @@ def voice_tts(body: TtsIn):
     if body.slot not in voice.SLOTS:
         raise HTTPException(400, "unknown slot")
     try:
-        p = voice.tts(body.text, body.slot)
+        p = voice.tts(body.text, body.slot, sub=body.sub)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, str(e))
-    return {"ok": True, "file": p.name, "slot": body.slot}
+    return {"ok": True, "file": (body.sub + "/" if body.sub else "") + p.name, "slot": body.slot}
 
 
 @app.post("/api/voice/{slot}")
-async def upload_voice(slot: str, file: UploadFile = File(...)):
+async def upload_voice(slot: str, file: UploadFile = File(...), sub: str = Form("")):
     from . import voice
 
     if slot not in voice.SLOTS:
@@ -480,7 +481,10 @@ async def upload_voice(slot: str, file: UploadFile = File(...)):
     name = Path(file.filename or "line").name
     if Path(name).suffix.lower() not in voice.VOICE_EXT:
         raise HTTPException(400, "unsupported audio format")
-    dst = voice.slot_dir(slot) / name
+    try:
+        dst = voice.slot_dir(slot, sub) / name
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     with open(dst, "wb") as out:
         while True:
             chunk = await file.read(1 << 20)
@@ -490,25 +494,29 @@ async def upload_voice(slot: str, file: UploadFile = File(...)):
     return {"ok": True, "file": name}
 
 
-@app.delete("/api/voice/{slot}/{name}")
-def delete_voice(slot: str, name: str):
+def _voice_path(slot: str, name: str) -> Path:
     from . import voice
 
     if slot not in voice.SLOTS:
         raise HTTPException(400, "unknown slot")
-    p = voice.slot_dir(slot) / Path(name).name
+    try:
+        sub, base = voice.split_name(name)
+        return voice.slot_dir(slot, sub) / base
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/voice/{slot}/{name:path}")
+def delete_voice(slot: str, name: str):
+    p = _voice_path(slot, name)
     if p.exists():
         p.unlink()
     return {"ok": True}
 
 
-@app.get("/api/voice/{slot}/{name}")
+@app.get("/api/voice/{slot}/{name:path}")
 def get_voice(slot: str, name: str):
-    from . import voice
-
-    if slot not in voice.SLOTS or "/" in name or "\\" in name or ".." in name:
-        raise HTTPException(400, "bad name")
-    p = voice.slot_dir(slot) / name
+    p = _voice_path(slot, name)
     if not p.exists():
         raise HTTPException(404, "no such file")
     return FileResponse(p)

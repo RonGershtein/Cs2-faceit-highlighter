@@ -105,5 +105,6 @@ def test_build_filter_structure(tmp_path):
 
 
 def test_fesc_escapes_filtergraph_specials():
-    assert c._fesc("C:\\Windows\\Fonts\\a.ttf") == "C\\:/Windows/Fonts/a.ttf"
-    assert c._fesc("a,b;c[d]'") == r"a\,b\;c\[d\]\'"
+    assert c._fesc("C:\\Windows\\Fonts\\a.ttf") == "C\\\\:/Windows/Fonts/a.ttf"   # ':' survives both parsing stages
+    assert c._fesc("a,b;c[d]") == r"a\,b\;c\[d\]"
+    assert c._fesc("it's") == "it\\\\\\'s"
