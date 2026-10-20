@@ -317,7 +317,11 @@ SWOOP_FOLLOW = 4.5    # seconds the camera follows behind and above the player b
 SWOOP_DIVE = 1.0      # seconds of the dive into his eyes
 SWOOP_MIN_FOLLOW = 1.5   # less room than this before the play (round start, the play before): no swoop
 SWOOP_LEAD = 2.0      # it lands this long before the play's first kill (where the cinematic play starts in first person)
-SWOOP_STEP = 0.5      # seconds between follow-cam keyframes
+SWOOP_STEP = 0.25     # seconds between follow-cam keyframes (dense: HLAE's spline must not cut corners into walls)
+SWOOP_BACK = 110.0    # how far behind him the camera is, measured on the path he walked
+SWOOP_UP = 22.0       # and how much above his eyes (well under any ceiling he walks under)
+SWOOP_TRAIL = 3.0     # seconds of his path read before the swoop (the camera's first spot is somewhere on it)
+SWOOP_TRAIL_TICKS = 4 # the path is read every this many ticks
 
 
 def swoop_times(follow: float, dive: float = SWOOP_DIVE) -> list[float]:
@@ -340,27 +344,56 @@ def _unwrap(angles: list[float]) -> list[float]:
     return out
 
 
-def swoop_points(track: list[dict], follow: float, dive: float = SWOOP_DIVE) -> list[dict]:
-    """Camera keyframes {"t", "x", "y", "z", "pitch", "yaw"} of the swoop: a follow cam behind and above the
-    player (his eyes at each of swoop_times in `track`), its heading his view smoothed so it does not whip with
-    every flick, then a dive that lands exactly on his eyes and his view. Pure function; unit-tested."""
+def _trail_spot(trail: list[dict], i: int, back: float) -> dict:
+    """The point of his path before sample i that is `back` units from where he is at i: the latest place he stood
+    that far away, so the space between it and him is space he just walked through (no walls in between). The
+    farthest point there is when he has not come that far."""
     import math
-    times = swoop_times(follow, dive)
-    track = (track + [track[-1]] * len(times))[:len(times)]
-    land = track[-1]
-    yaws = _unwrap([e["yaw"] for e in track])
-    smooth = [sum(yaws[max(0, i - 2):i + 3]) / len(yaws[max(0, i - 2):i + 3]) for i in range(len(yaws))]
-    back0, up0, pitch0 = 130.0, 75.0, 27.0
-    out = []
-    for t, e, y_s, y in zip(times, track, smooth, yaws):
+    p = trail[i]
+
+    def dist(e):
+        return math.dist((e["x"], e["y"], e["z"]), (p["x"], p["y"], p["z"]))
+    best = p
+    for j in range(i - 1, -1, -1):
+        d = dist(trail[j])
+        if d >= back:
+            near, dn = trail[j + 1], dist(trail[j + 1])
+            f = (back - dn) / (d - dn) if d > dn else 1.0
+            return {k: near[k] + (trail[j][k] - near[k]) * f for k in ("x", "y", "z")}
+        if d > dist(best):
+            best = trail[j]
+    return best
+
+
+def swoop_points(trail: list[dict], pre: int, step: float, follow: float, dive: float = SWOOP_DIVE) -> list[dict]:
+    """Camera keyframes {"t", "x", "y", "z", "pitch", "yaw"} of the swoop. `trail` is his eyes every `step` seconds,
+    `pre` samples before the swoop's start and on to its end. The camera rides his own path SWOOP_BACK behind him and
+    SWOOP_UP above, looking at him (walls cannot come between: he was just there), then dives along that path into
+    his eyes, landing exactly on his view. Pure function; unit-tested."""
+    import math
+    out, look = [], []
+    for t in swoop_times(follow, dive):
+        i = min(len(trail) - 1, pre + int(round(t / step)))
+        e = trail[i]
         f = 0.0 if t <= follow else min(1.0, (t - follow) / dive)
         ease = f * f * (3 - 2 * f)
-        back, up = back0 * (1 - ease), up0 * (1 - ease)
-        pitch = pitch0 + (land["pitch"] - pitch0) * ease
-        yaw = y_s + (yaws[-1] - y_s) * ease if f < 1 else yaws[-1]
-        r = math.radians(yaw)
-        out.append({"t": t, "x": round(e["x"] - math.cos(r) * back, 2), "y": round(e["y"] - math.sin(r) * back, 2),
-                    "z": round(e["z"] + up, 2), "pitch": round(pitch, 2), "yaw": round(yaw, 2)})
+        back, up = SWOOP_BACK * (1 - ease), SWOOP_UP * (1 - ease)
+        c = _trail_spot(trail, i, back) if back > 0.5 else e
+        c = {"x": c["x"], "y": c["y"], "z": c["z"] + up}
+        dx, dy, dz = e["x"] - c["x"], e["y"] - c["y"], (e["z"] - 8) - c["z"]
+        flat = math.hypot(dx, dy)
+        if flat > 20:      # look at him (a little under his eyes: head and body in the shot)
+            yaw, pitch = math.degrees(math.atan2(dy, dx)), math.degrees(math.atan2(-dz, flat))
+        else:              # too close to aim: his own view
+            yaw, pitch = e["yaw"], e["pitch"]
+        look.append((yaw, pitch, ease, e))
+        out.append({"t": t, "x": round(c["x"], 2), "y": round(c["y"], 2), "z": round(c["z"], 2)})
+    yaws = _unwrap([y for y, _, _, _ in look])
+    own = _unwrap([e["yaw"] for _, _, _, e in look])
+    for o, y, w, (_, pitch, ease, e) in zip(out, yaws, own, look):
+        w += round((y - w) / 360) * 360           # his view on the same turn as the camera's
+        o["yaw"] = round(y + (w - y) * ease, 2) if ease < 1 else round(w, 2)
+        o["pitch"] = round(pitch + (e["pitch"] - pitch) * ease, 2)
     return out
 
 
@@ -383,23 +416,31 @@ def prepare_swoops(hs: list[dict], dem: Path, raw_dir: Path, tickrate: int, roun
     if not plans:
         return {}
 
-    def key_ticks(pl: dict) -> list[int]:
-        return [int(round(pl["from"] + t * tickrate)) for t in swoop_times(pl["follow"])]
+    pre = int(round(SWOOP_TRAIL * tickrate / SWOOP_TRAIL_TICKS))
+
+    def trail_ticks(pl: dict) -> list[int]:
+        first = pl["from"] - pre * SWOOP_TRAIL_TICKS
+        return list(range(first, pl["to"], SWOOP_TRAIL_TICKS)) + [pl["to"]]   # the last one: the landing
     try:
         from .parser import eye_views
-        eyes = eye_views(dem, [(t, sid) for pl, sid in plans.values() for t in key_ticks(pl)])
+        eyes = eye_views(dem, [(t, sid) for pl, sid in plans.values() for t in trail_ticks(pl)])
     except Exception:  # noqa: BLE001
         traceback.print_exc()
         return {}
     raw_dir.mkdir(parents=True, exist_ok=True)
     out = {}
     for hid, (pl, sid) in plans.items():
-        track = [eyes.get((t, sid)) for t in key_ticks(pl)]
-        if not track[-1]:
+        trail = [eyes.get((t, sid)) for t in trail_ticks(pl)]
+        land = eyes.get((pl["to"], sid))
+        if not land:
             continue
-        track = [e or track[-1] for e in track]   # a tick the demo lacks: the landing position
+        for j, e in enumerate(trail):     # a tick the demo lacks (dead before the round, a gap): the next one it has
+            if not e:
+                trail[j] = next((n for n in trail[j + 1:] if n), land)
+        trail[-1] = land
         xml = raw_dir / f"swoop_{hid}.xml"
-        xml.write_text(campath_xml(swoop_points(track, pl["follow"])), encoding="utf-8")
+        xml.write_text(campath_xml(swoop_points(trail, pre, SWOOP_TRAIL_TICKS / tickrate, pl["follow"])),
+                       encoding="utf-8")
         out[hid] = {**pl, "xml": str(xml)}
     return out
 

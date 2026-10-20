@@ -876,20 +876,30 @@ def test_lineup_adds_up_each_players_kills():
 
 
 def test_swoop_follows_the_player_then_dives_into_his_eyes():
-    from backend.record import SWOOP_DIVE, campath_xml, plan_swoop, swoop_points, swoop_times
+    from backend.record import SWOOP_BACK, SWOOP_DIVE, SWOOP_UP, campath_xml, plan_swoop, swoop_points, swoop_times
     ts = swoop_times(4.5)
     assert ts[0] == 0.0 and ts[-1] == 4.5 + SWOOP_DIVE and len(ts) >= 4 and ts == sorted(ts)
-    # he walks along +y looking along +y (yaw 90), 100 units over the follow
-    track = [{"x": 100.0, "y": 200.0 + min(t, 4.5) / 4.5 * 100, "z": 64.0, "pitch": 5.0, "yaw": 90.0} for t in ts]
-    pts = swoop_points(track, 4.5)
-    assert pts[-1] == {"t": 5.5, "x": 100.0, "y": 300.0, "z": 64.0, "pitch": 5.0, "yaw": 90.0}   # exactly his view
+    # he walks along +y looking along +y (yaw 90), 60 units a second, the path read every 1/16 s from 3 s before
+    step, pre = 0.0625, 48
+    trail = [{"x": 100.0, "y": 200.0 + 60 * (i - pre) * step, "z": 64.0, "pitch": 5.0, "yaw": 90.0} for i in range(pre + 89)]
+    pts = swoop_points(trail, pre, step, 4.5)
+    end = trail[-1]
+    assert pts[-1] == {"t": 5.5, "x": 100.0, "y": end["y"], "z": 64.0, "pitch": 5.0, "yaw": 90.0}   # exactly his view
     follow = [p for p in pts if p["t"] <= 4.5]
-    assert all(p["z"] == 64.0 + 75 and abs(p["y"] - (200.0 + p["t"] / 4.5 * 100 - 130)) < 0.01 for p in follow)  # behind, above, with him
+    for p in follow:          # on his path, SWOOP_BACK behind him, a little above, looking at him
+        him = 200.0 + 60 * p["t"]
+        assert p["x"] == 100.0 and abs(p["y"] - (him - SWOOP_BACK)) < 0.01 and p["z"] == 64.0 + SWOOP_UP
+        assert abs(p["yaw"] - 90.0) < 0.01 and 10 < p["pitch"] < 20
     xml = campath_xml(pts)
     assert xml.startswith('<?xml version="1.0"?><campath><points><p t="0.0"') and 'ry="5.0" rz="90.0"' in xml
-    # a flick of his view does not whip the follow cam around
-    flick = [dict(e, yaw=(90.0 if i != 3 else 200.0)) for i, e in enumerate(track)]
-    assert abs(swoop_points(flick, 4.5)[3]["yaw"] - 90.0) < 40
+    # he turns a corner: the camera stays on the path he walked (x 100 then along +x), never cuts through the corner
+    corner = [{"x": 100.0 + max(0.0, 60 * (i - pre) * step), "y": 200.0 + min(0.0, 60 * (i - pre) * step),
+               "z": 64.0, "pitch": 0.0, "yaw": 0.0} for i in range(pre + 89)]
+    for p in swoop_points(corner, pre, step, 4.5):
+        assert abs(p["x"] - 100.0) < 0.01 or abs(p["y"] - 200.0) < 0.01
+    # he stands still: the camera keeps to where he came from, as far as he came
+    still = [dict(trail[0], y=200.0)] * len(trail)
+    assert swoop_points(still, pre, step, 4.5)[0]["y"] == 200.0
     h = {"kills": [10000, 10300]}
     assert plan_swoop(h, 0, 64) == {"from": 10000 - 128 - 352, "to": 10000 - 128, "follow": 4.5}
     assert plan_swoop(h, 9600, 64)["follow"] == round((10000 - 128 - 64 - 9600) / 64, 3)   # the round started late: shorter
