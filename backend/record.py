@@ -453,13 +453,18 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
                       f"mirv_cmd addAtTick {max(setup + 2, start - 8 - max(16, tickrate // 4))} demo_timescale 1"]
         sw = (swoops or {}).get(h["id"])
         swoop = None
+        swoop_cfg = None
         if sw and sw["from"] >= start + 4 and sw["to"] < end:
-            ca, ce = f"hl{tag}_sw{i}", f"hl{tag}_swe{i}"
+            # its own little cfg: the campath's path has to be quoted (the console splits "C:/..." at the colon), and
+            # quotes cannot go inside an alias
+            ca, ce = f"{CFG_NAME}_sw{tag}_{i}", f"hl{tag}_swe{i}"
+            swoop_cfg = {"name": ca, "text": "\r\n".join([
+                cfg.get("record_swoop_spec", "spec_mode 5"), "mirv_campath clear",
+                f'mirv_campath load "{_fwd(Path(sw["xml"]))}"', "mirv_campath edit start", "mirv_campath enabled 1",
+                f'echo "[cs2watcher] swoop {i}"']) + "\r\n"}
             lines += [
-                f'alias {ca} "{cfg.get("record_swoop_spec", "spec_mode 5")}; mirv_campath clear; '
-                f'mirv_campath load {_fwd(Path(sw["xml"]))}; mirv_campath edit start; mirv_campath enabled 1"',
                 f'alias {ce} "mirv_campath enabled 0; {spec}"',
-                f"mirv_cmd addAtTick {sw['from']} {ca}",
+                f"mirv_cmd addAtTick {sw['from']} exec {ca}",
                 f"mirv_cmd addAtTick {sw['to']} {ce}",
             ]
             swoop = {"from": round((sw["from"] - start) / tickrate, 3), "to": round((sw["to"] - start) / tickrate, 3)}
@@ -469,7 +474,7 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
         ]
         seqs.append({"n": i, "highlight_id": h["id"], "name": name, "folder": folder, "rel": rel, "start": start, "end": end,
                      "type": h["type"], "round": h["round"], "player": player, "description": h["description"],
-                     "player_steamid": str(h["player"]), **({"swoop": swoop} if swoop else {})})
+                     "player_steamid": str(h["player"]), **({"swoop": swoop, "swoop_cfg": swoop_cfg} if swoop else {})})
         prev_end = end
     if next_cfg:
         lines.append(f"mirv_cmd addAtTick {prev_end + 2 * tickrate} exec {next_cfg}")   # as long as the quit: HLAE finishes the file
@@ -1176,6 +1181,9 @@ def _run_session(todo: list[tuple[str, list[dict]]], opts: dict) -> None:
                     sq["take_dir"] = p["take_root"] / f"seq{sq['n']}"
                 write_planned(p)
                 (csgo_dir / "cfg" / f"{p['cfg_name']}.cfg").write_text(p["cfg_text"], encoding="utf-8")
+                for sq in p["seqs"]:
+                    if sq.get("swoop_cfg"):
+                        (csgo_dir / "cfg" / f"{sq['swoop_cfg']['name']}.cfg").write_text(sq["swoop_cfg"]["text"], encoding="utf-8")
                 (p["out_dir"] / "last_record.cfg").write_text(p["cfg_text"], encoding="utf-8")
             launches = f" (CS2 launch {si + 1} of {len(sessions)})" if len(sessions) > 1 else ""
             _set(stage="launching CS2 under HLAE" + launches, status="recording",
