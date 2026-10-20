@@ -313,6 +313,7 @@
     $('video-title').textContent = `${v.description} (${v.seconds}s)`;
     $('video-el').src = API.videoUrl(id, v.file);
     $('video-dl').href = API.videoUrl(id, v.file);
+    window.setShareTarget && window.setShareTarget({ demo_id: id, file: v.file, description: v.description });
     $('video-modal').style.display = '';
   }
   $('video-close').onclick = () => { $('video-modal').style.display = 'none'; $('video-el').pause(); $('video-el').removeAttribute('src'); $('video-el').load(); };

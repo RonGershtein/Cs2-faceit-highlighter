@@ -71,9 +71,11 @@ class ConfigIn(BaseModel):
     cs2_path: str | None = None
     watch_folder: str | None = None
     export_folder: str | None = None
+    share_email: str | None = None
+    share_app_password: str | None = None
 
 
-CONFIG_KEYS = ("my_steamid", "cs2_path", "watch_folder", "export_folder", "tick_step", "watch_interval")
+CONFIG_KEYS = ("my_steamid", "cs2_path", "watch_folder", "export_folder", "tick_step", "watch_interval", "share_email")
 
 
 @app.get("/api/config")
@@ -81,19 +83,57 @@ def get_config():
     c = cfgmod.load()
     out = {k: c[k] for k in CONFIG_KEYS}
     out["default_export_folder"] = str(Path.home() / "Downloads" / "cs2-watcher")
+    out["share_password_set"] = bool(c.get("share_app_password"))   # the password itself never leaves the PC
     return out
 
 
 @app.post("/api/config")
 def set_config(body: ConfigIn):
     changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    if changes.get("share_app_password") == "":
+        changes.pop("share_app_password")   # an empty box keeps the saved password
     c = cfgmod.update(**changes)
-    return {k: c[k] for k in CONFIG_KEYS}
+    return {**{k: c[k] for k in CONFIG_KEYS}, "share_password_set": bool(c.get("share_app_password"))}
 
 
 class PickIn(BaseModel):
     start: str | None = None
     title: str | None = None
+
+
+class ShareIn(BaseModel):
+    demo_id: str
+    file: str
+    url: str = ""
+
+
+def _share_call(fn, *a):
+    from . import share
+    try:
+        return fn(share, *a)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/share")
+def share_info(demo_id: str, file: str):
+    """Title and description suggested for YouTube, and the link saved when the video was shared."""
+    return _share_call(lambda s: s.video_info(demo_id, file))
+
+
+@app.post("/api/share/reveal")
+def share_reveal(body: ShareIn):
+    return _share_call(lambda s: s.reveal(body.demo_id, body.file) or {"ok": True})
+
+
+@app.post("/api/share/link")
+def share_link(body: ShareIn):
+    return _share_call(lambda s: {"link": s.save_link(body.demo_id, body.file, body.url)})
+
+
+@app.post("/api/share/email")
+def share_email(body: ShareIn):
+    return _share_call(lambda s: {"to": s.email_link(body.demo_id, body.file)})
 
 
 @app.get("/api/storage")

@@ -201,6 +201,8 @@
   <div class="field"><label for="cfg-steamid">My Steam64 ID</label><input type="text" id="cfg-steamid" name="steamid" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="7656119…"><div class="hint">Used for "my highlights" and the stats above. You can also click <b>me</b> next to your name in a match scoreboard.</div></div>
   <div class="field"><label for="cfg-watch">Demo download folder (watched)</label><div class="row"><input type="text" id="cfg-watch" name="watch-folder" autocomplete="off" spellcheck="false" placeholder="C:\Users\me\Downloads…"><button class="browse" data-for="cfg-watch" data-title="Where do your FACEIT demos download to?">Browse…</button></div><div class="hint">Demos saved here are parsed automatically. Point it at the folder your browser downloads FACEIT demos to.</div></div>
   <div class="field"><label for="cfg-export">Save clips to</label><div class="row"><input type="text" id="cfg-export" name="export-folder" autocomplete="off" spellcheck="false" placeholder=""><button class="browse" data-for="cfg-export" data-title="Where should recorded clips be saved?">Browse…</button></div><div class="hint" id="cfg-export-hint">Recorded highlights, long videos and montages are copied here, one subfolder per match.</div></div>
+  <div class="field"><label for="cfg-mail">Send share links to (Gmail)</label><div class="sq-names"><input type="email" id="cfg-mail" name="share-email" autocomplete="email" spellcheck="false" placeholder="you@gmail.com"><input type="password" id="cfg-mailpw" name="share-app-password" autocomplete="new-password" placeholder="Gmail app password"></div>
+    <div class="hint">The Share button emails you the YouTube link. Needs a Gmail <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">app password</a> (Google account with 2-step verification); it stays on this PC.</div></div>
   <div class="field"><label for="cfg-cs2">CS2 install path (optional)</label><div class="row"><input type="text" id="cfg-cs2" name="cs2-path" autocomplete="off" spellcheck="false" placeholder="Auto-detected from Steam…"><button class="browse" data-for="cfg-cs2" data-title="Select the 'Counter-Strike Global Offensive' folder">Browse…</button></div></div>
   <div class="modal-foot"><span class="muted" id="cfg-msg" role="status" aria-live="polite"></span><button class="primary" id="cfg-save">Save</button></div>
   <div class="st" aria-labelledby="st-title">
@@ -210,6 +212,7 @@
   </div>
 </div></div>
 <script src="/js/api.js"></script>
+<script src="/js/share.js"></script>
 <script src="/js/library.js"></script>
 <script src="/js/clips.js"></script>
 <script src="/js/squad.js"></script>

@@ -41,6 +41,8 @@ DEFAULTS: dict = {
     "record_hud": "killfeed",  # "killfeed": a clean picture with the kill feed only; "health_ammo": CS2's full HUD
                                # (health and ammo, but also the players bar at the top: CS2 cannot hide only that)
     "export_folder": "",       # where finished clips are copied; empty -> <Downloads>/cs2-watcher/<map>_<date>_<id>
+    "share_email": "",         # Gmail address that receives the YouTube links of shared videos
+    "share_app_password": "",  # a Gmail app password for it (myaccount.google.com/apppasswords); stays on this PC
     "cine_slow": 0.35,         # slow-motion speed around kills (0.35 = 35 % speed)
     "cine_kills": "last",      # which kills get slow motion: "last" (the final kill of the clip) or "all"
     "cine_smooth": False,      # motion-interpolate slow segments (smoother but ~40x slower to encode)

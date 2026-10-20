@@ -118,6 +118,7 @@
     $('video-title').textContent = `${c.description} (${fmtLen(c.seconds)})`;
     $('video-el').src = API.videoUrl(c.demo_id, c.file);
     $('video-dl').href = API.videoUrl(c.demo_id, c.file); $('video-dl').setAttribute('download', c.file);
+    window.setShareTarget && window.setShareTarget({ demo_id: c.demo_id, file: c.file, description: c.description });
     $('video-modal').style.display = '';
   }
   $('video-close').onclick = () => { $('video-modal').style.display = 'none'; const v = $('video-el'); v.pause(); v.removeAttribute('src'); v.load(); };

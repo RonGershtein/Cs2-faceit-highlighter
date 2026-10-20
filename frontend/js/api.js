@@ -73,6 +73,10 @@ const API = (() => {
     pickFolder: (start, title) => post('/api/pick-folder', { start, title }),
     setConfig: (c) => post('/api/config', c),
     storage: () => json('/api/storage'),
+    shareInfo: (demo_id, file) => json(`/api/share?demo_id=${encodeURIComponent(demo_id)}&file=${encodeURIComponent(file)}`),
+    shareReveal: (demo_id, file) => post('/api/share/reveal', { demo_id, file }),
+    shareLink: (demo_id, file, url) => post('/api/share/link', { demo_id, file, url }),
+    shareEmail: (demo_id, file) => post('/api/share/email', { demo_id, file }),
     clearStorage: (item) => post('/api/storage/clear', { item }),
     upload(file, onProgress) {
       return new Promise((resolve, reject) => {

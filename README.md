@@ -176,6 +176,20 @@ highlights you ticked (those are remade). Takes ~10-20 s per clip
   folder. Untick "play caster voice lines" for a clean clip. The clip runs on until the last
   line has finished.
 
+### Sharing a video
+Every video player has a **Share** button:
+1. **Open YouTube upload** and **Show the file** (Explorer opens with the video selected): drag it onto the page and
+   choose **Unlisted**, so only people with the link can watch. A title and a description (the list of plays) are
+   ready to copy.
+2. Paste the link YouTube gives you; the app keeps it with the video.
+3. **Email it to me** sends the link to your Gmail, **Send on WhatsApp** opens WhatsApp with the message ready, or
+   **Copy link**.
+
+The upload is the one manual step on purpose: YouTube keeps videos uploaded by personal apps through its API private
+until Google audits the app, so "anyone with the link" only works when you upload yourself. For the email, put your
+Gmail address and a Gmail [app password](https://myaccount.google.com/apppasswords) (needs 2-step verification) in
+Settings; both stay in `config.toml` on your PC.
+
 ### Storage
 **Settings → Storage** lists every place the app keeps files and how big it is. **Clear** empties the ones that lose
 nothing for good: the copies in your clips folder (only files the app named, in the folders it made), the cache of

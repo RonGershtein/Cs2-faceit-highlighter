@@ -256,6 +256,8 @@
     modal.style.display = '';
     $('cfg-steamid').value = config.my_steamid || ''; $('cfg-watch').value = config.watch_folder || ''; $('cfg-cs2').value = config.cs2_path || '';
     $('cfg-export').value = config.export_folder || ''; $('cfg-export').placeholder = config.default_export_folder || '';
+    $('cfg-mail').value = config.share_email || ''; $('cfg-mailpw').value = '';
+    $('cfg-mailpw').placeholder = config.share_password_set ? 'app password saved (type to change)' : 'Gmail app password';
     renderStorage();
   };
   modal.addEventListener('click', async (e) => {
@@ -294,7 +296,7 @@
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
   $('cfg-save').onclick = async () => {
     try {
-      config = { ...config, ...(await API.setConfig({ my_steamid: $('cfg-steamid').value.trim(), watch_folder: $('cfg-watch').value.trim(), cs2_path: $('cfg-cs2').value.trim(), export_folder: $('cfg-export').value.trim() })) };
+      config = { ...config, ...(await API.setConfig({ my_steamid: $('cfg-steamid').value.trim(), watch_folder: $('cfg-watch').value.trim(), cs2_path: $('cfg-cs2').value.trim(), export_folder: $('cfg-export').value.trim(), share_email: $('cfg-mail').value.trim(), share_app_password: $('cfg-mailpw').value.trim() })) };
       $('cfg-msg').textContent = 'saved'; setTimeout(() => { $('cfg-msg').textContent = ''; modal.style.display = 'none'; }, 700);
       refresh(true);   // "mine" stats depend on the config
     } catch (e) { $('cfg-msg').textContent = 'failed: ' + e.message; }
