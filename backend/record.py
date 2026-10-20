@@ -327,8 +327,11 @@ def swoop_points(eye: dict, seconds: float = SWOOP_SECONDS) -> list[dict]:
     def at(back: float, up: float, t: float, pitch: float) -> dict:
         return {"t": round(t, 3), "x": round(eye["x"] - fx * back, 2), "y": round(eye["y"] - fy * back, 2),
                 "z": round(eye["z"] + up, 2), "pitch": round(pitch, 2), "yaw": round(eye["yaw"], 2)}
+    # five keys: HLAE only runs a campath with at least four, and more make the curve smoother
     return [at(150.0, 110.0, 0.0, 34.0),
+            at(115.0, 80.0, seconds * 0.3, 30.0 + 0.1 * eye["pitch"]),
             at(70.0, 45.0, seconds * 0.55, 20.0 + 0.4 * eye["pitch"]),
+            at(25.0, 14.0, seconds * 0.8, 8.0 + 0.8 * eye["pitch"]),
             at(0.0, 0.0, seconds, eye["pitch"])]
 
 

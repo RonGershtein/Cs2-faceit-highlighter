@@ -880,6 +880,7 @@ def test_swoop_lands_on_the_players_eyes():
     eye = {"x": 100.0, "y": 200.0, "z": 64.0, "pitch": 5.0, "yaw": 90.0}     # looking along +y
     pts = swoop_points(eye, 1.8)
     assert pts[-1] == {"t": 1.8, "x": 100.0, "y": 200.0, "z": 64.0, "pitch": 5.0, "yaw": 90.0}   # exactly his view
+    assert len(pts) >= 4 and [p["t"] for p in pts] == sorted(p["t"] for p in pts)   # HLAE runs a campath from 4 keys
     assert pts[0]["t"] == 0.0 and pts[0]["y"] < 200.0 - 100 and pts[0]["z"] > 64.0 + 100 and pts[0]["pitch"] > 20  # behind, above
     xml = campath_xml(pts)
     assert xml.startswith('<?xml version="1.0"?><campath><points><p t="0.0"') and 'ry="5.0" rz="90.0"' in xml
