@@ -94,8 +94,8 @@ and jobs started meanwhile wait in a queue.
 **Several matches at once:** in the library, **Select matches**, click the matches (or **Select all**), then
 **Squad montage** → **Create squad montage** (or **New squad montage** at the top). The squad's
 plays of all of them become one video with the intro card (team name, dates, stats) and one soundtrack (the next
-songs crossfade in when the video is longer; every song plays only its loud part, without the quiet intro and the
-outro). Plays that are not recorded yet are recorded first in one CS2 session that loads demo after demo. While CS2
+songs crossfade in when the video is longer; every song plays only its loud parts: the quiet intro, the outro and
+any quiet stretch of 8 s or more inside it are cut, crossfading). Plays that are not recorded yet are recorded first in one CS2 session that loads demo after demo. While CS2
 records, the plays already recorded are rendered in the background at low priority, so when the game closes most of
 the montage is done. Rendered plays are kept (see `render_cache_gb`), so a second montage or a recap with the same
 plays only joins them.

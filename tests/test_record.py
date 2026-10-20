@@ -676,12 +676,30 @@ def test_recover_recordings_makes_clips_cs2_recorded_unwatched(tmp_path, monkeyp
 
 def test_song_drops_in_montage_follow_the_soundtrack():
     from backend.record import song_drops_in_montage
-    songs = [(100.0, [20.0, 60.0, 99.0, 120.0], [1.0, 0.5, 0.7, 0.9]),   # plays to 100 s: the drop at 120 is never heard
-             (80.0, [2.0, 30.0], [0.8, 1.0])]                             # the drop at 2 s is inside the crossfade
+    songs = [([(0.0, 100.0)], [20.0, 60.0, 99.0, 120.0], [1.0, 0.5, 0.7, 0.9]),   # plays to 100 s: 120 is never heard
+             ([(10.0, 90.0)], [12.0, 40.0], [0.8, 1.0])]                         # 12 s is inside the crossfade
     got = song_drops_in_montage(songs, offset=15.0)
-    # song 1 from 15 s: 20 -> 5, 60 -> 45, 99 -> 84; song 2 starts at 100 - 15 - 3 = 82: 30 -> 112
+    # song 1 from 15 s: 20 -> 5, 60 -> 45, 99 -> 84; song 2 starts at 85 - 3 = 82, its 40 s at 82 + 30 = 112
     assert got == [(5.0, 1.0), (45.0, 0.5), (84.0, 0.7), (112.0, 1.0)]
     assert song_drops_in_montage(songs, offset=50.0)[0] == (10.0, 0.5)     # drops before the offset are gone
+
+
+def test_song_drops_skip_the_cut_quiet_stretch():
+    from backend.record import song_drops_in_montage
+    # one song in two pieces: 0-100 and 140-200 (the quiet 100-140 is cut); drops at 50, 120 (cut) and 160
+    songs = [([(0.0, 100.0), (140.0, 200.0)], [50.0, 120.0, 160.0], [1.0, 1.0, 0.6])]
+    assert song_drops_in_montage(songs, offset=0.0) == [(50.0, 1.0), (117.0, 0.6)]   # 160 -> 100 - 3 + 20
+
+
+def test_bed_pieces_takes_what_the_montage_needs():
+    from backend.record import bed_pieces
+    songs = [("a", [(10.0, 100.0), (130.0, 190.0)]), ("b", [(5.0, 150.0)]), ("c", [(0.0, 120.0)])]
+    used, n = bed_pieces(songs, offset=40.0, total=60.0)
+    assert used == [("a", 40.0, 100.0), ("a", 130.0, 190.0)] and n == 1     # 60 s is not 62: the next piece too
+    used, n = bed_pieces(songs, offset=40.0, total=200.0)
+    assert [u[0] for u in used] == ["a", "a", "b"] and n == 2
+    used, n = bed_pieces(songs, offset=40.0, total=1000.0)
+    assert n == 3 and len(used) == 4                                          # the songs run out: all of them
 
 
 def test_plan_song_order_puts_kills_on_the_drops_and_big_plays_on_big_drops():
@@ -733,3 +751,18 @@ def test_plan_song_order_puts_the_biggest_play_on_the_biggest_drop():
     order, chosen, _ = plan_song_order([same(), same(), same()], [0.6, 1.0, 0.6], 0.0, lambda hit: 0.0, lambda off: drops)
     assert order.index(1) in (0, 2)                    # the big play takes a big drop, not the small one
     assert all(chosen[i]["slow"] for i in order)       # and all three drops still get a kill
+
+
+def test_song_pieces_cut_a_long_quiet_stretch_but_not_a_short_dip():
+    from backend.cinematic import pieces_bed_args, pieces_length, song_pieces
+    loud, quiet = [0.3], [0.03]
+    curve = quiet * 10 + loud * 160 + quiet * 60 + loud * 120 + quiet * 6 + loud * 100 + quiet * 20   # 0.5 s steps
+    ps = song_pieces(curve)
+    # intro and outro gone; the 30 s quiet stretch at 85-115 s cut (1.5 s kept each side); the 3 s dip kept
+    assert len(ps) == 2
+    (a1, b1), (a2, b2) = ps
+    assert 3.0 <= a1 <= 5.5 and 84.0 <= b1 <= 88.0 and 112.0 <= a2 <= 116.0 and 227.0 <= b2 <= 230.0
+    assert pieces_length([(0.0, 50.0), (60.0, 100.0)]) == 87.0
+    args = pieces_bed_args(Path("ff"), [(Path("a.mp3"), 4.0, 86.5), (Path("a.mp3"), 113.5, 200.0), (Path("b.mp3"), 0.0, 90.0)], Path("o.m4a"))
+    assert args[:8] == ["ff", "-y", "-ss", "4.000", "-t", "82.500", "-i", "a.mp3"]
+    assert args[args.index("-filter_complex") + 1] == "[0:a][1:a]acrossfade=d=3:c1=tri:c2=tri[x1];[x1][2:a]acrossfade=d=3:c1=tri:c2=tri[x2]"

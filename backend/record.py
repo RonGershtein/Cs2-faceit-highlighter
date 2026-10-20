@@ -1733,41 +1733,41 @@ def _join(files: list[Path], infos: list[dict], out: Path, list_file: Path) -> N
 
 def _music_bed(cine, ffprobe: Path, first: Path, offset: float, total: float, work_dir: Path, stamp: str,
                follow: list[str] | None = None):
-    """(one long track made of `first` and the songs that follow it, their names) when the montage is longer than
-    `first` from `offset`; (None, []) when the song alone is long enough or there is nothing to follow it.
+    """(one track for the whole montage, the names of the songs after `first`): the loud pieces of `first` from
+    `offset` (cinematic.song_pieces: no intro, outro or long quiet stretch), then, when the montage is longer, the
+    pieces of the next songs, all crossfading. (None, []) when the song plays straight through without a cut.
     follow: the follow-up songs in the order to use them (the montage plan put its drops there); else the songs
     not heard for the longest time."""
-    first_len = cine.song_span(cine.loudness_curve(FFMPEG_EXE, first))[1] or cine.probe_video(ffprobe, first)["duration"]
-    if not first_len or first_len - offset >= total:
-        return None, []
-    others = [t for t in cine.music_files() if t.name != first.name]
-    if not others:
-        return None, []   # one song only: it loops
+    def pieces(f: Path) -> list[tuple[float, float]]:
+        c = cine.loudness_curve(FFMPEG_EXE, f)
+        return cine.song_pieces(c) if c else [(0.0, cine.probe_video(ffprobe, f)["duration"])]
+    songs = [(first, pieces(first))]
+    used, n = bed_pieces(songs, offset, total)
+    if len(used) == 1 and used[0][2] - used[0][1] >= total:
+        return None, []   # one piece covers the montage: the song as it is
     picked: list[Path] = []
-    lens: list[float] = []
-    spans: list[tuple[float, float]] = []   # the loud part of each song (song_span): intros and outros are cut
-    while len(picked) < len(others) and cine.bed_tracks_needed(first_len, offset, total, lens) == len(lens) \
-            and max(0.0, first_len - offset) + sum(max(0.0, x - 3.0) for x in lens) < total:
+
+    def covered() -> bool:
+        got = bed_pieces(songs, offset, total)[0]
+        return sum(b - a for _, a, b in got) - 3.0 * (len(got) - 1) >= total + 2.0
+    while not covered():
         if follow is not None:
-            nxt = next((cine.MUSIC_DIR / n for n in follow[len(picked):] if (cine.MUSIC_DIR / n).is_file()), None)
-            if nxt is not None:
-                cine.note_used(nxt.name)
+            nxt = next((cine.MUSIC_DIR / x for x in follow[len(picked):] if (cine.MUSIC_DIR / x).is_file()), None)
         else:
             nxt = cine.pick_music({"cine_music": ""}, exclude={first.name, *(p.name for p in picked)})
-        if nxt is None:
+        if nxt is None or nxt.name in {first.name, *(p.name for p in picked)}:
             break
+        if follow is not None:
+            cine.note_used(nxt.name)
         picked.append(nxt)
-        c = cine.loudness_curve(FFMPEG_EXE, nxt)
-        a, b = cine.song_span(c) if c else (0.0, cine.probe_video(ffprobe, nxt)["duration"])
-        spans.append((a, b))
-        lens.append(b - a)
+        songs.append((nxt, pieces(nxt)))
+    used, n = bed_pieces(songs, offset, total)
     bed = work_dir / f"music_bed_{stamp}.m4a"
-    r = subprocess.run(cine.music_bed_args(FFMPEG_EXE, first, offset, picked, bed, first_end=first_len, spans=spans),
-                       capture_output=True, text=True)
+    r = subprocess.run(cine.pieces_bed_args(FFMPEG_EXE, used, bed), capture_output=True, text=True)
     if r.returncode != 0 or not bed.exists():
         bed.unlink(missing_ok=True)
         return None, []
-    return bed, [p.name for p in picked]
+    return bed, [p.name for p in picked[:max(0, n - 1)]]
 
 
 DROP_TOLERANCE = 0.3   # seconds between a slow-motion kill and the drop it lands on
@@ -1864,9 +1864,10 @@ def plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: b
     # the whole soundtrack: the song, then the songs that follow it when the montage is longer, with every drop
     if follow is None:
         follow = cine.fresh_order(exclude={song.name})
-    # each song only plays its loud part (song_span), the first one up to its end: the drops are counted from there
-    songs = [(cine.song_span(curve)[1], drops, cine.drop_strengths(curve, drops))]
-    used_follow, have = [], songs[0][0] - 30.0   # the song starts somewhere in its first half minute or so
+    # each song only plays its loud pieces (song_pieces: no intro, outro or long quiet stretch); drops in the cut
+    # parts do not count
+    songs = [(cine.song_pieces(curve), drops, cine.drop_strengths(curve, drops))]
+    used_follow, have = [], cine.pieces_length(songs[0][0]) - 30.0   # the song starts in its first half minute or so
     for name in follow:
         if have >= est_total * 1.3:
             break
@@ -1877,11 +1878,10 @@ def plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: b
         if not c:
             continue
         d = cine.find_drops(c)
-        a, b = cine.song_span(c)
-        st = cine.drop_strengths(c, d)
-        songs.append((b - a, [x - a for x in d if a <= x <= b], [y for x, y in zip(d, st) if a <= x <= b]))
+        ps = cine.song_pieces(c)
+        songs.append((ps, d, cine.drop_strengths(c, d)))
         used_follow.append(name)
-        have += b - a - 3.0
+        have += cine.pieces_length(ps) - 3.0
     hls = [(v.get("ctx") or {}).get("highlight") or next((h for h in db.get_highlights(d) if h["id"] == v.get("highlight_id")), None)
            for d, v in plays]
     sizes = [play_score(v, h) for (_, v), h in zip(plays, hls)]
@@ -1902,20 +1902,40 @@ def plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: b
     return plan
 
 
-def song_drops_in_montage(songs: list[tuple[float, list[float], list[float]]], offset: float,
+def song_drops_in_montage(songs: list[tuple[list[tuple[float, float]], list[float], list[float]]], offset: float,
                           xfade: float = 3.0) -> list[tuple[float, float]]:
-    """(montage time, strength) of every drop of a soundtrack: songs = [(length, drops, strengths)] played one after
-    the other, the first from `offset` (montage time 0 = song time `offset`), each next one crossfading `xfade`
-    seconds into the previous. Drops before the offset are gone. Pure function; unit-tested."""
-    out, start = [], -offset
-    for k, (length, drops, strengths) in enumerate(songs):
-        for d, st in zip(drops, strengths):
-            t = start + d
-            # a drop inside the crossfade is drowned by the song before; one after a song's end is never heard
-            if t >= 0 and d <= length and (k == 0 or d >= xfade):
-                out.append((round(t, 3), st))
-        start += length - xfade
+    """(montage time, strength) of every drop a soundtrack plays: songs = [(pieces, drops, strengths)] in song
+    seconds (pieces from cinematic.song_pieces), the pieces played one after the other, each crossfading `xfade`
+    seconds into the previous, the first song from `offset` (montage time 0). A drop in a part that is cut, before
+    the offset, or inside a crossfade (drowned by what plays before) does not count. Pure function; unit-tested."""
+    out, t, first = [], 0.0, True
+    for k, (pieces, drops, strengths) in enumerate(songs):
+        if k == 0:
+            pieces = [(max(a, offset), b) for a, b in pieces if b > offset + 1.0]
+        for a, b in pieces:
+            for d, st in zip(drops, strengths):
+                if a <= d <= b and (first or d - a >= xfade):
+                    out.append((round(t + d - a, 3), st))
+            t += (b - a) - xfade
+            first = False
     return sorted(out)
+
+
+def bed_pieces(songs: list[tuple[object, list[tuple[float, float]]]], offset: float, total: float,
+               xfade: float = 3.0) -> tuple[list[tuple[object, float, float]], int]:
+    """The pieces (song, start, end) a soundtrack of `total` seconds plays: the first song's pieces from `offset`,
+    then the next songs' pieces, as many as it takes (a couple of seconds spare), and how many songs that uses.
+    When the songs run out, all of them. Pure function; unit-tested."""
+    out, have = [], -xfade
+    for k, (song, pieces) in enumerate(songs):
+        if k == 0:
+            pieces = [(max(a, offset), b) for a, b in pieces if b > offset + 1.0]
+        for a, b in pieces:
+            out.append((song, a, b))
+            have += (b - a) - xfade
+            if have >= total + 2.0:
+                return out, k + 1
+    return out, len(songs)
 
 
 ORDER_BEAM = 120          # states kept per step by plan_song_order

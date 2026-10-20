@@ -152,30 +152,52 @@
   let multiSeq = 0;
   async function multiPreview() {
     const seq = ++multiSeq;
-    $('multi-list').textContent = 'looking for your squad\'s plays…';
+    $('multi-list').innerHTML = '<div class="sq-empty">Looking for your squad\'s plays…</div>';
+    $('multi-sum').textContent = ''; $('multi-rec').hidden = true;
     try {
       const r = await API.multiPreview(mpicked, +$('multi-min').value);
       if (seq !== multiSeq) return;
       const ms = r.matches;
       const plays = ms.reduce((a, m) => a + m.ids.length, 0), need = ms.reduce((a, m) => a + m.need.length, 0);
       const toRec = ms.filter(m => m.need.length).length, nm = ms.filter(m => m.ids.length).length;
-      $('multi-list').innerHTML = ms.map(m => `<div>${esc(m.map || 'match')} · ${esc(fmtDate(m.date).split(' · ')[0])} · ${m.ids.length ? `<b>${m.ids.length} play${m.ids.length > 1 ? 's' : ''}</b>${m.need.length ? ` <span class="badge">${m.need.length} to record</span>` : ''}` : 'no plays like that'}</div>`).join('')
-        + (plays ? `<div style="margin-top:6px"><b>${plays} play${plays > 1 ? 's' : ''} from ${nm} match${nm > 1 ? 'es' : ''}</b>${need ? ` · CS2 opens once to record ${need} play${need > 1 ? 's' : ''}${toRec > 1 ? ` from ${toRec} matches (it loads one demo after the other)` : ''} first, and closes itself at the end` : ' · all recorded'}</div>` : '');
+      const mapName = (m) => (m || 'match').replace(/^de_/, '').replace(/^./, c => c.toUpperCase());
+      $('multi-list').innerHTML = ms.map(m => `<div class="sq-match${m.ids.length ? '' : ' none'}"><span class="map">${esc(mapName(m.map))}<span>${esc(fmtDate(m.date).split(' · ')[0].replace(/ \d{4}$/, ''))}</span></span>`
+        + `<span class="rec">${m.need.length ? `${m.need.length} new` : ''}</span>`
+        + `<span class="n">${m.ids.length ? `${m.ids.length} play${m.ids.length > 1 ? 's' : ''}` : 'no plays'}</span></div>`).join('')
+        || '<div class="sq-empty">No matches selected</div>';
+      $('multi-sum').textContent = plays ? `${plays} play${plays > 1 ? 's' : ''} from ${nm} match${nm > 1 ? 'es' : ''}${need ? '' : ' · all recorded'}` : '';
+      $('multi-rec').hidden = !need;
+      $('multi-rec').textContent = need ? `CS2 opens once to record ${need} play${need > 1 ? 's' : ''}${toRec > 1 ? ` from ${toRec} matches` : ''} first, then closes by itself.` : '';
       $('multi-go').disabled = !plays;
-      $('multi-name').placeholder = plays ? `Squad montage · ${plays} play${plays > 1 ? 's' : ''} from ${nm} match${nm > 1 ? 'es' : ''}` : 'Squad montage';
-    } catch (e) { $('multi-list').textContent = e.message; $('multi-go').disabled = true; }
+      $('multi-name').placeholder = 'Squad montage';
+    } catch (e) { $('multi-list').innerHTML = `<div class="sq-empty">${esc(e.message)}</div>`; $('multi-go').disabled = true; }
   }
   async function loadMultiMusic() {
     const sel = $('multi-music'), cur = sel.value;
     try {
       const m = await API.music();
-      sel.innerHTML = '<option value="">Random (a song you have not heard lately)</option>'
+      sel.innerHTML = '<option value="">Random: a song you have not heard lately</option>'
         + m.files.map(f => `<option value="${esc(f)}">${esc(f.replace(/\.[^.]+$/, ''))}</option>`).join('');
       sel.value = m.files.includes(cur) ? cur : '';
       if (!m.files.length) sel.innerHTML = '<option value="">No music yet: add tracks in a match\'s Cinematic dialog</option>';
     } catch (_) { /* keep the list */ }
   }
-  const syncMultiStyle = () => { for (const id of ['multi-song-row', 'multi-order-row']) $(id).style.display = $('multi-cine').checked ? '' : 'none'; };
+  const syncMultiStyle = () => { $('multi-cine-opts').hidden = !$('multi-cine').checked; };
+  const ORDER_HINT = { song: 'Kills land on the song\'s drops, the biggest plays on the biggest drops.', date: 'The plays in the order they happened, oldest match first.' };
+  // a row of buttons that works like radio buttons and keeps its value in a hidden input
+  function segment(id, input, onChange) {
+    const seg = $(id);
+    const set = (v) => {
+      $(input).value = v;
+      seg.querySelectorAll('button').forEach(b => { const on = b.dataset.v === v; b.classList.toggle('active', on); b.setAttribute('aria-checked', on); });
+      onChange && onChange(v);
+    };
+    seg.addEventListener('click', (e) => { const b = e.target.closest('button[data-v]'); if (b) set(b.dataset.v); });
+    return set;
+  }
+  segment('multi-min-seg', 'multi-min', () => multiPreview());
+  const setOrder = segment('multi-order-seg', 'multi-order', (v) => { $('multi-order-hint').textContent = ORDER_HINT[v]; });
+  setOrder('song');
   $('multi-cine').addEventListener('change', syncMultiStyle);
   $('multi-plain').addEventListener('change', syncMultiStyle);
   $('match-go').onclick = async () => {
@@ -184,7 +206,6 @@
     try { const s = await API.squad(); $('multi-team').value = s.team || ''; $('multi-intro').checked = s.intro !== false; } catch (_) { /* defaults */ }
     multiPreview();
   };
-  $('multi-min').addEventListener('change', multiPreview);
   $('multi-close').onclick = () => $('multi-modal').style.display = 'none';
   $('multi-modal').addEventListener('click', (e) => { if (e.target === $('multi-modal')) $('multi-modal').style.display = 'none'; });
   $('multi-go').onclick = async () => {

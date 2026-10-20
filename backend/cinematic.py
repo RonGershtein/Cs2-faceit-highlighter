@@ -349,6 +349,59 @@ def song_span(curve: list[float], win: float = 0.5, smooth: float = 2.0, level: 
     return (a, b) if b - a >= 30.0 else (0.0, total)
 
 
+QUIET_MIN = 8.0     # a quiet stretch inside a song at least this long is cut out of a montage's soundtrack
+QUIET_KEEP = 1.5    # seconds of it kept on each side of the cut (the crossfade runs there)
+
+
+def song_pieces(curve: list[float], win: float = 0.5, level: float = 0.45, quiet_min: float = QUIET_MIN,
+                keep: float = QUIET_KEEP) -> list[tuple[float, float]]:
+    """The parts of a track a montage plays, (start, end) in song seconds: its loud span (song_span) with every
+    quiet stretch of `quiet_min` seconds or more inside it cut out (`keep` seconds of it stay on each side, where
+    the pieces crossfade), so a soundtrack never sits in an ambient break. Pure function; unit-tested."""
+    a, b = song_span(curve, win, level=level)
+    if b - a <= 0 or not curve:
+        return [(a, b)]
+    h = max(1, int(round(1.0 / win)))          # loudness over about two seconds around each point
+    thr = level * sorted(curve)[int(len(curve) * 0.8)]
+    quiet = [sum(curve[max(0, k - h):k + h + 1]) / len(curve[max(0, k - h):k + h + 1]) < thr for k in range(len(curve))]
+    pieces, cur, k = [], a, int(a / win)
+    end = min(len(curve), int(b / win))
+    while k < end:
+        if not quiet[k]:
+            k += 1
+            continue
+        j = k
+        while j < end and quiet[j]:
+            j += 1
+        qa, qb = k * win, j * win
+        if qb - qa >= quiet_min and qa + keep - cur >= 4.0 and b - (qb - keep) >= 4.0:
+            pieces.append((cur, qa + keep))
+            cur = qb - keep
+        k = j
+    pieces.append((cur, b))
+    return pieces
+
+
+def pieces_length(pieces: list[tuple[float, float]], xfade: float = 3.0) -> float:
+    """Seconds the pieces last played one after the other, each crossfading `xfade` into the previous."""
+    return sum(b - a for a, b in pieces) - xfade * max(0, len(pieces) - 1)
+
+
+def pieces_bed_args(ffmpeg: Path, pieces: list[tuple[Path, float, float]], dst: Path, xfade: float = 3.0) -> list[str]:
+    """FFmpeg command playing the pieces (file, start, end) one after the other, each crossfading `xfade` seconds
+    into the previous: a montage's whole soundtrack, songs and the parts of each song. Pure function; unit-tested."""
+    args = [str(ffmpeg), "-y"]
+    for f, a, b in pieces:
+        args += (["-ss", f"{a:.3f}"] if a > 0 else []) + ["-t", f"{b - a:.3f}", "-i", str(f)]
+    if len(pieces) == 1:
+        return args + ["-map", "0:a", "-c:a", "aac", "-b:a", "256k", str(dst)]
+    chain, prev = [], "[0:a]"
+    for i in range(1, len(pieces)):
+        chain.append(f"{prev}[{i}:a]acrossfade=d={xfade:g}:c1=tri:c2=tri[x{i}]")
+        prev = f"[x{i}]"
+    return args + ["-filter_complex", ";".join(chain), "-map", prev, "-c:a", "aac", "-b:a", "256k", str(dst)]
+
+
 def drop_strengths(curve: list[float], drops: list[float], win: float = 0.5, after: float = 6.0,
                    before: float = 3.0) -> list[float]:
     """How big each drop is (the rise in loudness find_drops measured), the biggest being 1.0. Pure function."""
