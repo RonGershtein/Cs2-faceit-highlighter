@@ -62,7 +62,7 @@ class Timeline {
     for (const h of this.highlights) {
       if (h.type === 'kill') continue;
       const x0 = this.x(h.start_tick), x1 = this.x(h.end_tick);
-      ctx.fillStyle = h.type === 'clutch' ? '#ffd166' : h.type === 'ace' ? '#ff7ab6' : h.type === 'ninja_defuse' ? '#a78bfa' : '#4ad37a';
+      ctx.fillStyle = h.type === 'clutch' ? '#ffd166' : h.type === 'ace' ? '#ff7ab6' : h.type === 'ninja_defuse' ? '#9fd0ff' : '#4ad37a';
       ctx.fillRect(x0, H / 2 - 3 * d, Math.max(2 * d, x1 - x0), 6 * d);
     }
     // cursor

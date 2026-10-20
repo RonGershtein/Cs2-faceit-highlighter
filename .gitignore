@@ -32,3 +32,7 @@ skills-lock.json
 
 # friends' photos dropped in the repo root (the cropped avatars live in data/players)
 /players photos/
+
+# songs dropped in for the music list (copyrighted; never commit)
+/music/
+.taste-skill/

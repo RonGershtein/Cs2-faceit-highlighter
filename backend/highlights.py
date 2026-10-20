@@ -13,11 +13,11 @@ Output: list of highlights sorted by score desc:
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from typing import Callable
 
 TICKRATE = 64
-CHAIN_GAP_S = 15
 PRE_S, POST_S = 4, 2
 
 MULTIKILL_SCORE = {2: 2, 3: 4, 4: 7, 5: 12}
@@ -132,19 +132,9 @@ def detect(kills: list[dict], rounds: list[dict], bomb: list[dict] | None = None
             if _valid_kill(k):
                 by_attacker[k["attacker"]].append(k)
         for sid, ks in by_attacker.items():
-            chain: list[dict] = []
-            chains: list[list[dict]] = []
-            for k in ks:
-                if chain and k["tick"] - chain[-1]["tick"] > CHAIN_GAP_S * tickrate:
-                    chains.append(chain)
-                    chain = []
-                chain.append(k)
-            if chain:
-                chains.append(chain)
-            # an ace is 5 kills in the round regardless of chain gaps
-            if len(ks) >= 5:
-                chains = [ks]
-            for ch in chains:
+            # every kill of a player in the round is one highlight (2K..ACE), however far apart: two pairs of
+            # kills 30 s apart are a 4K, not two 2Ks. The cinematic pace fast-forwards the quiet part between them.
+            for ch in [ks]:
                 n = len(ch)
                 if n < 2:
                     continue
@@ -270,6 +260,9 @@ def _merge(hs: list[dict]) -> list[dict]:
             keep["kills"] = sorted(set(last["kills"]) | set(h["kills"]))
             # score: strongest + half of the other (both describe the same play)
             keep["score"] = round(max(last["score"], h["score"]) + 0.5 * min(last["score"], h["score"]), 1)
+            if keep["type"] == "clutch" and len(keep["kills"]) >= 2:
+                # the label counts every kill of the play, the ones before the clutch situation included
+                keep["description"] = re.sub(r" \(\d+K\)$", "", keep["description"]) + f" ({len(keep['kills'])}K)"
             if not (keep["type"] == "clutch" and drop["type"] in ("multikill", "ace")):
                 keep["description"] = keep["description"] + " + " + drop["description"].split(" by ")[0]
             elif drop["type"] == "ace" and "ACE" not in keep["description"]:

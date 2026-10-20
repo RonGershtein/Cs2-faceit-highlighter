@@ -7,11 +7,13 @@
 <meta name="theme-color" content="#0a0c10">
 <link rel="icon" href="/favicon.ico">
 <title>CS2 Watcher – replay</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
+<link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+<script src="/js/icons.js"></script>
 <a class="skip" href="#main">Skip to content</a>
 <header class="topbar">
   <a href="/" class="brand" style="text-decoration:none"><span class="logo">CS</span></a>
@@ -38,7 +40,7 @@
     <div class="controls">
       <button class="icon" id="btn-prev-round" title="previous round (PgUp)" aria-label="Previous round"><svg class="ico" viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
       <button class="icon" id="btn-prev-kill" title="previous kill ([)" aria-label="Previous kill"><svg class="ico" viewBox="0 0 24 24"><path d="M17 5v14L6 12z"/></svg></button>
-      <button id="btn-play" class="primary" style="min-width:86px;justify-content:center">▶ Play</button>
+      <button id="btn-play" class="primary" style="min-width:86px;justify-content:center"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg> Play</button>
       <button class="icon" id="btn-next-kill" title="next kill (])" aria-label="Next kill"><svg class="ico" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></svg></button>
       <button class="icon" id="btn-next-round" title="next round (PgDn)" aria-label="Next round"><svg class="ico" viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
       <select id="speed" title="playback speed" aria-label="Playback speed">
@@ -64,23 +66,23 @@
         <button class="small" data-f="all" id="f-all">All</button>
         <button class="small" data-f="kills" id="f-kills" title="include single kills">+ kills</button>
         <span class="spacer"></span>
-        <button class="small" id="btn-play-all" title="play all listed highlights in order">▶ Play all</button>
+        <button class="small" id="btn-play-all" title="play all listed highlights in order"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg> Play all</button>
         <a class="small muted" id="csdm-all" href="#" download title="export listed highlights as CS Demo Manager sequences">CSDM</a>
       </div>
       <div class="recbar" id="recbar">
-        <button class="small" id="btn-select-all" title="select every listed highlight">☑ Select all</button>
+        <button class="small" id="btn-select-all" title="select every listed highlight"><svg class="i" aria-hidden="true"><use href="#i-select"/></svg> Select all</button>
         <span class="count" id="sel-count">0 selected</span>
         <span class="spacer"></span>
         <button class="small primary" id="btn-record-sel" disabled title="record the selected highlights to MP4 with CS2 + HLAE"><i class="rec-dot"></i> Record selected</button>
-        <button class="small" id="btn-long" disabled style="display:none" title="join the recorded clips of the selected highlights into one long video">🎬 Long video</button>
-        <button class="small" id="btn-cine" style="display:none" title="slow-motion kills + music versions of all recorded clips">✨ Cinematic</button>
-        <button class="small danger" id="btn-del-clips" style="display:none" title="delete the recorded clips of the selected highlights">🗑 Delete clips</button>
-        <a class="small" id="reel-link" href="#" style="display:none" download>⬇ reel.mp4</a>
-        <a class="small" id="reel-cine-link" href="#" style="display:none" download>⬇ cinematic reel</a>
-        <button class="small" id="btn-export" style="display:none" title="copy all clips to your Downloads folder">⬇ Save to Downloads</button>
+        <button class="small" id="btn-squad" title="every 3K+ of you and your friends in this match, recorded, made cinematic and joined into one video"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Squad montage</button>
+        <button class="small" id="btn-long" disabled title="join the selected highlights into one video with one song over it"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> Montage</button>
+        <button class="small" id="btn-cine" style="display:none" title="slow-motion kills + music versions of all recorded clips"><svg class="i" aria-hidden="true"><use href="#i-sparkles"/></svg> Cinematic</button>
+        <button class="small danger" id="btn-del-clips" style="display:none" title="delete the recorded clips of the selected highlights"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg> Delete clips</button>
+        <button class="small" id="btn-export" style="display:none" title="copy all clips to your Downloads folder"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg> Save to Downloads</button>
         <button class="small" id="btn-install-tools" style="display:none">Install HLAE + FFmpeg</button>
-        <button class="small danger" id="btn-rec-cancel" style="display:none">✕ cancel</button>
+        <button class="small danger" id="btn-rec-cancel" style="display:none"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg> Cancel</button>
         <div class="recstatus" id="recstatus" role="status" aria-live="polite"></div>
+        <div class="recstatus" id="squadstatus" role="status" aria-live="polite"></div>
         <div class="longlist" id="long-list"></div>
       </div>
       <div id="hl-list"></div>
@@ -89,12 +91,12 @@
   </aside>
 </main>
 <div class="modal" role="dialog" aria-modal="true" id="me-modal" style="display:none"><div class="modal-box">
-  <div class="modal-head">Who are you in this match? <span class="spacer"></span><button class="small ghost" id="me-close" aria-label="Close">✕</button></div>
+  <div class="modal-head">Who are you in this match? <span class="spacer"></span><button class="small ghost" id="me-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
   <p class="muted" style="margin:0 0 12px">Pick your name so "Mine" shows your highlights and your stats appear in the library. Saved for all demos.</p>
   <div class="who" id="me-list"></div>
 </div></div>
 <div class="modal" role="dialog" aria-modal="true" id="rec-modal" style="display:none"><div class="modal-box">
-  <div class="modal-head">Before recording <span class="spacer"></span><button class="small ghost" id="rec-close" aria-label="Close">✕</button></div>
+  <div class="modal-head">Before recording <span class="spacer"></span><button class="small ghost" id="rec-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
   <ul class="checklist">
     <li><b>Close CS2</b> if it is running.</li>
     <li><b>Close the FACEIT client</b> (and its anti-cheat) from the tray. It must not run while HLAE is attached to the game.</li>
@@ -103,17 +105,42 @@
   </ul>
   <div class="modal-foot"><button class="ghost" id="rec-cancel-btn">Cancel</button><button class="primary" id="rec-go"><i class="rec-dot"></i> Start recording</button></div>
 </div></div>
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="squad-title" id="squad-modal" style="display:none"><div class="modal-box cine">
+  <div class="modal-head" id="squad-title"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Squad montage <span class="spacer"></span><button class="small ghost" id="squad-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <p class="muted" style="margin:0 0 12px">One video of the best plays of you and your friends in this match. Clips that are not recorded yet are recorded first (CS2 opens and closes by itself), then everything is joined in match order. It is saved in the Highlights tab and your Downloads folder.</p>
+  <div class="field"><label>Your squad</label>
+    <div id="squad-members" class="squad-members"></div>
+    <div class="row" style="gap:8px;margin-top:6px"><button class="small" id="squad-add">+ add a friend</button><span class="hint">Steam ID is optional: without it the in-game name is matched (capitals and symbols ignored).</span></div>
+  </div>
+  <div class="field"><label for="squad-team">Team name</label>
+    <div class="row" style="gap:10px;flex-wrap:wrap"><input type="text" id="squad-team" maxlength="40" autocomplete="off" placeholder="Squad" style="flex:1;min-width:160px">
+      <label class="opt" style="margin:0"><input type="checkbox" id="squad-intro" checked> <span>start montages with the intro card</span></label></div></div>
+  <div class="field"><label for="squad-min">Plays</label>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">
+      <select id="squad-min"><option value="3">3 kills and more (3K, 4K, ace, 1v3+ clutch)</option><option value="4">4 kills and more</option><option value="5">aces only</option></select>
+      <span class="muted" id="squad-count"></span>
+    </div>
+    <ol class="squad-list" id="squad-list"></ol>
+  </div>
+  <div class="field"><label>Style</label>
+    <label class="opt"><input type="radio" name="squad-style" id="squad-cine" checked> <span><b>Cinematic</b>: slow motion, effects, title and player cards, and <b>one song over the whole montage</b> (its drop on the first slow-motion kill). No casters unless you tick them in "Cinematic settings", which adjusts everything for this montage.</span></label>
+    <label class="opt"><input type="radio" name="squad-style" id="squad-plain"> <span><b>Regular</b>: the recorded clips as they are</span></label>
+  </div>
+  <div class="modal-foot"><span class="muted" id="squad-msg" role="status" aria-live="polite"></span>
+    <button class="small" id="squad-settings"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg> Cinematic settings…</button>
+    <button class="primary" id="squad-go"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Create squad montage</button></div>
+</div></div>
 <div class="modal" role="dialog" aria-modal="true" id="music-modal" style="display:none"><div class="modal-box cine">
-  <div class="modal-head">✨ Cinematic clips <span class="spacer"></span><button class="small ghost" id="music-close" aria-label="Close">✕</button></div>
+  <div class="modal-head">Cinematic clips <span class="spacer"></span><button class="small ghost" id="music-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
   <p class="muted" style="margin:0 0 12px">One click makes the cinematic version: slow motion on the kills, dead time fast-forwarded, music under the game sound, title card, kill counter and player card. The casters are off unless you turn them on in the options.</p>
 
-  <div class="field"><label>Clips</label>
+  <div class="field" id="cine-which-field"><label>Clips</label>
     <label class="opt"><input type="radio" name="cine-which" id="cine-which-all" value="all"> <span>all clips without a cinematic version (<span id="cine-n-all">0</span>)</span></label>
     <label class="opt"><input type="radio" name="cine-which" id="cine-which-sel" value="sel"> <span>the selected highlights (<span id="cine-n-sel">0</span>) – existing cinematic versions are remade</span></label>
   </div>
 
   <div class="cine-summary" id="cine-summary"></div>
-  <div class="row" style="margin:4px 0 12px"><button class="small" id="cine-advanced-btn">⚙ Edit cinematic options</button></div>
+  <div class="row" style="margin:4px 0 12px"><button class="small" id="cine-advanced-btn"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg> Edit cinematic options</button></div>
   <div id="cine-advanced" style="display:none">
   <div class="cine-grid">
     <div class="field"><label>Pace</label>
@@ -138,7 +165,7 @@
       <label class="opt"><input type="checkbox" id="cine_fade"> fade in and out</label>
       <label class="opt" id="cine_title-opt"><input type="checkbox" id="cine_title"> title card (TRIPLE KILL / ACE / 1v3 CLUTCH, player, map, round)</label>
       <label class="opt" id="cine_counter-opt"><input type="checkbox" id="cine_counter"> kill counter</label>
-      <label class="opt" id="cine_card-opt"><input type="checkbox" id="cine_card"> player card (round avatar + nickname, like a pro match)</label>
+      <label class="opt" id="cine_card-opt"><input type="checkbox" id="cine_card"> player card (round avatar + nickname for the whole clip, like a pro match)</label>
       <span class="hint" id="cine-font-warn" style="display:none">text overlays need a font – none was found, so the title card and kill counter are skipped</span>
     </div>
     <div class="field"><label>Music</label>
@@ -156,7 +183,7 @@
   <div class="field"><label>Voice lines</label>
     <p class="muted" style="margin:0 0 6px">Lines are picked by what happened: an ace gets the ace lines, a clutch the clutch lines, the 3rd kill the "3rd kill" lines. Without a matching line a general one plays. <b>Tick a line to use it</b>: a slot with ticked lines only plays those (one at random per clip); with none ticked, any line of the slot can play.</p>
     <div class="row" style="flex-wrap:wrap;align-items:center;gap:12px">
-      <label class="opt" style="margin:0;font-weight:700"><input type="checkbox" id="cine_voice"> play caster voice lines <span class="hint" style="font-weight:500">(the real caster cuts below; untick for a clean clip with just the game sound and music. Generated commentary is only made from a highlight's 🎙 Full caster button)</span></label>
+      <label class="opt" style="margin:0;font-weight:700"><input type="checkbox" id="cine_voice"> play caster voice lines <span class="hint" style="font-weight:500">(the real caster cuts below, for this run only: next time the casters are off again until you tick this)</span></label>
       <span class="opt-text">volume <b id="cine_voice_volume-val">100%</b></span>
       <input type="range" id="cine_voice_volume" min="0" max="1.5" step="0.05" value="1" data-fmt="pct" style="flex:1;min-width:120px">
     </div>
@@ -170,58 +197,40 @@
       <div class="cine-slot" data-slot="final"><div class="slot-name">after the final kill</div><div class="slot-list muted" id="voice-list-final">none</div>
         <input type="file" class="voice-file" aria-label="Add lines for after the final kill" data-slot="final" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" multiple></div>
     </div>
-    <div class="row" style="flex-wrap:wrap;align-items:center;margin-bottom:6px"><span class="opt-text">new lines (added or generated) are for</span>
+    <div class="row" style="flex-wrap:wrap;align-items:center;margin-bottom:6px"><span class="opt-text">new lines you add are for</span>
       <select id="voice-sub" aria-label="Situation for new lines"><option value="">any highlight / any kill</option>
         <optgroup label="highlight type (start / final)"><option value="ace">ace</option><option value="clutch">clutch</option><option value="multikill">multikill (2K-4K)</option><option value="knife">knife kill</option><option value="ninja_defuse">ninja defuse</option></optgroup>
         <optgroup label="kill number (on each kill)"><option value="2">2nd kill</option><option value="3">3rd kill</option><option value="4">4th kill</option><option value="5">5th kill</option></optgroup></select></div>
-    <div id="voice-tts" class="row" style="flex-wrap:wrap;align-items:center">
-      <input type="text" id="voice-text" name="voice-text" list="voice-presets" placeholder="Type a line, e.g. Are you kidding me?!…" maxlength="200" autocomplete="off" spellcheck="true" aria-label="Line to generate"><datalist id="voice-presets"></datalist>
-      <select id="voice-slot" aria-label="When the generated line plays"><option value="start">at the start</option><option value="kill">on each kill</option><option value="final" selected>after the final kill</option></select>
-      <select id="voice-voice" title="voice for generated lines" aria-label="Voice for generated lines"></select>
-      <label class="opt" style="margin:0" title="broadcast compression, a little arena echo and a crowd bed under the voice"><input type="checkbox" id="cine_tts_fx"> stadium sound</label>
-      <button class="small" id="voice-gen" title="generate this line with the selected voice (the text box offers a few famous caster lines)">🗣 Generate</button>
-    </div>
-    <span class="hint" id="voice-tts-hint" style="display:none">generating lines from text needs Windows</span>
     <span class="hint" id="voice-dir"></span>
     </div>
   </div>
 
-  <div class="row" style="margin:6px 0 10px"><button class="small" id="cine-join" title="join every cinematic clip of this match, in match order, into one video">🎬 One video of all cinematic clips (<span id="cine-n-join">0</span>)</button></div>
+  <div class="row" style="margin:6px 0 10px"><button class="small" id="cine-join" title="join every cinematic clip of this match, in match order, into one video"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> One video of all cinematic clips (<span id="cine-n-join">0</span>)</button></div>
   </div>
-  <div class="modal-foot"><span class="muted" id="cine-msg" role="status" aria-live="polite"></span><button class="primary" id="cine-go">✨ Create cinematic</button></div>
-</div></div>
-<div class="modal" role="dialog" aria-modal="true" id="caster-modal" style="display:none"><div class="modal-box cine">
-  <div class="modal-head">🎙 Full caster <span class="spacer"></span><button class="small ghost" id="caster-close" aria-label="Close">✕</button></div>
-  <p class="muted" id="caster-sub" style="margin:0 0 8px"></p>
-  <p class="muted" style="margin:0 0 10px">Written from the demo events: who died to what, headshots, how many were left, the bomb. Edit any line, delete what you don't like, or write a new script. Caster 1 calls the action, caster 2 reacts. Times are seconds from the start of the clip.</p>
-  <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
-    <button class="small" id="caster-redo" title="write the script again with different phrasing">🎲 Write it again</button>
-    <label class="opt" style="margin:0"><input type="checkbox" id="caster-duo" checked> two casters</label>
-    <label class="opt" style="margin:0" title="caster 1 calls the action">C1 <select id="caster-voice1" aria-label="Caster 1 voice"></select></label>
-    <label class="opt" style="margin:0" id="caster-voice2-wrap" title="caster 2 reacts; a different voice from caster 1">C2 <select id="caster-voice2" aria-label="Caster 2 voice"></select></label>
-    <span class="spacer"></span>
-    <button class="small" id="caster-add" title="add a line">+ line</button>
-  </div>
-  <div id="caster-lines" class="caster-lines"></div>
-  <div class="modal-foot"><span class="muted" id="caster-msg" role="status" aria-live="polite"></span><button class="ghost" id="caster-reset" title="forget the saved script; the next clip gets a fresh automatic one">Reset</button><button class="small" id="caster-save">💾 Save</button><button class="primary" id="caster-go">🎙 Save &amp; make the cinematic clip</button></div>
+  <div class="modal-foot"><span class="muted" id="cine-msg" role="status" aria-live="polite"></span><button class="primary" id="cine-go"><svg class="i" aria-hidden="true"><use href="#i-sparkles"/></svg> Create cinematic</button></div>
 </div></div>
 <div class="modal" role="dialog" aria-modal="true" id="long-modal" style="display:none"><div class="modal-box">
-  <div class="modal-head">🎬 Long highlight video <span class="spacer"></span><button class="small ghost" id="long-close" aria-label="Close">✕</button></div>
-  <p class="muted" style="margin:0 0 10px">The recorded clips of the selected highlights are joined into one video, in match order. It is saved in the app and copied to your Downloads folder.</p>
-  <div class="field"><label>Clips</label><div id="long-clips" class="muted"></div></div>
+  <div class="modal-head"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> Montage <span class="spacer"></span><button class="small ghost" id="long-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <p class="muted" style="margin:0 0 10px">The selected highlights are joined into one video, in match order. It is saved in the app and copied to your clips folder.</p>
+  <div class="field"><label>Plays</label><div id="long-clips" class="muted"></div></div>
+  <div class="field"><label>Style</label>
+    <label class="opt"><input type="radio" name="long-style" id="long-song" checked> <span><b>Cinematic with one song</b>: slow motion and effects on every play, and <b>one track over the whole montage</b> (its drop on the first slow-motion kill). Plays without a recorded clip are recorded first.</span></label>
+    <div class="row" id="long-song-row" style="gap:8px;margin:4px 0 6px 26px"><span class="opt-text">track</span><select id="long-music"><option value="">random track</option></select><span class="muted" id="long-music-hint"></span></div>
+    <label class="opt"><input type="radio" name="long-style" id="long-plain"> <span><b>As recorded</b>: the recorded clips joined as they are, no song</span></label>
+  </div>
   <div class="field" id="long-cine-field" style="display:none"><label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text)"><input type="checkbox" id="long-cine" style="width:18px;height:18px;accent-color:var(--accent)"> use the cinematic version (slow-motion + music) where one exists</label></div>
   <p class="muted" id="long-skip" style="display:none;margin:6px 0 0"></p>
-  <div class="modal-foot"><span class="muted" id="long-msg" role="status" aria-live="polite"></span><button class="primary" id="long-go">🎬 Create long video</button></div>
+  <div class="modal-foot"><span class="muted" id="long-msg" role="status" aria-live="polite"></span><button class="primary" id="long-go"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> Create montage</button></div>
 </div></div>
 <div class="modal" role="dialog" aria-modal="true" id="del-modal" style="display:none"><div class="modal-box">
-  <div class="modal-head">🗑 Delete clips <span class="spacer"></span><button class="small ghost" id="del-close" aria-label="Close">✕</button></div>
-  <p class="muted" style="margin:0 0 10px">The recorded clip of each selected highlight is deleted from the app (cinematic versions too). You can record them again later. Long videos and reels you already made are kept.</p>
+  <div class="modal-head"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg> Delete clips <span class="spacer"></span><button class="small ghost" id="del-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <p class="muted" style="margin:0 0 10px">The recorded clip of each selected highlight is deleted from the app (cinematic versions too). You can record them again later. Long videos you already made are kept.</p>
   <div class="field"><label>Clips</label><div id="del-clips" class="muted"></div></div>
   <div class="field"><label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text)"><input type="checkbox" id="del-downloads" style="width:18px;height:18px;accent-color:var(--accent)"> also delete the copies in the Downloads folder</label></div>
-  <div class="modal-foot"><span class="muted" id="del-msg" role="status" aria-live="polite"></span><button class="ghost" id="del-cancel">Cancel</button><button class="danger" id="del-go">🗑 Delete</button></div>
+  <div class="modal-foot"><span class="muted" id="del-msg" role="status" aria-live="polite"></span><button class="ghost" id="del-cancel">Cancel</button><button class="danger" id="del-go"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg> Delete</button></div>
 </div></div>
 <div class="modal" role="dialog" aria-modal="true" id="video-modal" style="display:none"><div class="modal-box wide">
-  <div class="modal-head"><span id="video-title"></span><span class="spacer"></span><a id="video-dl" href="#" download>⬇ download</a> <button class="small ghost" id="video-close" aria-label="Close">✕</button></div>
+  <div class="modal-head"><span id="video-title"></span><span class="spacer"></span><a id="video-dl" href="#" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg> Download</a> <button class="small ghost" id="video-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
   <video id="video-el" controls autoplay playsinline></video>
 </div></div>
 <script src="/js/api.js"></script>

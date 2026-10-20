@@ -25,14 +25,22 @@ def types(hs, t):
 
 def test_multikill_chain_and_window():
     rounds = [rnd(1, 1000, 9000, "CT", TEAMS)]
-    kills = [kill(2000, "ct1", "t1"), kill(2500, "ct1", "t2"), kill(2600, "ct1", "t3"),
-             kill(2600 + 20 * T, "ct1", "t4")]  # last one 20 s later -> separate chain of 1
+    kills = [kill(2000, "ct1", "t1"), kill(2500, "ct1", "t2"), kill(2600, "ct1", "t3")]
     hs = detect(kills, rounds)
     mk = types(hs, "multikill")
     assert len(mk) == 1 and mk[0]["n"] == 3 and mk[0]["kills"] == [2000, 2500, 2600]
     assert mk[0]["start_tick"] == 2000 - 4 * T and mk[0]["end_tick"] == 2600 + 2 * T
     assert mk[0]["score"] == 4
-    assert len(types(hs, "kill")) == 4
+    assert len(types(hs, "kill")) == 3
+
+
+def test_kills_far_apart_in_a_round_are_one_multikill():
+    # round 12 on Dust2: two AWP kills, then two more about 36 s later -> one 4K, not two 2Ks
+    rounds = [rnd(12, 60000, 68000, "CT", TEAMS)]
+    kills = [kill(t, "ct1", f"t{i + 1}", 12) for i, t in enumerate((63080, 63399, 65728, 65952))]
+    mk = types(detect(kills, rounds), "multikill")
+    assert len(mk) == 1 and mk[0]["n"] == 4 and mk[0]["description"].startswith("4K")
+    assert mk[0]["start_tick"] == 63080 - 4 * T and mk[0]["end_tick"] == 65952 + 2 * T
 
 
 def test_ace_overrides_chain_gap():
@@ -113,3 +121,12 @@ def test_sorted_by_score_with_ids():
     hs = detect(kills, rounds)
     assert [h["id"] for h in hs] == list(range(len(hs)))
     assert all(hs[i]["score"] >= hs[i + 1]["score"] for i in range(len(hs) - 1))
+
+
+def test_clutch_label_counts_kills_before_the_clutch():
+    rounds = [rnd(1, 1000, 9000, "CT", TEAMS)]
+    kills = [kill(2000, "ct1", "t1"), kill(2100, "t2", "ct2"), kill(2200, "t2", "ct3"), kill(2300, "t3", "ct4"),
+             kill(2400, "t4", "ct5"),                        # ct1 is alone against t2..t5 (1v4)
+             kill(3000, "ct1", "t2"), kill(3200, "ct1", "t3")]
+    cl = types(detect(kills, rounds), "clutch")
+    assert cl and cl[0]["kills"] == [2000, 3000, 3200] and cl[0]["description"].endswith("(3K)")

@@ -8,54 +8,165 @@
 <meta name="description" content="Turn your FACEIT CS2 demos into 2D replays, highlight lists and recorded MP4 clips with cinematic versions.">
 <link rel="icon" href="/favicon.ico">
 <title>CS2 Watcher</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
+<link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+<script src="/js/icons.js"></script>
 <a class="skip" href="#main">Skip to content</a>
 <header class="topbar">
   <h1 class="brand"><span class="logo" aria-hidden="true">CS</span> CS2 Watcher</h1>
-  <span class="muted tagline">2D replays · highlights · MP4 clips</span>
   <span class="spacer"></span>
   <span id="watch-status" class="muted" aria-live="polite"></span>
-  <button class="ghost" id="btn-settings" title="settings">⚙ Settings</button>
+  <button class="ghost" id="btn-settings" title="settings"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg> Settings</button>
 </header>
 <main class="page" id="main">
-  <section class="hero" aria-label="Add demos and your stats">
-    <div class="dropzone" id="drop">
-      <div class="dz-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m6 10 6-6 6 6"/><path d="M4 20h16"/></svg></div>
-      <h2>Drop a FACEIT demo here</h2>
-      <p>or <a href="#" id="pick">choose a file</a>. New files in your watch folder are picked up automatically.</p>
-      <div class="formats"><span class="badge">.dem.zst</span><span class="badge">.dem</span><span class="badge">.dem.gz</span></div>
-      <input type="file" id="file" multiple accept=".dem,.zst,.gz,.bz2" style="display:none" aria-label="Choose demo files">
-      <div class="uploads" id="uploads" aria-live="polite"></div>
+  <section class="showcase" aria-label="Your latest montage">
+    <div class="showcase-text">
+      <h2 id="sc-title">Your highlights</h2>
+      <p class="lead" id="sc-lead">Drop a FACEIT demo, pick your squad's plays and get a cinematic montage.</p>
+      <div class="actions">
+        <button class="primary" id="sc-watch" hidden><svg class="i" aria-hidden="true"><use href="#i-play"/></svg> Watch</button>
+        <button id="sc-new"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> New squad montage</button>
+        <button id="sc-recap"><svg class="i" aria-hidden="true"><use href="#i-calendar"/></svg> Recap</button>
+      </div>
+      <div class="stats" id="stats">
+        <div class="stat"><div class="v" id="st-matches">–</div><div class="k">Matches</div><div class="s" id="st-matches-s"></div></div>
+        <div class="stat"><div class="v" id="st-win">–</div><div class="k">Win rate</div><div class="s" id="st-win-s"></div></div>
+        <div class="stat"><div class="v" id="st-rating">–</div><div class="k">Avg rating</div><div class="s" id="st-rating-s"></div></div>
+        <div class="stat"><div class="v" id="st-kd">–</div><div class="k">K / D</div><div class="s" id="st-kd-s"></div></div>
+      </div>
     </div>
-    <div class="stats" id="stats">
-      <div class="card stat"><div class="k">Matches</div><div class="v" id="st-matches">–</div><div class="s" id="st-matches-s"></div></div>
-      <div class="card stat"><div class="k">Win rate</div><div class="v" id="st-win">–</div><div class="s" id="st-win-s"></div></div>
-      <div class="card stat"><div class="k">Avg rating</div><div class="v" id="st-rating">–</div><div class="s" id="st-rating-s"></div></div>
-      <div class="card stat"><div class="k">K / D</div><div class="v" id="st-kd">–</div><div class="s" id="st-kd-s"></div></div>
-    </div>
+    <div class="screen empty-screen" id="sc-screen" role="button" tabindex="0" aria-label="Play your latest montage"><span class="muted" id="sc-empty">Your montages play here</span></div>
   </section>
-  <div class="section-head">
-    <h2>Matches</h2>
-    <span class="muted" id="match-count"></span>
-    <span class="spacer"></span>
-    <div class="filters"><select id="map-filter" aria-label="Filter by map"><option value="">All maps</option></select></div>
+  <div class="dropzone" id="drop">
+    <div class="dz-icon"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg></div>
+    <div class="dz-text"><h2>Drop a FACEIT demo here</h2>
+      <p>or <a href="#" id="pick">choose a file</a>. New files in your watch folder are picked up automatically.</p></div>
+    <div class="formats"><span class="badge">.dem.zst</span><span class="badge">.dem</span><span class="badge">.dem.gz</span></div>
+    <input type="file" id="file" multiple accept=".dem,.zst,.gz,.bz2" style="display:none" aria-label="Choose demo files">
+    <div class="uploads" id="uploads" aria-live="polite"></div>
   </div>
-  <section class="matches" id="matches" aria-label="Matches" aria-busy="true"><div class="card match skel" aria-hidden="true"></div><div class="card match skel" aria-hidden="true"></div><div class="card match skel" aria-hidden="true"></div></section>
+  <nav class="lib-tabs" role="tablist" aria-label="Library">
+    <button role="tab" class="lib-tab" id="tab-matches" aria-selected="true" aria-controls="view-matches">Matches <span class="lib-tab-n" id="match-count"></span></button>
+    <button role="tab" class="lib-tab" id="tab-clips" aria-selected="false" aria-controls="view-clips">Highlights <span class="lib-tab-n" id="clip-count"></span></button>
+    <button role="tab" class="lib-tab" id="tab-squad" aria-selected="false" aria-controls="view-squad">Squad <span class="lib-tab-n" id="squad-count"></span></button>
+  </nav>
+  <div id="view-matches" role="tabpanel" aria-labelledby="tab-matches">
+    <div class="recstatus" id="montage-status" role="status" aria-live="polite"></div>
+    <div class="section-head">
+      <h2>Matches</h2>
+      <span class="spacer"></span>
+      <div class="filters"><select id="map-filter" aria-label="Filter by map"><option value="">All maps</option></select>
+        <button class="small" id="match-select" title="pick several matches and make one squad montage of all of them"><svg class="i" aria-hidden="true"><use href="#i-select"/></svg> Select matches</button></div>
+    </div>
+    <div class="match-bar" id="match-bar" hidden><span id="match-bar-n">Click the matches to put in the montage</span><span class="spacer"></span>
+      <button class="small ghost" id="match-all">Select all</button><button class="small ghost" id="match-none">Clear</button>
+      <button class="small primary" id="match-go" disabled><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Squad montage</button></div>
+    <section class="matches" id="matches" aria-label="Matches" aria-busy="true"><div class="card match skel" aria-hidden="true"></div><div class="card match skel" aria-hidden="true"></div><div class="card match skel" aria-hidden="true"></div></section>
+  </div>
+  <div id="view-clips" role="tabpanel" aria-labelledby="tab-clips" hidden>
+    <div class="section-head">
+      <h2>Highlights</h2>
+      <span class="muted hint-inline">Every clip you recorded, kept even after the match is deleted</span>
+      <span class="spacer"></span>
+      <div class="filters">
+        <div class="seg" role="group" aria-label="Show">
+          <button class="small active" data-kind="">All</button><button class="small" data-kind="cinematic">Cinematic</button><button class="small" data-kind="clip">Original</button><button class="small" data-kind="joined">Montages</button>
+        </div>
+        <select id="clip-map-filter" aria-label="Filter highlights by map"><option value="">All maps</option></select>
+        <button class="small" id="recap-open" title="your squad's plays of a month or a year in one video"><svg class="i" aria-hidden="true"><use href="#i-calendar"/></svg> Recap</button>
+        <button class="small" id="montage-mode" title="select clips to delete several at once or join them into a montage (you can also drag a clip)"><svg class="i" aria-hidden="true"><use href="#i-select"/></svg> Select</button>
+      </div>
+    </div>
+    <section class="clips" id="clips" aria-label="Saved highlights"></section>
+  </div>
+  <div id="view-squad" role="tabpanel" aria-labelledby="tab-squad" hidden>
+    <div class="section-head">
+      <h2>Squad</h2>
+      <span class="muted hint-inline">Whose plays go into squad montages, and how each one appears on the player card in videos</span>
+    </div>
+    <div class="squad-team">
+      <div class="field"><label for="sq-team">Team name</label><input type="text" id="sq-team" maxlength="40" autocomplete="off" placeholder="Squad"></div>
+      <label class="opt"><input type="checkbox" id="sq-intro" checked> <span>Start montages with the intro card (team name, matches and dates, the stats of the plays)</span></label>
+    </div>
+    <div class="squad-grid" id="sq-list"></div>
+    <div class="squad-foot">
+      <button id="sq-add">+ Add a teammate</button>
+      <span class="spacer"></span>
+      <span class="muted" id="sq-msg" role="status" aria-live="polite"></span>
+      <button class="primary" id="sq-save">Save squad</button>
+    </div>
+  </div>
 </main>
 
+<div class="tray" id="tray" hidden role="region" aria-label="Montage">
+  <div class="tray-head"><b>Selected</b><span class="muted" id="tray-info"></span><span class="spacer"></span>
+    <button class="ghost small" id="tray-all" title="select every clip shown with the current filters">Select all</button><button class="ghost small" id="tray-clear">Clear</button><button class="ghost small" id="tray-close">Done</button>
+    <button class="danger small" id="tray-del" disabled><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg> Delete</button></div>
+  <ol class="tray-list" id="tray-list"></ol>
+  <div class="tray-foot"><input type="text" id="tray-title" maxlength="80" placeholder="Montage name (optional)" aria-label="Montage name" autocomplete="off">
+    <select id="tray-style" aria-label="Montage style" title="Cinematic: slow motion and effects on every play and one song over the whole montage. As they are: the clips joined as they are."><option value="cine">Cinematic + song</option><option value="plain">As they are</option></select>
+    <select id="tray-music" aria-label="Song"><option value="">random track</option></select>
+    <button class="primary" id="tray-go" disabled title="join the selected clips in this order (pick at least two)"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> Create montage</button></div>
+</div>
+
+<div class="modal" role="dialog" aria-modal="true" id="video-modal" style="display:none"><div class="modal-box wide">
+  <div class="modal-head"><span id="video-title"></span><span class="spacer"></span><a id="video-dl" href="#" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg> Download</a> <button class="small ghost" id="video-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <video id="video-el" controls autoplay playsinline></video>
+</div></div>
+
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="crop-title" id="crop-modal" style="display:none"><div class="modal-box">
+  <div class="modal-head" id="crop-title">Adjust the photo <span class="spacer"></span><button class="small ghost" id="crop-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <p>Drag the picture to place the face, zoom with the slider or the mouse wheel. The circle is what the player card in the video shows.</p>
+  <div class="crop-stage"><canvas id="crop-canvas" width="360" height="360" aria-label="Photo, drag to move it"></canvas></div>
+  <div class="field"><label for="crop-zoom">Zoom</label><input type="range" id="crop-zoom" min="1" max="4" step="0.01" value="1"></div>
+  <div class="modal-foot"><span class="muted" id="crop-msg" role="status" aria-live="polite"></span><button class="primary" id="crop-save">Use this photo</button></div>
+</div></div>
+
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="multi-title" id="multi-modal" style="display:none"><div class="modal-box">
+  <div class="modal-head" id="multi-title"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Squad montage <span class="spacer"></span><button class="small ghost" id="multi-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <p class="muted" style="margin:0 0 12px">Your squad's plays of the selected matches in one video, oldest match first. Plays that are not recorded yet are recorded in CS2 first, one match after the other.</p>
+  <div class="field"><label for="multi-min">Plays</label><select id="multi-min"><option value="3">3 kills and more (3K, 4K, ace, 1v3+ clutch)</option><option value="4">4 kills and more</option><option value="5">aces only</option></select></div>
+  <div class="field"><label>Matches</label><div id="multi-list" class="muted">…</div></div>
+  <div class="field"><label>Style</label>
+    <label class="opt"><input type="radio" name="multi-style" id="multi-cine" checked> <span><b>Cinematic</b>: slow motion on the kills, effects, title and player cards, and <b>one song per match</b> (a song you have not heard lately). Uses your cinematic settings; change them in a match's Cinematic dialog.</span></label>
+    <label class="opt"><input type="radio" name="multi-style" id="multi-plain"> <span><b>As recorded</b>: the clips joined as they are, with the game sound and no song</span></label></div>
+  <div class="field"><label for="multi-team">Team name</label>
+    <div class="row" style="gap:10px;flex-wrap:wrap"><input type="text" id="multi-team" maxlength="40" autocomplete="off" placeholder="Squad" style="flex:1;min-width:160px">
+      <label class="opt" style="margin:0"><input type="checkbox" id="multi-intro" checked> <span>start with the intro card</span></label></div>
+    <div class="hint">The intro shows the team name, how many matches and when, and the stats of the plays.</div></div>
+  <div class="field"><label for="multi-name">Video name (optional)</label><input type="text" id="multi-name" maxlength="80" autocomplete="off" placeholder="Squad montage"></div>
+  <div class="modal-foot"><span class="muted" id="multi-msg" role="status" aria-live="polite"></span><button class="primary" id="multi-go" disabled><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Create squad montage</button></div>
+</div></div>
+
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="recap-title" id="recap-modal" style="display:none"><div class="modal-box">
+  <div class="modal-head" id="recap-title"><svg class="i" aria-hidden="true"><use href="#i-calendar"/></svg> Recap <span class="spacer"></span><button class="small ghost" id="recap-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <p class="muted" style="margin:0 0 12px">Every recorded squad play of the period in one video, oldest match first. Each play is made cinematic, and each match gets its own song.</p>
+  <div class="field"><label for="recap-period">Period</label>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><select id="recap-period"><option value="month">This month</option><option value="lastmonth">Last month</option><option value="year">This year</option><option value="lastyear">Last year</option><option value="custom">Custom dates</option></select>
+      <input type="date" id="recap-from" aria-label="From"><input type="date" id="recap-to" aria-label="To"></div></div>
+  <div class="field"><label for="recap-min">Plays</label>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><select id="recap-min"><option value="3">3 kills and more</option><option value="4">4 kills and more</option><option value="5">aces only</option></select>
+      <select id="recap-best" aria-label="How many"><option value="">all of them</option><option value="10">the best 10</option><option value="25">the best 25</option><option value="50">the best 50</option></select></div></div>
+  <div class="field"><label for="recap-name">Name (optional)</label><input type="text" id="recap-name" maxlength="80" autocomplete="off" placeholder="Recap · October 2026"></div>
+  <div class="field"><label>In the video</label><div id="recap-preview" class="muted">…</div></div>
+  <div class="modal-foot"><span class="muted" id="recap-msg" role="status" aria-live="polite"></span><button class="primary" id="recap-go" disabled><svg class="i" aria-hidden="true"><use href="#i-calendar"/></svg> Create recap</button></div>
+</div></div>
+
 <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" id="settings-modal" style="display:none"><div class="modal-box">
-  <div class="modal-head" id="settings-title">Settings <span class="spacer"></span><button class="small ghost" id="settings-close" aria-label="Close">✕</button></div>
+  <div class="modal-head" id="settings-title">Settings <span class="spacer"></span><button class="small ghost" id="settings-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
   <div class="field"><label for="cfg-steamid">My Steam64 ID</label><input type="text" id="cfg-steamid" name="steamid" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="7656119…"><div class="hint">Used for "my highlights" and the stats above. You can also click <b>me</b> next to your name in a match scoreboard.</div></div>
   <div class="field"><label for="cfg-watch">Demo download folder (watched)</label><div class="row"><input type="text" id="cfg-watch" name="watch-folder" autocomplete="off" spellcheck="false" placeholder="C:\Users\me\Downloads…"><button class="browse" data-for="cfg-watch" data-title="Where do your FACEIT demos download to?">Browse…</button></div><div class="hint">Demos saved here are parsed automatically. Point it at the folder your browser downloads FACEIT demos to.</div></div>
-  <div class="field"><label for="cfg-export">Save clips to</label><div class="row"><input type="text" id="cfg-export" name="export-folder" autocomplete="off" spellcheck="false" placeholder=""><button class="browse" data-for="cfg-export" data-title="Where should recorded clips be saved?">Browse…</button></div><div class="hint" id="cfg-export-hint">Recorded highlights and reels are copied here, one subfolder per match.</div></div>
+  <div class="field"><label for="cfg-export">Save clips to</label><div class="row"><input type="text" id="cfg-export" name="export-folder" autocomplete="off" spellcheck="false" placeholder=""><button class="browse" data-for="cfg-export" data-title="Where should recorded clips be saved?">Browse…</button></div><div class="hint" id="cfg-export-hint">Recorded highlights, long videos and montages are copied here, one subfolder per match.</div></div>
   <div class="field"><label for="cfg-cs2">CS2 install path (optional)</label><div class="row"><input type="text" id="cfg-cs2" name="cs2-path" autocomplete="off" spellcheck="false" placeholder="Auto-detected from Steam…"><button class="browse" data-for="cfg-cs2" data-title="Select the 'Counter-Strike Global Offensive' folder">Browse…</button></div></div>
   <div class="modal-foot"><span class="muted" id="cfg-msg" role="status" aria-live="polite"></span><button class="primary" id="cfg-save">Save</button></div>
 </div></div>
 <script src="/js/api.js"></script>
 <script src="/js/library.js"></script>
+<script src="/js/clips.js"></script>
+<script src="/js/squad.js"></script>
 </body>
 </html>

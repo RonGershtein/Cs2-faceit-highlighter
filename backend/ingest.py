@@ -152,6 +152,11 @@ def process(demo_id: str) -> None:
         meta = parsed["meta"]
         db.replace_players(demo_id, parsed["stats"])
         db.replace_highlights(demo_id, highlights)
+        try:   # recorded clips point at highlight ids, which change when detection runs again
+            from .record import relink_videos
+            relink_videos(demo_id, highlights)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ingest] {demo_id}: could not relink recorded clips: {e}")
         db.upsert_demo(demo_id, map=meta["map"], server=meta["server"], tickrate=meta["tickrate"],
                        total_ticks=meta["last_tick"], rounds=len(meta["rounds"]),
                        score_a=meta["score"]["a"], score_b=meta["score"]["b"],

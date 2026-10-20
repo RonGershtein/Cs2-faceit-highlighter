@@ -29,6 +29,7 @@ DEFAULTS: dict = {
     "record_fps": 60,
     "record_crf": 20,          # x264 quality (lower = better/bigger)
     "record_close_game": True, # quit CS2 when the last highlight is recorded
+    "record_hud": "health_ammo",  # "health_ammo": health, armour, ammo + kill feed (no radar / name tags); "killfeed": kill feed only
     "export_folder": "",       # where finished clips are copied; empty -> <Downloads>/cs2-watcher/<map>_<date>_<id>
     "cine_slow": 0.35,         # slow-motion speed around kills (0.35 = 35 % speed)
     "cine_kills": "last",      # which kills get slow motion: "last" (the final kill of the clip) or "all"
@@ -47,13 +48,9 @@ DEFAULTS: dict = {
     "cine_title": True,        # title card (3K / ACE / clutch, player, map, round)
     "cine_counter": True,      # kill counter in the corner
     "cine_card": True,         # player card: round avatar (data/players/<steam64>.png, blank until added) + nickname
-    "cine_voice": False,       # caster voice lines from data/voice (start / kill / final); off until turned on
+    "cine_voice": False,       # real caster voice lines from data/voice; per run only (cinematic.PER_RUN_KEYS), never saved
     "cine_voice_volume": 1.0,
     "cine_voice_pick": "",      # JSON {"start": [...], "kill": [...], "final": [...]} of pinned lines; empty = random
-    "cine_tts_voice": "en-US-ChristopherNeural",   # voice for generated lines ("windows" = offline voice)
-    "cine_tts_fx": True,        # stadium treatment for generated lines: compression, arena echo, crowd bed
-    "cine_commentary": False,   # full play-by-play written from the demo events and spoken by the generated voices
-    "cine_tts_voice2": "en-US-GuyNeural",   # second caster (colour commentary); "" = single caster
 }
 
 

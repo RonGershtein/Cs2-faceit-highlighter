@@ -120,6 +120,8 @@ def test_plan_texts_player_card_layout(tmp_path):
                        has_music=False, game_vol=1, music_vol=1, texts=texts, card=card)
     assert "color=c=0x2a2f3a:s=118x118" in g and "[ring][av]overlay=3:3" in g and "[vl][card]overlay=x=64:y=" in g
     assert g.count("geq=") == 2 and "[vcard]drawtext=" in g
+    assert texts[0]["enable"] is None and texts[1]["enable"]               # the nickname stays, the details go
+    assert "fade=t=out" not in g and "[card]overlay=x=64:y=" + str(card["y"]) + ":eof_action=pass[vcard]" in g   # card stays
     # with a photo the avatar comes from an input stream instead of a blank circle
     card["idx"], card["initial"] = 3, None
     g = c.build_filter(segs, fps=60, width=1920, height=1080, smooth=False, kills=[], impact=False, look=False, fade=False,
@@ -177,10 +179,26 @@ def test_union_windows_merges_overlaps_and_short_gaps():
     assert c.union_windows([(6.0, 8.0), (0.0, 2.0), (2.5, 4.0), (9.5, 9.0)], min_cut=1.5) == [(0.0, 4.0), (6.0, 8.0)]
 
 
-def test_build_filter_ducks_game_audio_and_fast_forward_under_the_casters():
+def test_build_filter_ducks_game_audio_and_fast_forward_under_the_voice_lines():
     segs = [(0.0, 6.0, 6.0), (6.0, 9.0, 1.0)]
     g = c.build_filter(segs, fps=60, width=1280, height=720, smooth=False, kills=[], impact=False, look=False, fade=False,
                        has_music=False, game_vol=0.3, music_vol=0.7, texts=[], voices=[0.5], duck=[(0.5, 2.5)])
     assert "atempo=1.5000,volume=0.35" in g                                             # the 6x segment is turned down
     assert "volume='1.00*(1-0.5*min(1\\,between(t\\,0.25\\,2.75)))':eval=frame" in g   # game audio ducks under the line
     assert "[1:a]adelay=500:all=1" in g and "amix=inputs=2" in g
+
+
+def test_casters_are_never_remembered():
+    o = c.options({"cine_voice": True, "cine_slow": 0.5})
+    assert o["cine_voice"] is False and o["cine_slow"] == 0.5          # saved settings never turn the casters on
+    assert c.options({}, {"cine_voice": True})["cine_voice"] is True   # ticked for this run
+
+
+def test_fresh_tracks_avoid_the_songs_just_heard():
+    from backend.cinematic import fresh_tracks
+    names = ["a", "b", "c", "d"]
+    assert fresh_tracks(names, []) == names                     # nothing heard yet: any
+    assert fresh_tracks(names, ["a", "b"]) == ["c", "d"]          # never-used first
+    assert fresh_tracks(names, ["c", "a", "d", "b"]) == ["c", "a"]  # the half heard longest ago
+    assert fresh_tracks(["a"], ["a"]) == ["a"]
+    assert fresh_tracks([], ["a"]) == []

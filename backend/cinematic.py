@@ -35,7 +35,7 @@ CARD_BG = "0x2a2f3a"                   # blank avatar colour
 OPTION_KEYS = ("cine_slow", "cine_kills", "cine_smooth", "cine_game_volume", "cine_music_volume", "cine_music",
                "cine_music_sync", "cine_trim", "cine_trim_lead", "cine_fast", "cine_ramp", "cine_impact", "cine_look",
                "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice", "cine_voice_volume",
-               "cine_voice_pick", "cine_tts_voice", "cine_tts_fx", "cine_commentary", "cine_tts_voice2")
+               "cine_voice_pick")
 TRIM_MODES = ("off", "cut", "fast")   # dead time between kills: keep / drop / fast-forward
 
 Seg = tuple[float, float, float]   # (start, end, speed) in source seconds; speed 1.0 = normal, 0.35 = slow motion
@@ -53,11 +53,17 @@ def music_files() -> list[Path]:
     return sorted(p for p in MUSIC_DIR.iterdir() if p.suffix.lower() in MUSIC_EXT and p.is_file())
 
 
+# options that apply to one run only and are never remembered: the casters stay off unless they are ticked for
+# that clip (a montage made without opening the settings has no caster lines)
+PER_RUN_KEYS = ("cine_voice",)
+
+
 def options(cfg: dict | None = None, overrides: dict | None = None) -> dict:
-    """Effective cine_* options: config.toml values with (type-coerced) overrides on top."""
+    """Effective cine_* options: config.toml values with (type-coerced) overrides on top; PER_RUN_KEYS always
+    start from their default."""
     from .config import DEFAULTS
     cfg = cfg if cfg is not None else load_config()
-    out = {k: cfg.get(k, DEFAULTS[k]) for k in OPTION_KEYS}
+    out = {k: DEFAULTS[k] if k in PER_RUN_KEYS else cfg.get(k, DEFAULTS[k]) for k in OPTION_KEYS}
     for k, v in (overrides or {}).items():
         if k not in OPTION_KEYS or v is None:
             continue
@@ -417,11 +423,14 @@ def _impact(kills_rel: list[float], fps: float) -> str:
 def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth: bool, kills: list[float],
                  impact: bool, look: bool, fade: bool, has_music: bool, game_vol: float, music_vol: float,
                  texts: list[dict], voices: list[float] | None = None, voice_vol: float = 1.0,
-                 card: dict | None = None, pad: float = 0.0, duck: list[tuple[float, float]] | None = None) -> str:
+                 card: dict | None = None, pad: float = 0.0, duck: list[tuple[float, float]] | None = None,
+                 music_later: bool = False) -> str:
     """texts: [{"file": Path, "size": int, "x": str, "y": str, "alpha": str|None, "enable": str|None, "font": Path}]
     voices: output-time offsets of the extra audio inputs that follow the clip (and the music, when there is one).
     card: {"idx": input index of the photo or None, "d": avatar px, "x", "y", "initial": Path|None, "font": Path}
-    for the circular player card, shown with the title card."""
+    for the circular player card, which stays on screen for the whole clip.
+    music_later: no music input, but the game audio is already turned down to game_vol because one song is laid
+    over a whole montage afterwards (montage_music)."""
     total = total_duration(segs) + pad
     parts, labels = [], []
     for i, (a, b, s) in enumerate(segs):
@@ -437,7 +446,7 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
                 v += f",minterpolate=fps={fps:g}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
             au += "," + _atempo_chain(s)
             if s > 1.5:
-                au += ",volume=0.35"   # fast-forwarded game audio is a blur: keep it under the music and the casters
+                au += ",volume=0.35"   # fast-forwarded game audio is a blur: keep it under the music and the voice lines
         parts.append(v + f"[v{i}]")
         parts.append(au + f"[a{i}]")
         labels.append(f"[v{i}][a{i}]")
@@ -453,18 +462,17 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
         cur = "[vl]"
     if card:
         parts += _card_chain(card, fps)
-        parts.append(f"{cur}[card]overlay=x={card['x']}:y={card['y']}:eof_action=pass:"
-                     f"enable='between(t\\,0\\,{TITLE_SECONDS:.2f})'[vcard]")
+        parts.append(f"{cur}[card]overlay=x={card['x']}:y={card['y']}:eof_action=pass[vcard]")
         cur = "[vcard]"
     post = [_drawtext(t["font"], t["file"], t["size"], t["x"], t["y"], t.get("alpha"), t.get("enable")) for t in texts]
     if fade:
         post.append(f"fade=t=in:st=0:d=0.5,fade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7")
     post.append(f"fps={fps:g}")   # constant frame rate: speed changes leave irregular timestamps behind
     parts.append(cur + ",".join(post) + "[vc]")
-    ag = f"volume={game_vol:.2f}" if has_music else "anull"
+    ag = f"volume={game_vol:.2f}" if has_music or music_later else "anull"
     win = "+".join(f"between(t\\,{a - 0.25:.2f}\\,{b + 0.25:.2f})" for a, b in duck) if duck else ""
-    if win:   # the game audio drops to half while a caster talks (0.25 s either side), evaluated per frame
-        ag = f"volume='{(game_vol if has_music else 1.0):.2f}*(1-0.5*min(1\\,{win}))':eval=frame"
+    if win:   # the game audio drops to half while a voice line plays (0.25 s either side), evaluated per frame
+        ag = f"volume='{(game_vol if has_music or music_later else 1.0):.2f}*(1-0.5*min(1\\,{win}))':eval=frame"
     if fade:
         ag += f",afade=t=in:st=0:d=0.4,afade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7"
     mix = ["[ag]"]
@@ -495,7 +503,7 @@ def _circle_alpha(d: int) -> str:
 
 def _card_chain(card: dict, fps: float) -> list[str]:
     """Filter chains producing [card]: an orange ring with the photo (or a blank circle with the initial) inside,
-    fading in and out with the title card."""
+    fading in at the start and staying for the whole clip."""
     d, ring = card["d"], card["d"] + 6
     rgb = "r='r(X,Y)':g='g(X,Y)':b='b(X,Y)'"
     if card.get("idx") is not None:
@@ -508,8 +516,7 @@ def _card_chain(card: dict, fps: float) -> list[str]:
         av += f",geq={rgb}:{_circle_alpha(d)}[av]"
     return [av,
             f"color=c={ACCENT}:s={ring}x{ring}:r={fps:g},format=rgba,geq={rgb}:{_circle_alpha(ring)}[ring]",
-            f"[ring][av]overlay=3:3:format=auto,fade=t=in:st=0:d=0.3:alpha=1,"
-            f"fade=t=out:st={TITLE_SECONDS - 0.5:.2f}:d=0.5:alpha=1[card]"]
+            f"[ring][av]overlay=3:3:format=auto,fade=t=in:st=0:d=0.3:alpha=1[card]"]
 
 
 def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, title: tuple[str, str] | None,
@@ -532,14 +539,15 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
     en = f"between(t,0,{TITLE_SECONDS:.2f})"
     x0, bottom = int(h * 0.06), int(h * 0.11)        # left margin; bottom margin clears the demo playback bar
     if card:
-        # lower third: [ring+avatar] NICKNAME / details, with the big label above it
+        # lower third: [ring+avatar] NICKNAME / details, with the big label above it. The avatar and the nickname
+        # stay for the whole clip; the label and the details go with the title card.
         d = int(h * 0.11)
         ring = d + 6
         cy = h - bottom - ring
         name_px, det_px = int(h * 0.05), int(h * 0.026)
         tx = x0 + ring + int(h * 0.016)
         texts.append({"font": font, "file": tf(card["name"]), "size": name_px, "x": str(tx),
-                      "y": str(cy + int(ring * 0.12)), "alpha": env, "enable": en})
+                      "y": str(cy + int(ring * 0.12)), "alpha": "min(1,t/0.3)", "enable": None})
         if title:
             texts.append({"font": font, "file": tf(title[1]), "size": det_px, "x": str(tx),
                           "y": str(cy + int(ring * 0.12) + name_px + 8), "alpha": env, "enable": en})
@@ -663,22 +671,13 @@ def cancel_running_ffmpeg() -> int:
     return n
 
 
-def caster_lines(cplan: dict, voices: list[tuple[Path, float]]) -> list[str]:
-    """The texts of the commentary lines that made it into the clip, in order."""
-    by_file = {}
-    for ln, f, a in zip(cplan["lines"], cplan["files"], cplan.get("alts") or [None] * len(cplan["lines"])):
-        by_file.setdefault(f, ln.get("spoken") or ln["text"])
-        if a is not None:
-            by_file.setdefault(a, ln.get("short") or ln["text"])
-    return [by_file.get(f, "") for f, _ in voices]
-
-
 def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times: list[float], music: Path | None,
                    opts: dict, title: tuple[str, str] | None = None, fps_hint: float | None = None,
                    crf: int = 20, highlight: dict | None = None, card: dict | None = None,
-                   commentary_ctx: dict | None = None, progress=None) -> dict:
-    """commentary_ctx: {"demo_id", "start_tick", "end_tick", "script": lines|None} enables the full play-by-play
-    (opts cine_commentary); a saved script (edited in the app) replaces the generated one.
+                   progress=None, music_later: bool = False) -> dict:
+    """music_later: a montage piece; no music now (one song goes over the joined montage), game audio already
+    at the music mix level. The result has "hits" (output seconds of the slow-motion kills) and "duck" (output
+    windows of the voice lines) for laying that song.
     progress(stage: str, fraction: float | None) is called as the work advances (fraction only while encoding)."""
     def report(stage: str, frac: float | None = None) -> None:
         if progress:
@@ -704,26 +703,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         return sg or [(0.0, duration, 1.0)]
     segs = plan(keep)
     pins = voice.parse_pins(opts.get("cine_voice_pick"))
-    cplan = None
-    if opts.get("cine_voice") and opts.get("cine_commentary") and highlight and commentary_ctx:
-        from . import caster
-        report("writing and speaking the commentary")
-        final_real = voice.pick("final", voice_prefs(highlight), pins.get("final"))
-        cplan = caster.plan(commentary_ctx["demo_id"], highlight, int(commentary_ctx["start_tick"]),
-                            commentary_ctx.get("end_tick"), voice_id=str(opts.get("cine_tts_voice") or ""), ffmpeg=ffmpeg,
-                            ffprobe=ffprobe, fx=bool(opts.get("cine_tts_fx", True)), final_real=final_real,
-                            script=commentary_ctx.get("script"), voice2_id=str(opts.get("cine_tts_voice2") or ""))
-        if mode in ("cut", "fast"):
-            # keep real footage while the casters talk, so the lines are heard in full instead of their short forms
-            talk = [(a, min(duration, b)) for a, b in caster.talk_windows(cplan["lines"], cplan["durs"]) if a < duration]
-            keep = union_windows(keep + talk)
-            segs = plan(keep)
-
-    def voices_for(sg: list[Seg]) -> list[tuple[Path, float]]:
-        if cplan is not None:
-            return caster.schedule_plan(cplan, lambda t: out_time(sg, t), total_duration(sg))[0]
-        return plan_voices(sg, kills, total_duration(sg), highlight, pins=pins)
-    voices = voices_for(segs) if opts.get("cine_voice") else []
+    voices = plan_voices(segs, kills, total_duration(segs), highlight, pins=pins) if opts.get("cine_voice") else []
     pad = 0.0
     durs: dict[Path, float] = {}
     if voices:
@@ -737,8 +717,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
             if mode in ("cut", "fast") and keep[-1][1] < duration - 0.05:
                 keep[-1] = (keep[-1][0], min(duration, keep[-1][1] + need * 1.2))
                 segs = plan(keep)
-                voices = voices_for(segs) if cplan is not None else \
-                    plan_voices(segs, kills, total_duration(segs), highlight, choice=voices)
+                voices = plan_voices(segs, kills, total_duration(segs), highlight, choice=voices)
             else:
                 pad = need
                 break
@@ -768,7 +747,8 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
                          game_vol=float(opts["cine_game_volume"]), music_vol=float(opts["cine_music_volume"]), texts=texts,
                          voices=[at for _, at in voices], voice_vol=float(opts.get("cine_voice_volume", 1.0)),
                          card=card_spec, pad=pad,
-                         duck=[(at, at + durs.get(pth, 1.5)) for pth, at in voices] if voices else None)
+                         duck=[(at, at + durs.get(pth, 1.5)) for pth, at in voices] if voices else None,
+                         music_later=music_later)
     args += ["-filter_complex", graph, "-map", "[vc]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast",
              "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
              "-t", f"{total_out:.3f}", str(dst)]
@@ -791,23 +771,129 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     if want_text and not font:
         effects.append("no font found: text overlays skipped")
     if voices:
-        by = ""
-        if cplan is not None:
-            v1, v2 = cplan["voices"]
-            by = f"commentary by {voice.voice_label(v1)}" + (f" and {voice.voice_label(v2)}" if v2 else "") + ": "
-        effects.append(by + f"{len(voices)} voice line(s)" + (f", held last frame {pad:.1f}s" if pad > 0 else ""))
-    spoken = caster_lines(cplan, voices) if cplan is not None else []
+        effects.append(f"{len(voices)} voice line(s)" + (f", held last frame {pad:.1f}s" if pad > 0 else ""))
     return {"seconds": round(total_out, 1), "slow_segments": sum(1 for s in segs if s[2] < 0.999),
             "dead_seconds": round(duration - sum(b - a for a, b in keep), 1), "music": music.name if has_music else None,
             "music_offset": round(offset, 1), "effects": effects, "encode_time": round(time.time() - t0, 1),
-            "commentary": spoken}
+            "hits": [round(out_time(segs, k), 3) for k in slow_kills],
+            "duck": [(round(at, 3), round(at + durs.get(pth, 1.5), 3)) for pth, at in voices]}
+
+
+# ---- one song over a whole montage ---------------------------------------------------------------------------
+
+def montage_music_args(ffmpeg: Path, video: Path, music: Path, dst: Path, total: float, offset: float,
+                       music_vol: float, duck: list[tuple[float, float]] | None = None) -> list[str]:
+    """FFmpeg command laying one song (looped when the montage is longer, started `offset` seconds in) under the
+    joined montage's own sound, dipping to 40 % while a voice line plays. The video stream is copied.
+    Pure function; unit-tested."""
+    win = "+".join(f"between(t\\,{a - 0.25:.2f}\\,{b + 0.25:.2f})" for a, b in duck) if duck else ""
+    vol = f"volume='{music_vol:.2f}*(1-0.6*min(1\\,{win}))':eval=frame" if win else f"volume={music_vol:.2f}"
+    graph = (f"[1:a]atrim=start=0:end={total:.3f},asetpts=PTS-STARTPTS,{vol},afade=t=in:st=0:d=1.5,"
+             f"afade=t=out:st={max(0.0, total - 2.5):.3f}:d=2.5[m];"
+             "[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]")
+    return [str(ffmpeg), "-y", "-i", str(video), "-stream_loop", "-1"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + \
+        ["-i", str(music), "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
+         "-b:a", "192k", "-movflags", "+faststart", "-t", f"{total:.3f}", str(dst)]
+
+
+# ---- montage intro card ----------------------------------------------------------------------------------
+
+INTRO_SECONDS = 3.5
+INTRO_ACCENT = "0xF5A623"
+
+
+def intro_stats(kills: list[int], types: list[str]) -> str:
+    """The "something nice" line of the intro from the plays' kill counts and types: "4 plays · 2 aces · 1 clutch
+    · 17 kills" (zero counts left out). Pure function; unit-tested."""
+    n = len(kills)
+    aces = sum(1 for k, t in zip(kills, types) if t == "ace" or k >= 5)
+    fours = sum(1 for k, t in zip(kills, types) if k == 4 and t != "clutch")
+    clutches = sum(1 for t in types if t == "clutch")
+    parts = [f"{n} play{'s' if n != 1 else ''}"]
+    for c, one, many in ((aces, "ace", "aces"), (fours, "4K", "4Ks"), (clutches, "clutch", "clutches")):
+        if c:
+            parts.append(f"{c} {one if c == 1 else many}")
+    if sum(kills):
+        parts.append(f"{sum(kills)} kills")
+    return " · ".join(parts)
+
+
+def intro_args(ffmpeg: Path, src: Path, at: float, dst: Path, texts: dict, font: Path, width: int, height: int,
+               fps: float, sample_rate: int, channels: int, crf: int = 20, seconds: float = INTRO_SECONDS) -> list[str]:
+    """FFmpeg command for the intro card: one frame of `src` at `at` s (the first kill), blurred, darkened and slowly
+    zooming, with the team name (texts["team"] textfile), a line in the accent colour (texts["sub"]) and the stats
+    (texts["stats"]) fading in one after the other; fades in from black and out to black. Encoded like the
+    cinematic pieces (same size, frame rate, codecs, sample rate) so it joins them without re-encoding.
+    Pure function; unit-tested."""
+    frames = max(1, round(seconds * fps))
+    big, mid, small = round(height * 0.115), round(height * 0.042), round(height * 0.032)
+    bar_w = round(width * 0.16)
+
+    def fade(t0: float, d: float = 0.45) -> str:
+        return f"if(lt(t,{t0}),0,if(lt(t,{t0 + d}),(t-{t0})/{d},if(gt(t,{seconds - 0.35}),max(0,({seconds}-t)/0.35),1)))"
+    team_y = f"(h/2)-{round(height * 0.11)}-6*(1-min(1,max(0,(t-0.25)/0.5)))"
+    chain = [
+        f"loop=loop={frames}:size=1:start=0", f"fps={fps:g}", f"trim=end_frame={frames}", "setpts=N/FRAME_RATE/TB",
+        f"scale={round(width * 1.12)}:-2", "gblur=sigma=14", "eq=brightness=-0.18:saturation=0.55",
+        f"zoompan=z='1+0.035*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps={fps:g}",
+        "vignette=PI/4.2",
+        _drawtext(font, texts["team"], big, "(w-text_w)/2", team_y, alpha=fade(0.25)),
+        f"drawbox=x=(iw-{bar_w})/2:y=ih/2+{round(height * 0.035)}:w={bar_w}:h={max(2, round(height * 0.004))}:"
+        f"color={INTRO_ACCENT}@0.95:t=fill:enable='between(t,0.7,{seconds - 0.3})'",
+        _drawtext(font, texts["sub"], mid, "(w-text_w)/2", f"(h/2)+{round(height * 0.07)}", alpha=fade(0.75), color=INTRO_ACCENT),
+        _drawtext(font, texts["stats"], small, "(w-text_w)/2", f"(h/2)+{round(height * 0.14)}", alpha=fade(1.2)),
+        "fade=t=in:st=0:d=0.4", f"fade=t=out:st={seconds - 0.3:.2f}:d=0.3", "format=yuv420p",
+    ]
+    layout = "stereo" if channels == 2 else "mono" if channels == 1 else f"{channels}c"
+    return [str(ffmpeg), "-y", "-ss", f"{max(0.0, at):.3f}", "-i", str(src), "-f", "lavfi", "-t", f"{seconds:.3f}",
+            "-i", f"anullsrc=r={sample_rate}:cl={layout}", "-filter_complex", f"[0:v]{','.join(chain)}[v]",
+            "-map", "[v]", "-map", "1:a", "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast",
+            "-crf", str(crf), "-pix_fmt", "yuv420p", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k",
+            "-ar", str(sample_rate), "-ac", str(channels), "-movflags", "+faststart", "-t", f"{seconds:.3f}", str(dst)]
+
+
+def probe_audio(ffprobe: Path, path: Path) -> tuple[int, int]:
+    """(sample rate, channels) of a clip's first audio stream; (48000, 2) when ffprobe fails."""
+    r = subprocess.run([str(ffprobe), "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate,channels",
+                        "-of", "json", str(path)], capture_output=True, text=True)
+    try:
+        st = (json.loads(r.stdout or "{}").get("streams") or [{}])[0]
+        return int(st.get("sample_rate") or 48000), int(st.get("channels") or 2)
+    except (ValueError, TypeError):
+        return 48000, 2
+
+
+def make_intro(ffmpeg: Path, ffprobe: Path, first_piece: Path, at: float, dst: Path, team: str, sub: str, stats: str,
+               crf: int = 20) -> float:
+    """Render the intro card next to the montage pieces; returns its length in seconds (0 when it failed or no
+    font was found: the montage simply starts without one)."""
+    font = find_font()
+    if font is None:
+        return 0.0
+    info = probe_video(ffprobe, first_piece)
+    sr, ch = probe_audio(ffprobe, first_piece)
+    files = {}
+    for k, v in (("team", team.upper()), ("sub", sub), ("stats", stats)):
+        f = dst.with_name(f"{dst.stem}_{k}.txt")
+        f.write_text(v or " ", encoding="utf-8")
+        files[k] = f
+    try:
+        r = subprocess.run(intro_args(ffmpeg, first_piece, at, dst, files, font, info["width"], info["height"],
+                                      float(info["fps"] or 60), sr, ch, crf), capture_output=True, text=True)
+        return INTRO_SECONDS if r.returncode == 0 and dst.exists() and dst.stat().st_size > 0 else 0.0
+    finally:
+        for f in files.values():
+            f.unlink(missing_ok=True)
 
 
 # ---- glue to the app's data --------------------------------------------------------------------------
 
 def clip_context(demo_id: str, highlight_id: int, clip_start_tick: int, clip_end_tick: int | None = None) -> dict:
     """{kills: [seconds from clip start], highlight: dict|None, map: str} for a recorded clip."""
-    meta = json.loads((DATA_DIR / "parsed" / demo_id / "meta.json").read_text(encoding="utf-8"))
+    meta_p = DATA_DIR / "parsed" / demo_id / "meta.json"
+    if not meta_p.is_file():   # the match was deleted: cinematic_for_video falls back to the clip's saved "ctx"
+        return {"kills": [], "highlight": None, "map": ""}
+    meta = json.loads(meta_p.read_text(encoding="utf-8"))
     tr = int(meta.get("tickrate", 64))
     for h in db.get_highlights(demo_id):
         if h["id"] == highlight_id:
@@ -821,52 +907,70 @@ def kill_times_for(demo_id: str, highlight_id: int, clip_start_tick: int) -> lis
     return clip_context(demo_id, highlight_id, clip_start_tick)["kills"]
 
 
+MUSIC_RECENT = DATA_DIR / "music_recent.json"   # track names, the most recently used last
+
+
+def fresh_tracks(names: list[str], recent: list[str]) -> list[str]:
+    """The tracks to pick a random one from: those not heard for the longest time. Never-used tracks first; of
+    the used ones, the half used longest ago, so the same song does not come back while others wait.
+    Pure function; unit-tested."""
+    if not names:
+        return []
+    last = {n: i for i, n in enumerate(recent)}            # higher = used more recently
+    never = [n for n in names if n not in last]
+    if never:
+        return never
+    by_age = sorted(names, key=lambda n: last[n])
+    return by_age[:max(1, len(by_age) // 2)]
+
+
+def _note_used(name: str) -> None:
+    try:
+        recent = json.loads(MUSIC_RECENT.read_text(encoding="utf-8")) if MUSIC_RECENT.is_file() else []
+        recent = [n for n in (recent if isinstance(recent, list) else []) if n != name] + [name]
+        MUSIC_RECENT.write_text(json.dumps(recent[-200:]), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
 def pick_music(opts: dict) -> Path | None:
+    """The chosen track, or (none chosen) a random one among those not heard for the longest time."""
     tracks = music_files()
     if not tracks:
         return None
     want = str(opts.get("cine_music") or "")
-    for t in tracks:
-        if t.name == want:
-            return t
-    return random.choice(tracks)
-
-
-def script_path(demo_id: str, highlight_id: int) -> Path:
-    return DATA_DIR / "commentary" / demo_id / f"{int(highlight_id)}.json"
-
-
-def load_script(demo_id: str, highlight_id: int) -> list[dict] | None:
-    """The commentary the user saved for a highlight (None -> write one automatically)."""
-    p = script_path(demo_id, highlight_id)
-    if not p.is_file():
-        return None
-    try:
-        lines = json.loads(p.read_text(encoding="utf-8")).get("lines")
-        return lines if isinstance(lines, list) and lines else None
-    except (OSError, json.JSONDecodeError, AttributeError):
-        return None
+    pick = next((t for t in tracks if t.name == want), None)
+    if pick is None:
+        try:
+            recent = json.loads(MUSIC_RECENT.read_text(encoding="utf-8")) if MUSIC_RECENT.is_file() else []
+        except (OSError, ValueError):
+            recent = []
+        pool = set(fresh_tracks([t.name for t in tracks], recent if isinstance(recent, list) else []))
+        pick = random.choice([t for t in tracks if t.name in pool])
+    _note_used(pick.name)
+    return pick
 
 
 def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, videos_dir: Path,
-                        smooth: bool | None = None, overrides: dict | None = None, progress=None) -> dict:
-    """Create <name>_cine.mp4 next to the clip and return the updated video entry."""
+                        smooth: bool | None = None, overrides: dict | None = None, progress=None,
+                        montage_piece: bool = False) -> dict:
+    """Create <name>_cine.mp4 next to the clip and return the updated video entry. montage_piece=True makes
+    <name>_mtg.mp4 without music instead (the montage gets one song over everything); the entry is not meant to
+    be saved."""
     cfg = load_config()
     opts = options(cfg, overrides)
     if smooth is not None:
         opts["cine_smooth"] = smooth
     src = videos_dir / demo_id / video["file"]
-    dst = src.with_name(src.stem + "_cine.mp4")
+    dst = src.with_name(src.stem + ("_mtg.mp4" if montage_piece else "_cine.mp4"))
     ctx = clip_context(demo_id, video["highlight_id"], int(video["start_tick"]), video.get("end_tick"))
+    if ctx["highlight"] is None and video.get("ctx"):   # the match was deleted: what was saved with the clip
+        ctx = video["ctx"]
     card = player_card(ctx["highlight"]) if opts.get("cine_card") else None
     title = title_for(ctx["highlight"], ctx["map"], with_player=card is None) if ctx["highlight"] else None
-    info = make_cinematic(ffmpeg, ffprobe, src, dst, ctx["kills"], pick_music(opts), opts, title=title,
-                          fps_hint=float(cfg.get("record_fps", 60)), crf=int(cfg.get("record_crf", 20)),
-                          highlight=ctx["highlight"], card=card,
-                          commentary_ctx={"demo_id": demo_id, "start_tick": int(video["start_tick"]),
-                                          "end_tick": int(video.get("end_tick") or 0) or None,
-                                          "script": load_script(demo_id, int(video["highlight_id"]))},
-                          progress=progress)
+    info = make_cinematic(ffmpeg, ffprobe, src, dst, ctx["kills"], None if montage_piece else pick_music(opts), opts,
+                          title=title, fps_hint=float(cfg.get("record_fps", 60)), crf=int(cfg.get("record_crf", 20)),
+                          highlight=ctx["highlight"], card=card, progress=progress, music_later=montage_piece)
     video = dict(video)
     video["cine"] = dst.name
     video["cine_info"] = info

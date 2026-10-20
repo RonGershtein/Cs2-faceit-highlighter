@@ -74,21 +74,3 @@ def test_pick_respects_pins(vdir):
     assert voice.parse_pins('{"final": ["a.mp3"], "bogus": 1}') == {"start": [], "kill": [], "final": ["a.mp3"]}
     assert voice.parse_pins("not json") == {"start": [], "kill": [], "final": []}
     assert voice.parse_pins({"kill": ["2/x.mp3", 5]}) == {"start": [], "kill": ["2/x.mp3"], "final": []}
-
-
-def test_caster_fx_args(tmp_path):
-    bed = tmp_path / "bed.mp3"
-    bed.write_bytes(b"x")
-    a = voice.caster_fx_args(Path("ffmpeg"), tmp_path / "in.mp3", tmp_path / "out.mp3", bed)
-    assert a[:3] == ["ffmpeg", "-y", "-i"] and "-stream_loop" in a and str(bed) in a
-    g = a[a.index("-filter_complex") + 1]
-    assert "acompressor" in g and "aecho" in g and "amix=inputs=2" in g and "loudnorm" in g and "[1:a]aresample=44100,volume=0.22[c]" in g
-    a = voice.caster_fx_args(Path("ffmpeg"), tmp_path / "in.wav", tmp_path / "out.mp3", None)
-    assert "anoisesrc=color=pink" in " ".join(a) and "tremolo" in a[a.index("-filter_complex") + 1]
-
-
-def test_other_voice_differs_from_the_first():
-    assert voice.other_voice("en-US-GuyNeural") == "en-US-ChristopherNeural"
-    assert voice.other_voice("en-US-ChristopherNeural") == "en-US-GuyNeural"
-    assert voice.other_voice("windows") == "windows"
-    assert voice.voice_label("en-US-GuyNeural") == "Guy" and voice.voice_label("x") == "x"

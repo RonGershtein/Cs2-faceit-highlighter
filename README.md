@@ -6,7 +6,7 @@ Drop a FACEIT (or Valve MM) CS2 demo into a local web app and get:
 - **automatic highlights**: multi-kills, aces, clutches, ninja defuses, knife kills, with a "mine" filter
 - per-match **stats** (K/D/A, ADR, HS%, KAST, rating) and a library of all your matches
 - **Open in CS2** at any highlight, or watch the whole demo in the game
-- **MP4 recording** of selected highlights (CS2 + HLAE + FFmpeg, first-person, with game audio), a combined reel, a **long video** from any clips you pick,
+- **MP4 recording** of selected highlights (CS2 + HLAE + FFmpeg, first-person, with game audio), a **long video** from any clips you pick,
   and a **cinematic** version: slow motion on the kills, dead time fast-forwarded or cut, your own music started at its drop,
   zoom punch and flash on kills, title card ("TRIPLE KILL", "ACE", "1v3 CLUTCH"), kill counter and voice lines
 
@@ -16,7 +16,6 @@ Everything runs on your PC. Nothing is uploaded anywhere.
 ![viewer](docs/viewer.png)
 ![cinematic dialog](docs/cinematic.png)
 ![cinematic options](docs/cinematic-options.png)
-![full caster](docs/full-caster.png)
 ![cinematic clip](docs/cinematic-frame.png)
 
 ## Requirements
@@ -69,7 +68,34 @@ Everything can also be done from a terminal. `make` on Linux/macOS/WSL, `cs2w.ba
 ## Using it
 
 ### Library
-Match cards show the score from your side, win/loss, your K/D/A, ADR, HS% and rating, and the top highlight. Click a card to open the viewer. Hover a card and click ✕ to remove a match from the app (your original download and any recorded clips are kept).
+Match cards show the score from your side, win/loss, your K/D/A, ADR, HS% and rating, and the top highlight. Click a card to open the viewer. Hover a card and click ✕ to remove a match from the app (your original download is kept, and its recorded clips stay in the Highlights tab).
+
+### Squad montage
+"👥 Squad montage" on a match collects every play of 3+ kills (3K, 4K, ace, a clutch with 3+ kills) by you and your
+friends, records the ones that are not recorded yet (CS2 opens and closes by itself), makes them cinematic (or keeps
+them as recorded, your choice) and joins them in match order. A cinematic squad montage has one song over the whole
+video instead of a new song per play: each play is rendered without music, then the song (the chosen track or a random
+one) is laid over everything, its drop on the first slow-motion kill, dipping under caster lines. "⚙ Cinematic
+settings" opens the usual Cinematic dialog for this montage. Caster lines are only used when ticked for that run: the
+tick is never remembered, so anything made without opening the settings has no casters. The squad
+list (nickname + optional Steam64 ID; without an ID the in-game name is matched) is saved in `data/squad.json`.
+The result is a long video of that match: it appears in the Highlights tab, where several squad montages can be joined.
+
+All kills of a player in one round count as one play (two kills, then two more half a minute later, is a 4K); the
+cinematic pace fast-forwards the quiet part in between. A cinematic job keeps running when you open another match,
+and jobs started meanwhile wait in a queue.
+
+### Highlights tab
+Every video you made, from every match: original clips, cinematic versions, long videos and montages, newest first.
+They stay here after you delete the match (the map, date and score are saved with the clips). Filter by kind or map,
+hover a clip for a muted preview, click to watch, ⬇ to download, ✕ to delete (deleting an original also deletes its
+cinematic version; deleting only the cinematic version keeps the original).
+
+**Select / montage:** click "☑ Select" (or just drag a clip onto the page bottom), pick clips from any matches; the tray
+at the bottom lists them in play order (drag the rows or use ↑↓). "🗑 Delete" removes all selected videos at once;
+"🎬 Create montage" joins them, with an optional name. Clips of the same kind are joined
+instantly; a mix of original and cinematic clips is re-encoded to one size and frame rate. Montages are kept in
+`data/videos/montages/` and copied to `<save clips folder>/montages/`.
 
 ### Viewer
 - **Play / pause**: `space`. `←` `→` seek 5 s, `,` `.` one frame, `[` `]` previous/next kill, `PgUp` `PgDn` previous/next round, `L` toggles the lower level on Nuke/Vertigo/Train.
@@ -84,7 +110,7 @@ Match cards show the score from your side, win/loss, your K/D/A, ADR, HS% and ra
 3. Read the checklist: **close CS2 and the FACEIT client** first. Click **Start recording**.
 4. CS2 opens in a window and records the clips one by one in your first-person view, then closes itself.
    Budget about a minute per highlight. Don't touch the game meanwhile.
-5. Each card gets a **▶ Video** button. Clips are in the app and copied to your clips folder; with 2+ clips you also get **reel.mp4**.
+5. Each card gets a **▶ Video** button. Clips are in the app and copied to your clips folder.
 6. **Long video from your picks:** tick two or more highlights that already have a clip and press **🎬 Long video**. Their clips are
    joined in match order into one MP4 (optionally using the cinematic versions), listed under the toolbar with ▶ / ⬇ / ✕, and copied to your clips folder.
 7. **Delete clips:** tick recorded highlights and press **🗑 Delete clips**. The clip (and its cinematic version) is removed from the app;
@@ -94,7 +120,7 @@ CS2 runs with `-insecure` while recording, which only disables VAC for that sess
 
 ### Cinematic clips
 Click **✨ Cinematic**. The dialog has every option, remembers them, and processes either all clips without a cinematic version or the
-highlights you ticked (those are remade). A `reel_cinematic.mp4` of all cinematic clips is built afterwards. Takes ~15-30 s per clip
+highlights you ticked (those are remade). Takes ~15-30 s per clip
 (much longer with "smooth frames").
 
 - **Pace:** dead time between kills (walking, waiting) is fast-forwarded at 6x by default, or cut out, with normal speed from
@@ -103,14 +129,7 @@ highlights you ticked (those are remade). A `reel_cinematic.mp4` of all cinemati
 - **Effects:** zoom punch and flash on each kill, vignette and colour grade, fade in/out.
 - **Text:** a title card for the first seconds (TRIPLE KILL / ACE / 1v3 CLUTCH, then "3K · map · round") and a kill counter.
   Uses Bahnschrift or Arial from Windows; drop any `.ttf` into `assets/fonts/` to use that instead.
-- **Full caster:** the 🎙 button on a highlight writes a complete play-by-play from the demo events (who killed whom with
-  what, headshots, through smoke, how many were left, bomb planted or defused, the clutch situation) for two casters: one
-  calls the action, the other reacts. No language model, just a few hundred phrasings picked at random. Edit any line, change
-  who says it, delete or add lines, write it again, then "Save & make the cinematic clip": the lines are spoken with the two
-  generated voices, scheduled so they never overlap (less important lines are dropped in dense moments), the music ducks
-  under them, and your real "after the final kill" cut is still used for the payoff. Nicknames a voice cannot pronounce
-  become "our man"; set `"say": "Ron"` for a player in `data/players.json` to have the casters use a spoken name.
-- **Player card:** a round avatar with the player's nickname at the bottom left, like a pro-match lower third. Photos go in
+- **Player card:** a round avatar with the player's nickname at the bottom left, like a pro-match lower third. It stays on screen for the whole clip. Photos go in
   `data/players/<steam64>.png` (or .jpg); without one a blank circle with the initial is shown. Optional `data/players.json`
   (`{"<steam64>": {"name": "nickname", "photo": "file.png"}}`) overrides the in-game name.
 - **Music:** add MP3/M4A/WAV files (royalty-free if you plan to publish). A random track or the one you pick plays under the game sound.
@@ -120,10 +139,8 @@ highlights you ticked (those are remade). A `reel_cinematic.mp4` of all cinemati
   every kill but the last, and right after the final kill. They are picked by what happened: a sub-folder named after the highlight type
   (`ace`, `clutch`, `multikill`, `knife`, `ninja_defuse`) or, for the kill slot, the kill number (`2`, `3`, `4`, `5`) wins when it has
   files, otherwise a general line from the slot plays. Click a line in the dialog to pin it: a slot with pinned lines only uses those.
-  The "new lines are for" selector puts uploads and generated lines in the right folder. Type a line ("Are you kidding me?!") and
-  generate it with a neural voice (Microsoft Edge's online voices through `edge-tts`; the offline Windows voice is the fallback).
-  "Stadium sound" pushes the generated line through broadcast compression, a little arena echo and a crowd bed
-  (`data/voice/_crowd.mp3` if you put one there, otherwise synthetic noise). The famous caster lines are one-click presets. Untick "play caster voice lines" for a clean clip. The clip runs on until the last
+  The lines are real caster recordings: upload your own clips, and the "new lines are for" selector puts them in the right
+  folder. Untick "play caster voice lines" for a clean clip. The clip runs on until the last
   line has finished.
 
 ### Config file

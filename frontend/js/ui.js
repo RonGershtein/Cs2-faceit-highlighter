@@ -8,6 +8,7 @@
   const toast = (html, ms = 8000) => {
     const el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite'); el.innerHTML = html;
     document.body.appendChild(el); setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 160); }, ms);
+    return el;
   };
 
   status.textContent = 'loading…';
@@ -54,13 +55,12 @@
     $('btn-record-sel').innerHTML = toRecord ? `<i class="rec-dot"></i> Record ${toRecord} selected` : '<i class="rec-dot"></i> Record selected';
     const db = $('btn-del-clips');
     db.style.display = withVideo ? '' : 'none';
-    db.textContent = `🗑 Delete ${withVideo} clip${withVideo === 1 ? '' : 's'}`;
+    db.innerHTML = `${ic('trash')} Delete ${withVideo} clip${withVideo === 1 ? '' : 's'}`;
     const lb = $('btn-long');
-    lb.style.display = videos.videos.length ? '' : 'none';
-    lb.disabled = withVideo < 2;
-    lb.textContent = withVideo >= 2 ? `🎬 Long video (${withVideo} clips)` : '🎬 Long video';
-    lb.title = withVideo >= 2 ? `join the ${withVideo} recorded clips of the selected highlights into one long video`
-      : 'select at least two highlights that already have a recorded clip (green ▶ Video button)';
+    lb.disabled = sel.length < 2;
+    lb.innerHTML = `${ic('film')} Montage${sel.length >= 2 ? ` (${sel.length})` : ''}`;
+    lb.title = sel.length >= 2 ? `join the ${sel.length} selected highlights into one video with one song over it`
+      : 'select at least two highlights';
   }
   const timeline = new Timeline($('timeline'), replay, [], me);
 
@@ -87,9 +87,9 @@
           <div class="player">${esc(h.player_name)}</div>
           <div class="desc">${esc(h.description)}</div>
           <div class="actions">
-            <button class="small act-play" data-i="${i}">▶ Play</button>
+            <button class="small act-play" data-i="${i}">${ic('play')} Play</button>
             <button class="small act-cs2" data-i="${i}" title="open CS2 at this moment">Open in CS2</button>
-            ${videoFor(h) ? `<button class="small act-video has-video" data-i="${i}" title="watch the recorded MP4">▶ Video</button>${videoFor(h).cine ? `<button class="small act-cine has-video" data-i="${i}" title="watch the cinematic version (slow-motion + music)">✨ Cinematic</button>` : ''}<button class="small act-caster" data-i="${i}" title="write a full play-by-play commentary for this clip, edit it, and make the cinematic version with it">🎙 Full caster</button>` : `<button class="small act-rec" data-i="${i}" title="record only this highlight"><i class="rec-dot"></i> Rec</button>`}
+            ${videoFor(h) ? `<button class="small act-video has-video" data-i="${i}" title="watch the recorded MP4">${ic('play')} Video</button>${videoFor(h).cine ? `<button class="small act-cine has-video" data-i="${i}" title="watch the cinematic version (slow-motion + music)">${ic('sparkles')} Cinematic</button>` : ''}` : `<button class="small act-rec" data-i="${i}" title="record only this highlight"><i class="rec-dot"></i> Rec</button>`}
             <button class="small ghost act-csdm" data-i="${i}" title="copy a CS Demo Manager sequence to the clipboard">CSDM</button>
           </div>
         </div>
@@ -130,7 +130,6 @@
       return;
     }
     if (b?.classList.contains('act-video')) { openVideo(videoFor(h)); return; }
-    if (b?.classList.contains('act-caster')) { openCaster(h); return; }
     if (b?.classList.contains('act-cine')) { const v = videoFor(h); openVideo({ ...v, file: v.cine, description: v.description + ' (cinematic)', seconds: v.cine_info?.seconds ?? v.seconds }); return; }
     if (b?.classList.contains('act-rec')) { startRecording([h.id]); return; }
     if (b?.classList.contains('act-csdm')) {
@@ -173,7 +172,7 @@
       <thead><tr><th>Player</th><th>HP</th><th>Weapon</th><th>K</th><th>D</th><th>A</th></tr></thead><tbody>
       ${list.map(p => `<tr class="${p.alive ? '' : 'dead'} ${p.meta.steamid === me ? 'me' : ''}">
         <td class="name" title="${esc(p.meta.name)} · $${p.money} · ADR ${p.stats?.adr ?? ''} · rating ${p.stats?.rating ?? ''}">${esc(p.meta.name)}${p.flags & F.bomb ? ' <span class="tag c4">C4</span>' : ''}${p.flags & F.defuser ? ' <span class="tag kit">KIT</span>' : ''}</td>
-        <td>${p.alive ? `<span class="hp"><div style="width:${p.hp}%"></div></span> ${p.hp}` : '✕'}</td>
+        <td>${p.alive ? `<span class="hp"><div style="width:${p.hp}%"></div></span> ${p.hp}` : '–'}</td>
         <td title="${esc(p.weapon)}">${p.alive ? esc(wname(p.weapon)) : ''}</td>
         <td>${p.stats?.kills ?? ''}</td><td>${p.stats?.deaths ?? ''}</td><td>${p.stats?.assists ?? ''}</td>
       </tr>`).join('')}</tbody></table>`;
@@ -283,27 +282,23 @@
   });
 
   // ---- recording (CS2 + HLAE + FFmpeg) ----------------------------------------------------------
-  let videos = { videos: [], reel: null, long: [] };
+  let videos = { videos: [], long: [] };
   let tools = null;
   let recPoll = null;
   function videoFor(h) { return videos.videos.find(v => v.highlight_id === h.id) || null; }
   async function loadVideos() {
-    try { videos = await API.videos(id); } catch (_) { videos = { videos: [], reel: null, long: [] }; }
+    try { videos = await API.videos(id); } catch (_) { videos = { videos: [], long: [] }; }
     videos.long = videos.long || [];
     renderLongList();
-    const reel = $('reel-link');
-    if (videos.reel) { reel.href = API.videoUrl(id, videos.reel.file); reel.style.display = ''; } else reel.style.display = 'none';
     $('btn-export').style.display = videos.videos.length ? '' : 'none';
     $('btn-cine').style.display = videos.videos.length ? '' : 'none';
-    const rc = $('reel-cine-link');
-    if (videos.reel_cine) { rc.href = API.videoUrl(id, videos.reel_cine.file); rc.style.display = ''; } else rc.style.display = 'none';
     if (videos.export_folder) $('btn-export').title = `copy all clips to ${videos.export_folder}`;
   }
   function renderLongList() {
-    $('long-list').innerHTML = videos.long.map((l, i) => `<span class="pill" title="${esc(l.file)}">🎬 ${esc(l.description)} · ${l.seconds}s
-      <button class="small act-long-play" data-i="${i}" title="watch">▶</button>
-      <a class="small" href="${API.videoUrl(id, l.file)}" download title="download">⬇</a>
-      <button class="small ghost act-long-del" data-i="${i}" title="delete this long video">✕</button></span>`).join('');
+    $('long-list').innerHTML = videos.long.map((l, i) => `<span class="pill" title="${esc(l.file)}">${ic('film')} ${esc(l.description)} · ${l.seconds}s
+      <button class="small act-long-play" data-i="${i}" title="watch">${ic('play')}</button>
+      <a class="small" href="${API.videoUrl(id, l.file)}" download title="download">${ic('download')}</a>
+      <button class="small ghost act-long-del" data-i="${i}" title="delete this long video">${ic('x')}</button></span>`).join('');
   }
   $('long-list').addEventListener('click', async (e) => {
     const b = e.target.closest('button'); if (!b) return;
@@ -368,24 +363,47 @@
   };
   $('btn-record-sel').onclick = () => startRecording(listed.filter(h => selected.has(h.id) && !videoFor(h)).map(h => h.id));
   $('btn-rec-cancel').onclick = async () => { await API.recordCancel(); };
-  // ---- long video (join recorded clips of the selected highlights) ----------------------------------
-  $('btn-long').onclick = () => {
-    const sel = selectedHighlights();
-    const withVideo = sel.filter(h => videoFor(h)).sort((a, b) => a.start_tick - b.start_tick);
-    const skipped = sel.length - withVideo.length;
-    if (withVideo.length < 2) return;
+  // ---- montage of the selected highlights: one song over the whole video, or the recorded clips as they are ----
+  $('btn-long').onclick = async () => {
+    const sel = selectedHighlights().sort((a, b) => a.start_tick - b.start_tick);
+    if (sel.length < 2) return;
+    const withVideo = sel.filter(h => videoFor(h));
     const total = withVideo.reduce((s, h) => s + (videoFor(h).seconds || 0), 0);
-    $('long-clips').innerHTML = withVideo.map(h => `<div>round ${h.round} · ${esc(h.player_name)} · ${esc(h.description)} (${videoFor(h).seconds}s)</div>`).join('')
-      + `<div style="margin-top:4px"><b>${withVideo.length} clips · about ${Math.round(total)}s</b></div>`;
+    $('long-clips').innerHTML = sel.map(h => `<div>round ${h.round} · ${esc(h.player_name)} · ${esc(h.description)} ${videoFor(h) ? `(${videoFor(h).seconds}s)` : '<span class="badge">to record</span>'}</div>`).join('')
+      + `<div style="margin-top:4px"><b>${sel.length} plays</b>${withVideo.length ? ` · ${withVideo.length} recorded, about ${Math.round(total)}s as recorded` : ''}</div>`;
     const anyCine = withVideo.some(h => videoFor(h).cine);
-    $('long-cine-field').style.display = anyCine ? '' : 'none';
-    $('long-skip').style.display = skipped ? '' : 'none';
-    $('long-skip').textContent = skipped ? `${skipped} selected highlight(s) have no recorded clip yet and will be left out. Record them first to include them.` : '';
+    const music = $('long-music'), cur = music.value;
+    try {
+      const m = await API.music();
+      music.innerHTML = '<option value="">random track</option>' + m.files.map(f => `<option value="${esc(f)}">${esc(f.replace(/\.[^.]+$/, ''))}</option>`).join('');
+      music.value = m.files.includes(cur) ? cur : '';
+      $('long-music-hint').textContent = m.files.length ? '' : 'no music yet: add tracks in Cinematic → music';
+    } catch (_) { /* keep the list as it was */ }
+    const sync = () => {
+      const song = $('long-song').checked;
+      $('long-song-row').style.display = song ? '' : 'none';
+      $('long-cine-field').style.display = !song && anyCine ? '' : 'none';
+      const skipped = song ? 0 : sel.length - withVideo.length;
+      $('long-skip').style.display = skipped ? '' : 'none';
+      $('long-skip').textContent = skipped ? `${skipped} selected highlight(s) have no recorded clip yet and will be left out. Record them first, or pick "Cinematic with one song", which records them.` : '';
+      $('long-go').disabled = !song && withVideo.length < 2;
+    };
+    $('long-song').onchange = $('long-plain').onchange = sync;
+    sync();
     $('long-msg').textContent = '';
-    $('long-go').disabled = false;
     $('long-modal').style.display = '';
     $('long-go').onclick = async () => {
       $('long-go').disabled = true;
+      if ($('long-song').checked) {
+        $('long-msg').textContent = 'starting…';
+        try {
+          const r = await API.squadReel(id, { cinematic: true, highlight_ids: sel.map(h => h.id), music: music.value });
+          $('long-modal').style.display = 'none';
+          toast(`${ic('film')} Making the montage: ${r.total} plays. ${sel.length > withVideo.length ? 'Missing clips are recorded first; ' : ''}progress shows above the highlights.`, 7000);
+          startSquadPoll();
+        } catch (e) { $('long-msg').textContent = e.message; $('long-go').disabled = false; }
+        return;
+      }
       $('long-msg').textContent = 'joining clips…';
       try {
         const r = await API.longVideo(id, withVideo.map(h => h.id), anyCine && $('long-cine').checked);
@@ -425,85 +443,12 @@
     const t = e.target; if (!(t instanceof HTMLElement) || t.getAttribute('role') !== 'button' || t.tagName === 'BUTTON') return;
     e.preventDefault(); t.click();
   });
-  // ---- full caster: editable commentary per highlight ------------------------------------------------
-  let casterH = null, casterLines = [], cinePoll = null;
-  function renderCasterLines() {
-    $('caster-lines').innerHTML = casterLines.map((l, i) => `<div class="caster-line ${l.who === 2 ? 'c2' : 'c1'}" data-i="${i}">
-      <input type="number" class="cl-t" value="${(+l.t).toFixed(1)}" step="0.1" min="0" inputmode="decimal" title="seconds from the clip start" aria-label="Time in seconds">
-      <button class="small ghost cl-who" title="who says it: caster 1 calls, caster 2 reacts">${l.who === 2 ? 'C2' : 'C1'}</button>
-      <input type="text" class="cl-text" value="${esc(l.text)}" maxlength="300" autocomplete="off" aria-label="Line ${i + 1}">
-      <button class="small ghost cl-del" title="delete this line" aria-label="Delete this line">✕</button></div>`).join('') || '<span class="muted">no lines</span>';
-  }
-  function collectCasterLines() {
-    return [...document.querySelectorAll('.caster-line')].map((el, i) => ({ ...casterLines[i], t: parseFloat(el.querySelector('.cl-t').value) || 0, text: el.querySelector('.cl-text').value }));
-  }
-  async function openCaster(h) {
-    casterH = h; $('caster-msg').textContent = ''; $('caster-modal').style.display = '';
-    $('caster-sub').innerHTML = `<b>${esc(h.description)}</b>${videoFor(h) ? '' : ' — <span class="warn">no recorded clip yet: the commentary follows the highlight; record the clip before making the cinematic version</span>'}`;
-    $('caster-lines').innerHTML = '<span class="muted">writing…</span>';
-    fillCasterVoices();
-    try { const r = await API.commentary(id, h.id); casterLines = r.lines; $('caster-duo').checked = !!r.duo; $('caster-msg').textContent = r.saved ? 'saved script' : 'automatic script (not saved yet)'; renderCasterLines(); }
-    catch (e) { $('caster-lines').innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
-  }
-  async function fillCasterVoices() {
-    // the two caster voices (saved cine_tts_voice / cine_tts_voice2); caster 2 never gets caster 1's voice
-    try {
-      const info = await API.cineSettings();
-      const opts = (info.voice?.tts_voices || []).map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('');
-      for (const [sel, key] of [['caster-voice1', 'cine_tts_voice'], ['caster-voice2', 'cine_tts_voice2']]) {
-        const el = $(sel); const cur = info.settings?.[key] || ''; el.innerHTML = opts;
-        if ([...el.options].some(o => o.value === cur)) el.value = cur;
-      }
-      casterVoicesDiffer();
-    } catch (_) { /* the saved voices are used */ }
-  }
-  function casterVoicesDiffer() {
-    const v1 = $('caster-voice1').value, v2 = $('caster-voice2');
-    if (v2.value !== v1) return;
-    const alt = [...v2.options].find(o => o.value !== v1 && o.value !== 'windows'); if (alt) v2.value = alt.value;
-  }
-  $('caster-voice1').addEventListener('change', casterVoicesDiffer);
-  $('caster-voice2').addEventListener('change', casterVoicesDiffer);
-  $('caster-duo').addEventListener('change', () => { $('caster-voice2-wrap').style.display = $('caster-duo').checked ? '' : 'none'; });
-  $('caster-close').onclick = () => $('caster-modal').style.display = 'none';
-  $('caster-modal').addEventListener('click', (e) => {
-    if (e.target === $('caster-modal')) { $('caster-modal').style.display = 'none'; return; }
-    const row = e.target.closest('.caster-line'); if (!row) return; const i = +row.dataset.i;
-    if (e.target.closest('.cl-del')) { casterLines = collectCasterLines(); casterLines.splice(i, 1); renderCasterLines(); }
-    else if (e.target.closest('.cl-who')) { casterLines = collectCasterLines(); casterLines[i].who = casterLines[i].who === 2 ? 1 : 2; renderCasterLines(); }
-  });
-  $('caster-add').onclick = () => { casterLines = collectCasterLines(); const last = casterLines[casterLines.length - 1]; casterLines.push({ t: last ? +last.t + 3 : 0, text: '', kind: 'line', priority: 2, who: 1 }); renderCasterLines(); $('caster-lines').querySelector('.caster-line:last-child .cl-text')?.focus(); };
-  $('caster-redo').onclick = async () => {
-    if (!casterH) return; $('caster-msg').textContent = 'writing…';
-    try { const r = await API.commentaryDraft(id, casterH.id, $('caster-duo').checked); casterLines = r.lines; renderCasterLines(); $('caster-msg').textContent = 'new script (not saved yet)'; }
-    catch (e) { $('caster-msg').textContent = e.message; }
-  };
-  async function saveCaster() {
-    casterLines = collectCasterLines().filter(l => l.text.trim());
-    const r = await API.saveCommentary(id, casterH.id, casterLines); casterLines = r.lines; renderCasterLines(); return r;
-  }
-  $('caster-save').onclick = async () => { try { await saveCaster(); $('caster-msg').textContent = 'saved'; } catch (e) { $('caster-msg').textContent = e.message; } };
-  $('caster-reset').onclick = async () => { try { await API.deleteCommentary(id, casterH.id); const r = await API.commentary(id, casterH.id); casterLines = r.lines; renderCasterLines(); $('caster-msg').textContent = 'saved script removed; showing a fresh automatic one'; } catch (e) { $('caster-msg').textContent = e.message; } };
-  $('caster-go').onclick = async () => {
-    try {
-      await saveCaster();
-      if (!videoFor(casterH)) { $('caster-msg').textContent = 'saved. Record this highlight first, then make the cinematic version.'; return; }
-      $('caster-go').disabled = true; $('caster-msg').textContent = 'starting…';
-      const st = await API.cineSettings();
-      const settings = { ...st.settings, cine_voice: true, cine_commentary: true,
-        cine_tts_voice: $('caster-voice1').value || st.settings.cine_tts_voice,
-        cine_tts_voice2: $('caster-duo').checked ? ($('caster-voice2').value || st.settings.cine_tts_voice2 || '') : '' };
-      const r = await API.cinematic(id, [casterH.id], settings);
-      $('caster-go').disabled = false; $('caster-modal').style.display = 'none';
-      toast(`🎙 Working on your cinematic clip with commentary… about a minute or two. Progress shows above the highlights.`, 6000);
-      startCinePoll();
-    } catch (e) { $('caster-go').disabled = false; $('caster-msg').textContent = e.message; }
-  };
   // ---- cinematic (slow-motion + music) -------------------------------------------------------------
+  let cinePoll = null;
   const CINE_NUM = ['cine_slow', 'cine_game_volume', 'cine_music_volume', 'cine_trim_lead', 'cine_fast', 'cine_voice_volume'];
   const CINE_STR = ['cine_kills', 'cine_music', 'cine_trim'];
   let voicePins = { start: [], kill: [], final: [] };   // cine_voice_pick: pinned lines per slot (empty = random)
-  const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_card', 'cine_voice', 'cine_tts_fx'];
+  const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_card', 'cine_voice'];
   const VOICE_SLOTS = ['start', 'kill', 'final'];
   const VOICE_SUB_LABEL = { ace: 'ace', clutch: 'clutch', multikill: 'multikill', knife: 'knife', ninja_defuse: 'ninja', 2: '2nd kill', 3: '3rd kill', 4: '4th kill', 5: '5th kill' };
   let cineInfo = null;
@@ -555,13 +500,13 @@
   $('cine-advanced-btn').onclick = () => {
     const adv = $('cine-advanced'); const open = adv.style.display === 'none';
     adv.style.display = open ? '' : 'none';
-    $('cine-advanced-btn').textContent = open ? '▲ Hide the options' : '⚙ Edit cinematic options';
+    $('cine-advanced-btn').innerHTML = open ? 'Hide the options' : `${ic('settings')} Edit cinematic options`;
     if (!open) cineSummary();
   };
   $('music-modal').addEventListener('change', cineSummary);
   function renderMusicList(files, dir) {
     $('music-dir').textContent = dir || '';
-    $('music-list').innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${esc(f)}</span><button class="small ghost del-music" data-name="${esc(f)}" title="remove" aria-label="Remove ${esc(f)}">✕</button></span>`).join('') : '<span class="muted">none yet — slow motion only</span>';
+    $('music-list').innerHTML = files.length ? files.map(f => `<span class="pill" title="${esc(f)}"><span class="pill-name">${esc(f)}</span><button class="small ghost del-music" data-name="${esc(f)}" title="remove" aria-label="Remove ${esc(f)}">${ic('x')}</button></span>`).join('') : '<span class="muted">none yet — slow motion only</span>';
     const sel = $('cine_music'); const cur = sel.value;
     sel.innerHTML = '<option value="">random track</option>' + files.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
     sel.value = files.includes(cur) ? cur : '';
@@ -576,16 +521,9 @@
       const label = (f) => { const i = f.indexOf('/'); return i < 0 ? esc(f) : `<b class="voice-tag">${esc(VOICE_SUB_LABEL[f.slice(0, i)] || f.slice(0, i))}</b> ${esc(f.slice(i + 1))}`; };
       voicePins[slot] = (voicePins[slot] || []).filter(n => files.includes(n));
       $('voice-list-' + slot).innerHTML = files.length ? files.map(f => `<span class="pill voice-pill ${voicePins[slot].includes(f) ? 'pinned' : ''}" data-slot="${slot}" data-name="${esc(f)}" title="${esc(f)} — tick to use only this line (and other ticked ones); none ticked = any line of the slot"><input type="checkbox" class="voice-use" ${voicePins[slot].includes(f) ? 'checked' : ''} aria-label="Use ${esc(f)}"><span class="pill-name">${label(f)}</span>
-        <button class="small ghost voice-play" data-slot="${slot}" data-name="${esc(f)}" title="preview" aria-label="Play ${esc(f)}">▶</button><button class="small ghost voice-del" data-slot="${slot}" data-name="${esc(f)}" title="delete" aria-label="Delete ${esc(f)}">✕</button></span>`).join('') : '<span class="muted">none</span>';
+        <button class="small ghost voice-play" data-slot="${slot}" data-name="${esc(f)}" title="preview" aria-label="Play ${esc(f)}">${ic('play')}</button><button class="small ghost voice-del" data-slot="${slot}" data-name="${esc(f)}" title="delete" aria-label="Delete ${esc(f)}">${ic('x')}</button></span>`).join('') : '<span class="muted">none</span>';
     }
     $('voice-dir').textContent = v?.dir || '';
-    const tts = !!v?.tts;
-    $('voice-tts').style.display = tts ? '' : 'none';
-    $('voice-tts-hint').style.display = tts ? 'none' : '';
-    $('voice-presets').innerHTML = (v?.presets || []).map(o => `<option value="${esc(o.text)}">`).join('');
-    const vs = $('voice-voice'); const cur = (cineInfo?.settings?.cine_tts_voice) || vs.value || '';
-    vs.innerHTML = (v?.tts_voices || []).map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('');
-    if ([...vs.options].some(o => o.value === cur)) vs.value = cur;
   }
   async function reloadVoice() {
     try { const v = await API.voice(); if (cineInfo) cineInfo.voice = v; renderVoice(v); } catch (err) { toast(esc(err.message)); }
@@ -594,10 +532,18 @@
   $('cine_trim').addEventListener('change', cinePaceVis);
   const voiceVis = () => { const on = $('cine_voice').checked; $('voice-body').classList.toggle('off', !on); $('cine_voice_volume').disabled = !on; $('voice-off-hint').style.display = on ? 'none' : ''; };
   $('cine_voice').addEventListener('change', voiceVis);
+  let cineFor = null;   // null = this match's clips; 'squad' = the dialog sets up the squad montage instead
+  function setCineMode(mode) {
+    cineFor = mode;
+    $('cine-which-field').style.display = mode === 'squad' ? 'none' : '';
+    $('cine-go').innerHTML = mode === 'squad' ? `${ic('users')} Create squad montage` : `${ic('sparkles')} Create cinematic`;
+    document.querySelector('#music-modal .modal-head').firstChild.textContent = mode === 'squad' ? 'Squad montage: cinematic settings ' : 'Cinematic clips ';
+  }
   $('btn-cine').onclick = async () => {
+    setCineMode(null);
     $('cine-msg').textContent = '';
     $('music-modal').style.display = '';
-    $('cine-advanced').style.display = 'none'; $('cine-advanced-btn').textContent = '⚙ Edit cinematic options';
+    $('cine-advanced').style.display = 'none'; $('cine-advanced-btn').innerHTML = `${ic('settings')} Edit cinematic options`;
     cineCounts();
     try {
       cineInfo = await API.cineSettings();
@@ -628,24 +574,21 @@
     for (const f of inp.files) { try { await API.uploadVoice(inp.dataset.slot, f, $('voice-sub').value); } catch (err) { toast(esc(err.message)); } }
     inp.value = ''; reloadVoice();
   }));
-  $('voice-gen').onclick = async () => {
-    const text = $('voice-text').value.trim(); if (!text) { $('voice-text').focus(); return; }
-    $('voice-gen').disabled = true; $('cine-msg').textContent = 'generating…';
-    try { await API.voiceTts(text, $('voice-slot').value, $('voice-sub').value, $('voice-voice').value, $('cine_tts_fx').checked); $('voice-text').value = ''; $('cine-msg').textContent = ''; await reloadVoice(); }
-    catch (err) { $('cine-msg').textContent = err.message; }
-    $('voice-gen').disabled = false;
-  };
   function collectCine() {
     const settings = {};
     for (const k of CINE_NUM) { const v = parseFloat($(k).value); if (!Number.isNaN(v)) settings[k] = v; }
     for (const k of CINE_STR) settings[k] = String($(k).value);
     for (const k of CINE_BOOL) settings[k] = !!$(k).checked;
     settings.cine_voice_pick = JSON.stringify(voicePins);
-    settings.cine_commentary = false;   // the plain Cinematic dialog never generates commentary; only 🎙 Full caster does
-    settings.cine_tts_voice = $('voice-voice').value || '';
     return settings;
   }
   $('cine-go').onclick = async () => {
+    if (cineFor === 'squad') {
+      $('cine-go').disabled = true; $('cine-msg').textContent = 'starting…';
+      try { await startSquad({ cinematic: true, settings: collectCine() }); $('music-modal').style.display = 'none'; $('cine-msg').textContent = ''; }
+      catch (e) { $('cine-msg').textContent = e.message; }
+      $('cine-go').disabled = false; return;
+    }
     try {
       const which = $('cine-which-sel').checked ? 'sel' : 'all';
       const ids = which === 'sel' ? selectedHighlights().filter(h => videoFor(h)).map(h => h.id) : null;
@@ -655,27 +598,125 @@
       const r = await API.cinematic(id, ids, collectCine());
       $('cine-go').disabled = false; $('cine-msg').textContent = '';
       $('music-modal').style.display = 'none';
-      toast(`✨ Working on your cinematic video… this takes about a minute per clip. Progress shows above the highlights.`, 6000);
+      toast(r.queued ? `${ic('sparkles')} Added to the queue (#${r.queued}): it starts by itself when the clip being made now is done. You can open other matches meanwhile.`
+        : `${ic('sparkles')} Working on your cinematic video… about a minute per clip. You can open other matches meanwhile; it keeps going.`, 6000);
       startCinePoll();
     } catch (e) { $('cine-go').disabled = false; $('cine-msg').textContent = e.message; }
   };
+  // cinematic jobs run in the app, not the page: they go on when you open another match, and a job started
+  // while another runs waits in a queue (any match). Every match page shows the progress.
+  let cineSeen = null;   // {started, status} of the job last seen, to reload this match's clips when one of its jobs ends
   function startCinePoll() {
       if (cinePoll) clearInterval(cinePoll);
-      cinePoll = setInterval(async () => {
+      const tick = async () => {
         const st = await API.recordStatus().catch(() => null); const c = st?.cinematic;
-        if (!c) return;
-        $('recstatus').classList.toggle('err', c.status === 'error');
+        if (!c) { clearInterval(cinePoll); cinePoll = null; return; }
+        const queue = c.queued || [];
+        const mine = queue.findIndex(q => q.demo_id === id);
+        const here = c.demo_id === id;
+        const wait = queue.length ? ` · ${queue.length} more waiting` : '';
+        $('recstatus').classList.toggle('err', here && c.status === 'error');
         if (c.status === 'running') {
           const pct = Math.round(100 * (c.progress ?? (c.done / c.total)));
           const stage = c.stage === 'encoding' ? `encoding ${Math.round(100 * Math.max(0, ((c.clip_progress ?? 0) - 0.15) / 0.85))}%` : (c.stage || 'working');
           const eta = c.eta == null ? '' : c.eta < 5 ? ' · almost done' : c.eta < 60 ? ` · about ${Math.round(c.eta / 5) * 5} s left` : ` · about ${Math.ceil(c.eta / 60)} min left`;
-          $('recstatus').innerHTML = `✨ Working on your cinematic video… ${c.total > 1 ? `clip ${c.done + 1}/${c.total} · ` : ''}${esc(stage)}${eta} <button class="small ghost" id="cine-cancel" title="stop the cinematic job">✕ cancel</button><span class="progress live"><div style="width:${Math.max(2, pct)}%"></div></span>`;
-          $('cine-cancel').onclick = async () => { try { await API.cineCancel(); } catch (_) { /* ignore */ } };
-        } else {
-          $('recstatus').innerHTML = c.status === 'error' ? `cinematic failed: ${esc(c.error)}` : `✨ cinematic done: ${c.total} clip(s)`;
+          const what = here ? `${ic('sparkles')} Working on your cinematic video… ${c.total > 1 ? `clip ${c.done + 1}/${c.total} · ` : ''}${esc(stage)}${eta}`
+            : `${ic('sparkles')} ${mine >= 0 ? `Your clips here are ${mine === 0 ? 'next' : `#${mine + 1} in line`}. Now making` : 'Making'} a cinematic clip from another match… ${esc(stage)}${eta}`;
+          $('recstatus').innerHTML = `${what}${wait}
+            <button class="small ghost" id="cine-cancel" title="stop the clip being made now; the queue goes on">${ic('x')} Cancel</button>${queue.length ? `<button class="small ghost" id="cine-cancel-all" title="stop it and empty the queue">${ic('x')} Cancel all</button>` : ''}
+            <span class="progress live"><div style="width:${Math.max(2, pct)}%"></div></span>`;
+          $('cine-cancel').onclick = async () => { try { await API.cineCancel(false); } catch (_) { /* ignore */ } };
+          if ($('cine-cancel-all')) $('cine-cancel-all').onclick = async () => { try { await API.cineCancel(true); } catch (_) { /* ignore */ } };
+        } else if (here) {
+          $('recstatus').innerHTML = (c.status === 'error' ? `cinematic failed: ${esc(c.error)}` : `${ic('sparkles')} Cinematic done: ${c.total} clip(s)`) + wait;
+        } else if (cineSeen) {
+          $('recstatus').innerHTML = mine >= 0 ? `${ic('sparkles')} Your clips here are next in line${wait}` : '';
         }
-        if (c.status !== 'running') { clearInterval(cinePoll); cinePoll = null; await loadVideos(); renderHighlights(); }
-      }, 1000);
+        if (cineSeen && cineSeen.started === c.started && cineSeen.status === 'running' && c.status !== 'running' && here) {
+          await loadVideos(); renderHighlights();
+        }
+        cineSeen = { started: c.started, status: c.status };
+        if (c.status !== 'running' && !queue.length) { clearInterval(cinePoll); cinePoll = null; }
+      };
+      cinePoll = setInterval(tick, 1000); tick();
+  }
+  // ---- squad montage: every 3K+ of the squad in this match -> record what is missing -> cinematic -> one video ----
+  let squad = [], squadPoll = null;
+  function renderSquad() {
+    $('squad-members').innerHTML = squad.map((m, i) => `<div class="squad-row" data-i="${i}">
+      <input type="text" class="sq-name" value="${esc(m.name)}" placeholder="nickname" maxlength="40" aria-label="Nickname" autocomplete="off" spellcheck="false">
+      <input type="text" class="sq-sid" value="${esc(m.steamid)}" placeholder="Steam64 ID (optional)" maxlength="20" inputmode="numeric" aria-label="Steam64 ID" autocomplete="off" spellcheck="false">
+      <button class="small ghost sq-del" aria-label="Remove ${esc(m.name)}">${ic('x')}</button></div>`).join('') || '<span class="muted">nobody yet</span>';
+  }
+  const readSquad = () => [...document.querySelectorAll('#squad-members .squad-row')].map(r => ({ name: r.querySelector('.sq-name').value.trim(), steamid: r.querySelector('.sq-sid').value.trim() }));
+  async function squadPreview() {
+    try {
+      await API.saveSquad(readSquad());
+      const r = await API.squadPreview(id, $('squad-min').value);
+      const n = r.highlights.length, rec = r.highlights.filter(h => h.recorded).length;
+      $('squad-count').textContent = n ? `${n} play${n > 1 ? 's' : ''}${n - rec ? ` · ${n - rec} to record first` : ' · all recorded'}` : 'no plays like that in this match';
+      $('squad-list').innerHTML = r.highlights.map(h => `<li>${esc(h.description)} ${h.cinematic ? '<span class="badge ok">cinematic</span>' : h.recorded ? '<span class="badge">recorded</span>' : '<span class="badge">to record</span>'}</li>`).join('');
+      $('squad-go').disabled = !n; $('squad-settings').disabled = !n || !$('squad-cine').checked;
+    } catch (e) { $('squad-count').textContent = e.message; }
+  }
+  $('btn-squad').onclick = async () => {
+    $('squad-msg').textContent = ''; $('squad-modal').style.display = '';
+    try { const s = await API.squad(); squad = s.members; $('squad-team').value = s.team || ''; $('squad-intro').checked = s.intro !== false; } catch (_) { squad = []; }
+    renderSquad(); squadPreview();
+  };
+  $('squad-close').onclick = () => $('squad-modal').style.display = 'none';
+  $('squad-modal').addEventListener('click', (e) => {
+    if (e.target === $('squad-modal')) { $('squad-modal').style.display = 'none'; return; }
+    const del = e.target.closest('.sq-del'); if (del) { squad = readSquad(); squad.splice(+del.closest('.squad-row').dataset.i, 1); renderSquad(); squadPreview(); }
+  });
+  $('squad-members').addEventListener('change', squadPreview);
+  $('squad-min').addEventListener('change', squadPreview);
+  $('squad-add').onclick = () => { squad = readSquad(); squad.push({ name: '', steamid: '' }); renderSquad(); $('squad-members').querySelector('.squad-row:last-child .sq-name').focus(); };
+  ['squad-cine', 'squad-plain'].forEach(k => $(k).addEventListener('change', () => { $('squad-settings').disabled = !$('squad-cine').checked; }));
+  $('squad-settings').onclick = async () => { await API.saveSquad(readSquad()).catch(() => {}); $('squad-modal').style.display = 'none'; await $('btn-cine').onclick(); setCineMode('squad'); };
+  async function startSquad(extra) {
+    const r = await API.squadReel(id, { min_kills: +$('squad-min').value, ...extra });
+    toast(`${ic('users')} Making the squad montage: ${r.total} play${r.total > 1 ? 's' : ''}. Recording and the cinematic versions run first; progress shows above the highlights.`, 7000);
+    startSquadPoll();
+  }
+  $('squad-go').onclick = async () => {
+    $('squad-go').disabled = true; $('squad-msg').textContent = 'starting…';
+    try { await API.saveSquad(readSquad()); await API.saveTeam($('squad-team').value, $('squad-intro').checked); await startSquad({ cinematic: $('squad-cine').checked }); $('squad-modal').style.display = 'none'; $('squad-msg').textContent = ''; }
+    catch (e) { $('squad-msg').textContent = e.message; }
+    $('squad-go').disabled = false;
+  };
+  const fmtEta = (s) => s == null ? '' : s < 10 ? ' · almost done' : s < 60 ? ` · about ${Math.round(s / 5) * 5} s left` : ` · about ${Math.ceil(s / 60)} min left`;
+  function startSquadPoll() {
+    if (squadPoll) clearInterval(squadPoll);
+    let wasRunning = false;
+    const tick = async () => {
+      const s = await API.squadStatus().catch(() => null);
+      if (!s || s.status === 'idle' || s.demo_id !== id) { $('squadstatus').innerHTML = ''; clearInterval(squadPoll); squadPoll = null; return; }
+      const el = $('squadstatus'); el.classList.toggle('err', s.status === 'error');
+      const who = s.picked ? `${ic('film')} Montage` : `${ic('users')} Squad montage`;
+      if (s.status === 'running') {
+        wasRunning = true;
+        const step = { starting: 'starting', recording: 'recording the missing clips in CS2', cinematic: 'making the plays cinematic', joining: 'joining the plays and laying the song' }[s.stage] || s.stage;
+        const pct = Math.round(100 * (s.progress || 0));
+        el.innerHTML = `${who} (${s.total} plays): <b>${pct}%</b> · ${esc(step)}${s.detail ? ` · ${esc(s.detail)}` : ''}${fmtEta(s.eta)} <button class="small ghost" id="squad-cancel">${ic('stop')} Stop</button>
+          <span class="progress live"><div style="width:${Math.max(2, pct)}%"></div></span>`;
+        $('squad-cancel').onclick = async () => { await API.squadCancel().catch(() => {}); };
+        if (s.stage === 'recording' && !recPoll) recPoll = setInterval(pollRecord, 2000);
+        return;
+      }
+      clearInterval(squadPoll); squadPoll = null;
+      if (s.status === 'error') { el.innerHTML = `${who} stopped: ${esc(s.error)}`; return; }
+      const r = s.result || {};
+      el.innerHTML = `${who} ready: <b>${esc(r.description || '')}</b>${r.seconds ? ` (${r.seconds}s)` : ''} <button class="small primary" id="squad-watch">${ic('play')} Watch</button>`
+        + `${r.exported && !String(r.exported).startsWith('export failed') ? ` <span class="muted">saved to ${esc(r.exported)}</span>` : ''} <a class="small" href="/#highlights">open the Highlights tab</a>`;
+      $('squad-watch').onclick = () => openVideo(r);
+      await loadVideos(); renderHighlights();
+      if (wasRunning) {   // it just finished while this page was open
+        const t = toast(`${who} is ready: <b>${esc(r.description || '')}</b> <button class="small primary">${ic('play')} Watch now</button>`, 15000);
+        t.querySelector('button').onclick = () => { t.remove(); openVideo(r); };
+      }
+    };
+    squadPoll = setInterval(tick, 1500); tick();
   }
   $('btn-export').onclick = async () => {
     try { const r = await API.exportVideos(id); toast(`${r.count} file(s) saved to <b>${esc(r.folder)}</b>`, 6000); }
@@ -700,6 +741,8 @@
     await loadVideos();
     const st = await API.recordStatus().catch(() => null);
     if (st && (st.status === 'recording' || st.status === 'encoding' || st.status === 'preparing')) { recStatusText(st); recPoll = setInterval(pollRecord, 2000); }
+    else if (st?.cinematic && (st.cinematic.status === 'running' || st.cinematic.queued?.length)) startCinePoll();
+    API.squadStatus().then(s => { if (s.demo_id === id && s.status === 'running') startSquadPoll(); }).catch(() => {});
     renderHighlights();
   })();
 

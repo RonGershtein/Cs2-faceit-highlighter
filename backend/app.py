@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -213,6 +214,8 @@ def demo_highlights(demo_id: str, player: str | None = None, kills: bool = True)
 @app.delete("/api/demos/{demo_id}")
 def delete_demo(demo_id: str):
     _demo_or_404(demo_id)
+    if rec:
+        _rec().stamp_match(demo_id)   # the saved clips keep the map / date / score after the demo is gone
     ingest.delete(demo_id)
     return {"ok": True}
 
@@ -305,9 +308,10 @@ def record_status():
 
 
 @app.post("/api/cinematic/cancel")
-def cinematic_cancel():
-    """Abort the running cinematic job (kills its ffmpeg)."""
-    return _rec().cancel_cinematic()
+def cinematic_cancel(all: bool = False):
+    """Abort the running cinematic job (kills its ffmpeg); all=true also empties the queue behind it."""
+    cleared = _rec().clear_cinematic_queue() if all else 0
+    return {**_rec().cancel_cinematic(), "cleared": cleared}
 
 
 @app.post("/api/record/cancel")
@@ -328,16 +332,16 @@ def record_start(demo_id: str, body: RecordIn):
 @app.get("/api/demos/{demo_id}/videos")
 def list_videos(demo_id: str):
     _demo_or_404(demo_id)
-    return _rec().videos_index(demo_id) if rec else {"videos": [], "reel": None, "long": []}
+    return _rec().videos_index(demo_id) if rec else {"videos": [], "long": []}
 
 
 @app.post("/api/demos/{demo_id}/videos/export")
 def export_videos(demo_id: str):
-    """Copy all recorded clips (and the reel) of this demo to the export folder (Downloads by default)."""
+    """Copy all recorded clips of this demo to the export folder (Downloads by default)."""
     _demo_or_404(demo_id)
     idx = _rec().videos_index(demo_id)
-    folder = _rec().export_clips(demo_id, idx.get("videos", []), idx.get("reel"))
-    return {"ok": True, "folder": str(folder), "count": len(idx.get("videos", [])) + (1 if idx.get("reel") else 0)}
+    folder = _rec().export_clips(demo_id, idx.get("videos", []))
+    return {"ok": True, "folder": str(folder), "count": len(idx.get("videos", []))}
 
 
 class CineIn(BaseModel):
@@ -370,85 +374,199 @@ def make_cinematic_videos(demo_id: str, body: CineIn):
         raise HTTPException(400, "FFmpeg is not installed (Install HLAE + FFmpeg)")
     opts = cine.options(overrides=body.settings or {})
     if body.settings:
-        cfgmod.update(**{k: opts[k] for k in cine.OPTION_KEYS if k in body.settings})
+        cfgmod.update(**{k: opts[k] for k in cine.OPTION_KEYS if k in body.settings and k not in cine.PER_RUN_KEYS})
     try:
-        r.start_cinematic(demo_id, todo, opts)
+        job = r.start_cinematic(demo_id, todo, opts)
     except RuntimeError as e:
         raise HTTPException(409, str(e))
-    return {"ok": True, "count": len(todo), "music": [m.name for m in cine.music_files()], "music_dir": str(cine.MUSIC_DIR)}
+    return {"ok": True, "count": job["total"], "queued": job["queued"], "music": [m.name for m in cine.music_files()], "music_dir": str(cine.MUSIC_DIR)}
 
 
-# ---- full caster: commentary scripts per highlight -------------------------------------------
-
-def _highlight_or_404(demo_id: str, highlight_id: int) -> dict:
-    for h in db.get_highlights(demo_id):
-        if h["id"] == highlight_id:
-            return h
-    raise HTTPException(404, "no such highlight")
+@app.get("/api/clips")
+def saved_clips():
+    """Every saved video (clips, cinematic versions, long videos, montages) of every match, including deleted demos."""
+    return _rec().saved_clips() if rec else []
 
 
-def _clip_ticks(demo_id: str, h: dict) -> tuple[int, int]:
-    """The recorded clip's tick range for a highlight (falls back to the highlight itself)."""
-    for v in _rec().videos_index(demo_id).get("videos", []):
-        if v["highlight_id"] == h["id"]:
-            return int(v["start_tick"]), int(v.get("end_tick") or h["end_tick"])
-    return int(h["start_tick"]), int(h["end_tick"])
+@app.delete("/api/clips/{demo_id}/{name}")
+def delete_saved_clip(demo_id: str, name: str):
+    if not (re.fullmatch(r"[0-9a-f]{8,64}", demo_id) or demo_id == "montages") or "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(400, "bad name")
+    try:
+        return _rec().delete_saved(demo_id, name)
+    except RuntimeError as e:
+        raise HTTPException(404, str(e))
 
 
-@app.get("/api/demos/{demo_id}/highlights/{highlight_id}/commentary")
-def get_commentary(demo_id: str, highlight_id: int):
-    """The saved script for a highlight, or a freshly written one (saved=false)."""
-    from . import caster, cinematic as cine
-
-    _demo_or_404(demo_id)
-    h = _highlight_or_404(demo_id, highlight_id)
-    saved = cine.load_script(demo_id, highlight_id)
-    if saved:
-        return {"lines": saved, "saved": True, "duo": any(l.get("who") == 2 for l in saved)}
-    a, b = _clip_ticks(demo_id, h)
-    duo = bool(cfgmod.load().get("cine_tts_voice2"))
-    return {"lines": caster.draft(demo_id, h, a, b, duo=duo), "saved": False, "duo": duo}
+class MontageIn(BaseModel):
+    clips: list[dict]   # [{"demo_id", "file"}] in play order
+    title: str = ""
+    cinematic: bool = False        # every play made cinematic, one song over the whole montage (background job)
+    music: str | None = None       # that song ("" = random); not saved as the default
 
 
-class CommentaryDraftIn(BaseModel):
-    duo: bool = True
+@app.post("/api/clips/montage")
+def make_montage(body: MontageIn):
+    """Join saved clips of any matches into one video (synchronous; a few seconds to a few minutes). cinematic=True
+    starts a background job instead; poll /api/squad/status (demo_id "montages")."""
+    try:
+        if body.cinematic:
+            from . import cinematic as cine
+            overrides = cine.options(overrides={"cine_music": body.music}) if body.music is not None else None
+            return _rec().start_library_montage(body.clips, body.title, overrides)
+        return _rec().compile_montage(body.clips, body.title)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
 
 
-@app.post("/api/demos/{demo_id}/highlights/{highlight_id}/commentary/draft")
-def draft_commentary(demo_id: str, highlight_id: int, body: CommentaryDraftIn):
-    """Write a new script (random phrasing) without saving it."""
-    from . import caster
-
-    _demo_or_404(demo_id)
-    h = _highlight_or_404(demo_id, highlight_id)
-    a, b = _clip_ticks(demo_id, h)
-    return {"lines": caster.draft(demo_id, h, a, b, duo=body.duo), "saved": False, "duo": body.duo}
+class RecapIn(BaseModel):
+    date_from: str                 # YYYY-MM-DD, both days included
+    date_to: str
+    min_kills: int = 3
+    best_of: int | None = None     # keep the N biggest plays
+    title: str = ""
 
 
-class CommentaryIn(BaseModel):
-    lines: list[dict]
+@app.get("/api/clips/recap")
+def recap_preview(date_from: str, date_to: str, min_kills: int = 3, best_of: int | None = None):
+    """What a recap of that period would hold (and the squad plays there that are not recorded yet)."""
+    return _rec().recap_preview(date_from, date_to, max(2, min(5, min_kills)), best_of or None)
 
 
-@app.put("/api/demos/{demo_id}/highlights/{highlight_id}/commentary")
-def save_commentary(demo_id: str, highlight_id: int, body: CommentaryIn):
-    from . import caster, cinematic as cine
-
-    _demo_or_404(demo_id)
-    _highlight_or_404(demo_id, highlight_id)
-    lines = caster.clean_script(body.lines)
-    p = cine.script_path(demo_id, highlight_id)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"lines": lines}, indent=1), encoding="utf-8")
-    return {"ok": True, "lines": lines}
+@app.post("/api/clips/recap")
+def make_recap(body: RecapIn):
+    """The squad's plays of a period in one video, one song per match; background job, poll /api/squad/status."""
+    try:
+        return _rec().start_recap(body.date_from, body.date_to, max(2, min(5, body.min_kills)), body.best_of or None, body.title)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
 
 
-@app.delete("/api/demos/{demo_id}/highlights/{highlight_id}/commentary")
-def delete_commentary(demo_id: str, highlight_id: int):
+# ---- squad montage ---------------------------------------------------------------------------------
+
+@app.get("/api/squad")
+def get_squad():
+    return {"members": _rec().load_squad(), **_rec().load_team()}
+
+
+class SquadIn(BaseModel):
+    members: list[dict] | None = None
+    team: str | None = None        # the name on the montage intro card
+    intro: bool | None = None      # montages start with the intro card
+
+
+@app.put("/api/squad")
+def put_squad(body: SquadIn):
+    return {"members": _rec().save_squad(body.members, body.team, body.intro), **_rec().load_team()}
+
+
+class SquadPlayersIn(BaseModel):
+    members: list[dict]            # [{"name", "steamid", "card_name"}]
+
+
+@app.get("/api/squad/players")
+def get_squad_players():
+    """The Squad tab: members, the name each one gets on the video's player card, and their photo."""
+    return {"members": _rec().squad_players(), **_rec().load_team()}
+
+
+@app.put("/api/squad/players")
+def put_squad_players(body: SquadPlayersIn):
+    return {"members": _rec().save_squad_players(body.members), **_rec().load_team()}
+
+
+@app.post("/api/squad/players/photo")
+async def upload_player_photo(file: UploadFile = File(...), steamid: str = Form(""), name: str = Form("")):
+    """A member's photo for the player card (the tab sends a square crop)."""
+    try:
+        f = _rec().save_player_photo(steamid, name, await file.read(), Path(file.filename or "").suffix or ".png")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    return {"photo": f}
+
+
+@app.delete("/api/squad/players/photo")
+def delete_player_photo(steamid: str = "", name: str = ""):
+    _rec().remove_player_photo(steamid, name)
+    return {"ok": True}
+
+
+@app.get("/api/players/photo/{name}")
+def player_photo(name: str):
     from . import cinematic as cine
+    p = cine.PLAYERS_DIR / Path(name).name
+    if not p.is_file() or p.suffix.lower() not in cine.PHOTO_EXT:
+        raise HTTPException(404, "no such photo")
+    return FileResponse(p, headers={"Cache-Control": "no-cache"})
 
-    p = cine.script_path(demo_id, highlight_id)
-    if p.exists():
-        p.unlink()
+
+class MultiSquadIn(BaseModel):
+    demo_ids: list[str]
+    min_kills: int = 3
+    title: str = ""
+    cinematic: bool = True         # False: the recorded clips joined as they are, no song
+
+
+@app.post("/api/squad/multi/preview")
+def multi_squad_preview(body: MultiSquadIn):
+    """Per selected match: the squad plays that would go in, and how many still need recording."""
+    return {"matches": _rec().multi_squad_plan(body.demo_ids, max(2, min(5, body.min_kills)))}
+
+
+@app.post("/api/squad/multi")
+def multi_squad(body: MultiSquadIn):
+    """One squad montage of several matches (records what is missing first); poll /api/squad/status."""
+    try:
+        return _rec().start_multi_squad(body.demo_ids, max(2, min(5, body.min_kills)), body.title, body.cinematic)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/api/demos/{demo_id}/squad")
+def squad_preview(demo_id: str, min_kills: int = 3):
+    """The squad's highlights in this match that would go into the montage."""
+    _demo_or_404(demo_id)
+    r = _rec()
+    have = {v["highlight_id"]: v for v in r.videos_index(demo_id).get("videos", [])}
+    hs = r.squad_highlights(db.get_highlights(demo_id), r.load_squad(), min_kills)
+    return {"highlights": [{"id": h["id"], "description": h["description"], "player_name": h.get("player_name"),
+                            "recorded": h["id"] in have, "cinematic": bool(have.get(h["id"], {}).get("cine"))} for h in hs]}
+
+
+class SquadReelIn(BaseModel):
+    min_kills: int = 3
+    cinematic: bool = True
+    settings: dict | None = None   # cine_* options from the Cinematic dialog; given -> every clip is remade with them
+    highlight_ids: list[int] | None = None   # plays picked on the match page instead of the squad's min_kills+ plays
+    music: str | None = None       # song for this montage only ("" = random); not saved as the default
+
+
+@app.post("/api/demos/{demo_id}/squad")
+def squad_reel(demo_id: str, body: SquadReelIn):
+    _demo_or_404(demo_id)
+    overrides = None
+    if body.cinematic and body.settings:
+        from . import cinematic as cine
+        overrides = cine.options(overrides=body.settings)
+        cfgmod.update(**{k: overrides[k] for k in cine.OPTION_KEYS if k in body.settings and k not in cine.PER_RUN_KEYS})
+    if body.cinematic and body.music is not None:
+        from . import cinematic as cine
+        overrides = cine.options(overrides={**(overrides or {}), "cine_music": body.music})
+    try:
+        return _rec().start_squad_reel(demo_id, max(2, min(5, body.min_kills)), body.cinematic, overrides,
+                                       body.highlight_ids)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/api/squad/status")
+def squad_status():
+    return (_rec().squad_status() if rec else None) or {"status": "idle"}
+
+
+@app.post("/api/squad/cancel")
+def squad_cancel():
+    _rec().cancel_squad_reel()
     return {"ok": True}
 
 
@@ -533,34 +651,6 @@ def list_voice():
     from . import voice
 
     return voice.listing()
-
-
-class TtsIn(BaseModel):
-    text: str
-    slot: str = "final"
-    sub: str = ""          # situation sub-folder: highlight type for start/final, kill number for kill
-    voice: str = ""        # TTS voice id (see voice.TTS_VOICES); empty -> the saved cine_tts_voice
-    fx: bool | None = None  # stadium treatment; None -> the saved cine_tts_fx
-
-
-@app.post("/api/voice/tts")
-def voice_tts(body: TtsIn):
-    """Generate a voice line from text with the Windows voice."""
-    from . import voice
-
-    if body.slot not in voice.SLOTS:
-        raise HTTPException(400, "unknown slot")
-    cfg = cfgmod.load()
-    vid = body.voice or str(cfg.get("cine_tts_voice") or "")
-    fx = bool(cfg.get("cine_tts_fx", True)) if body.fx is None else bool(body.fx)
-    changes = {k: v for k, v in (("cine_tts_voice", body.voice or None), ("cine_tts_fx", body.fx)) if v is not None}
-    if changes:
-        cfgmod.update(**changes)
-    try:
-        p = voice.tts(body.text, body.slot, sub=body.sub, voice_id=vid, ffmpeg=_rec().FFMPEG_EXE, fx=fx)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(400, str(e))
-    return {"ok": True, "file": (body.sub + "/" if body.sub else "") + p.name, "slot": body.slot}
 
 
 @app.post("/api/voice/{slot}")
