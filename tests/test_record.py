@@ -893,12 +893,12 @@ def test_swoop_lands_on_the_players_eyes():
 
 def test_build_cfg_schedules_the_swoop():
     sw = {0: {"from": 4700, "to": 4872, "xml": "C:/x/raw/swoop_0.xml"}}
-    text, seqs = build_cfg([hl(0, 4600, 5600)], Path("C:/x/raw"), {}, {"record_swoop_spec": "spec_mode 5"}, 64, swoops=sw)
+    text, seqs = build_cfg([hl(0, 4600, 5600)], Path("C:/x/raw"), {}, {"record_swoop_spec": "spec_mode 3"}, 64, swoops=sw)
     assert "mirv_cmd addAtTick 4700 exec cs2watcher_rec_sw_1" in text and "mirv_cmd addAtTick 4872 hl_swe1" in text
     sc = seqs[0]["swoop_cfg"]
     assert sc["name"] == "cs2watcher_rec_sw_1"
     # the path quoted in a cfg of its own: the console would split C:/... at the colon
-    assert 'mirv_campath load "C:/x/raw/swoop_0.xml"' in sc["text"] and sc["text"].startswith("spec_mode 5\r\nmirv_campath clear")
+    assert 'mirv_campath load "C:/x/raw/swoop_0.xml"' in sc["text"] and sc["text"].startswith("spec_mode 3\r\nmirv_campath clear")
     assert "mirv_campath load" not in text
     assert 'alias hl_swe1 "mirv_campath enabled 0; spec_mode 1;' in text
     assert seqs[0]["swoop"] == {"from": 1.562, "to": 4.25}

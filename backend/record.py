@@ -459,7 +459,7 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
             # quotes cannot go inside an alias
             ca, ce = f"{CFG_NAME}_sw{tag}_{i}", f"hl{tag}_swe{i}"
             swoop_cfg = {"name": ca, "text": "\r\n".join([
-                cfg.get("record_swoop_spec", "spec_mode 5"), "mirv_campath clear",
+                cfg.get("record_swoop_spec", "spec_mode 3"), "mirv_campath clear",
                 f'mirv_campath load "{_fwd(Path(sw["xml"]))}"', "mirv_campath edit start", "mirv_campath enabled 1",
                 f'echo "[cs2watcher] swoop {i}"']) + "\r\n"}
             lines += [
