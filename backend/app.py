@@ -96,6 +96,26 @@ class PickIn(BaseModel):
     title: str | None = None
 
 
+@app.get("/api/storage")
+def storage_report():
+    """Every place the app keeps files and how big it is (Settings → Storage)."""
+    from . import storage
+    return storage.report()
+
+
+class ClearIn(BaseModel):
+    item: str
+
+
+@app.post("/api/storage/clear")
+def storage_clear(body: ClearIn):
+    from . import storage
+    try:
+        return storage.clear(body.item)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
 @app.post("/api/pick-folder")
 def pick_folder(body: PickIn):
     """Open a native folder dialog on the machine running the server and return the chosen path."""

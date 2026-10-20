@@ -203,6 +203,11 @@
   <div class="field"><label for="cfg-export">Save clips to</label><div class="row"><input type="text" id="cfg-export" name="export-folder" autocomplete="off" spellcheck="false" placeholder=""><button class="browse" data-for="cfg-export" data-title="Where should recorded clips be saved?">Browse…</button></div><div class="hint" id="cfg-export-hint">Recorded highlights, long videos and montages are copied here, one subfolder per match.</div></div>
   <div class="field"><label for="cfg-cs2">CS2 install path (optional)</label><div class="row"><input type="text" id="cfg-cs2" name="cs2-path" autocomplete="off" spellcheck="false" placeholder="Auto-detected from Steam…"><button class="browse" data-for="cfg-cs2" data-title="Select the 'Counter-Strike Global Offensive' folder">Browse…</button></div></div>
   <div class="modal-foot"><span class="muted" id="cfg-msg" role="status" aria-live="polite"></span><button class="primary" id="cfg-save">Save</button></div>
+  <div class="st" aria-labelledby="st-title">
+    <div class="sq-label" id="st-title">Storage <span class="sq-sum" id="st-total"></span></div>
+    <div class="st-list" id="st-list"><div class="sq-empty">Measuring…</div></div>
+    <p class="sq-note" id="st-msg" role="status" aria-live="polite"></p>
+  </div>
 </div></div>
 <script src="/js/api.js"></script>
 <script src="/js/library.js"></script>

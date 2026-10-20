@@ -256,6 +256,7 @@
     modal.style.display = '';
     $('cfg-steamid').value = config.my_steamid || ''; $('cfg-watch').value = config.watch_folder || ''; $('cfg-cs2').value = config.cs2_path || '';
     $('cfg-export').value = config.export_folder || ''; $('cfg-export').placeholder = config.default_export_folder || '';
+    renderStorage();
   };
   modal.addEventListener('click', async (e) => {
     const b = e.target.closest('button.browse'); if (!b) return;
@@ -266,6 +267,28 @@
       if (r.path) input.value = r.path;
     } catch (err) { $('cfg-msg').textContent = err.message; }
     b.disabled = false; b.textContent = 'Browse…';
+  });
+  // ---- settings: where the app keeps files, and clearing what loses nothing ------------------------------------
+  const fmtBytes = (b) => b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b > 0 ? `${Math.max(1, Math.round(b / 1e3))} KB` : 'empty';
+  async function renderStorage() {
+    try {
+      const r = await API.storage();
+      $('st-total').textContent = `${fmtBytes(r.total)} in all`;
+      $('st-msg').textContent = r.busy ? `Clearing waits: ${r.busy}.` : '';
+      $('st-list').innerHTML = r.items.map(i => `<div class="st-row${i.bytes ? '' : ' is-empty'}"><span class="lab">${esc(i.label)}</span><span class="size">${fmtBytes(i.bytes)}</span>`
+        + (i.clear ? `<button class="small" data-clear="${esc(i.id)}" data-label="${esc(i.label)}" data-size="${fmtBytes(i.bytes)}" ${!i.bytes || r.busy ? 'disabled' : ''}>Clear</button>` : '<span></span>')
+        + `<span class="note">${esc(i.note)}</span><span class="path" title="${esc(i.path)}">${esc(i.path)}</span></div>`).join('');
+    } catch (e) { $('st-list').innerHTML = `<div class="sq-empty">${esc(e.message)}</div>`; }
+  }
+  $('st-list').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-clear]'); if (!b) return;
+    if (!confirm(`Clear "${b.dataset.label}" (${b.dataset.size})?`)) return;
+    b.disabled = true; b.textContent = 'Clearing…';
+    try {
+      const r = await API.clearStorage(b.dataset.clear);
+      await renderStorage();
+      $('st-msg').textContent = `Freed ${fmtBytes(r.freed)} (${r.files} file${r.files === 1 ? '' : 's'}).`;
+    } catch (err) { $('st-msg').textContent = err.message; b.disabled = false; b.textContent = 'Clear'; }
   });
   $('settings-close').onclick = () => modal.style.display = 'none';
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });

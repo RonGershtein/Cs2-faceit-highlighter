@@ -176,6 +176,12 @@ highlights you ticked (those are remade). Takes ~10-20 s per clip
   folder. Untick "play caster voice lines" for a clean clip. The clip runs on until the last
   line has finished.
 
+### Storage
+**Settings → Storage** lists every place the app keeps files and how big it is. **Clear** empties the ones that lose
+nothing for good: the copies in your clips folder (only files the app named, in the folders it made), the cache of
+rendered montage plays, the demo copies in the CS2 folder and leftover raw recordings. It waits while CS2 is open or
+something is recording or rendering. Clips and montages are deleted in the Highlights tab, matches with their ✕.
+
 ### Config file
 `config.toml` is created next to `start.bat` on first run. Most of it is editable from Settings; the rest:
 

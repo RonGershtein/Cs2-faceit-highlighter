@@ -72,6 +72,8 @@ const API = (() => {
     getConfig: () => json('/api/config'),
     pickFolder: (start, title) => post('/api/pick-folder', { start, title }),
     setConfig: (c) => post('/api/config', c),
+    storage: () => json('/api/storage'),
+    clearStorage: (item) => post('/api/storage/clear', { item }),
     upload(file, onProgress) {
       return new Promise((resolve, reject) => {
         const fd = new FormData();
