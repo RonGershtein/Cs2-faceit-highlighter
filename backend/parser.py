@@ -562,3 +562,27 @@ def _compute_stats(players: list[dict], rounds: list[dict], kills: list[dict], h
         out.append(s)
     out.sort(key=lambda s: s["rating"], reverse=True)
     return out
+
+
+def eye_views(dem: Path, wanted: list[tuple[int, str]]) -> dict[tuple[int, str], dict]:
+    """{(tick, steamid): {"x", "y", "z" (the eyes), "pitch", "yaw"}} read straight from the demo: where a player is
+    and where he looks at those ticks (the end of a third-person swoop has to land exactly there). Players or ticks
+    the demo does not have are left out."""
+    if not wanted:
+        return {}
+    parser = DemoParser(str(dem))
+    ticks = sorted({int(t) for t, _ in wanted})
+    try:
+        df = parser.parse_ticks(["X", "Y", "Z", "pitch", "yaw", "is_alive", "duck_amount"], ticks=ticks)
+    except Exception:  # noqa: BLE001 - an older demoparser without duck_amount
+        df = parser.parse_ticks(["X", "Y", "Z", "pitch", "yaw", "is_alive"], ticks=ticks)
+    out: dict[tuple[int, str], dict] = {}
+    want = {(int(t), str(sid)) for t, sid in wanted}
+    for row in df.to_dict("records"):
+        key = (int(row["tick"]), str(row["steamid"]))
+        if key not in want:
+            continue
+        duck = float(row.get("duck_amount") or 0.0)
+        out[key] = {"x": float(row["X"]), "y": float(row["Y"]), "z": float(row["Z"]) + 64.06 - 18.02 * duck,
+                    "pitch": float(row["pitch"]), "yaw": float(row["yaw"])}
+    return out

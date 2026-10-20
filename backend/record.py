@@ -313,17 +313,83 @@ def resolve_encoder(force: bool = False) -> str:
     return _auto_encoder
 
 
+SWOOP_SECONDS = 1.8   # the third-person swoop into the player's eyes
+SWOOP_LEAD = 2.0      # it lands this long before the play's first kill (where the cinematic play starts in first person)
+
+
+def swoop_points(eye: dict, seconds: float = SWOOP_SECONDS) -> list[dict]:
+    """Camera keyframes {"t", "x", "y", "z", "pitch", "yaw"} of a swoop that starts behind and above the player,
+    looking down at him, and curves in to land exactly on his eyes and his view. Pure function; unit-tested."""
+    import math
+    yaw = math.radians(eye["yaw"])
+    fx, fy = math.cos(yaw), math.sin(yaw)
+
+    def at(back: float, up: float, t: float, pitch: float) -> dict:
+        return {"t": round(t, 3), "x": round(eye["x"] - fx * back, 2), "y": round(eye["y"] - fy * back, 2),
+                "z": round(eye["z"] + up, 2), "pitch": round(pitch, 2), "yaw": round(eye["yaw"], 2)}
+    return [at(150.0, 110.0, 0.0, 34.0),
+            at(70.0, 45.0, seconds * 0.55, 20.0 + 0.4 * eye["pitch"]),
+            at(0.0, 0.0, seconds, eye["pitch"])]
+
+
+def campath_xml(points: list[dict], fov: float = 90.0) -> str:
+    """HLAE's campath file (mirv_campath load): <campath><points><p t x y z fov rx(roll) ry(pitch) rz(yaw)/>.
+    Pure function; unit-tested."""
+    rows = "".join(f'<p t="{p["t"]}" x="{p["x"]}" y="{p["y"]}" z="{p["z"]}" fov="{fov:g}" rx="0" ry="{p["pitch"]}" '
+                   f'rz="{p["yaw"]}"/>' for p in points)
+    return f'<?xml version="1.0"?><campath><points>{rows}</points></campath>'
+
+
+def prepare_swoops(hs: list[dict], dem: Path, raw_dir: Path, tickrate: int) -> dict:
+    """{highlight id: {"from", "to", "xml"}}: for every play with room for it, the swoop's ticks and its campath file
+    (written to raw_dir), landing on the player's eyes as the demo has them. Every play gets one; the montage
+    decides which ones are shown. {} when the demo cannot be read (the recording goes on without swoops)."""
+    plans = {h["id"]: (plan_swoop(h, int(h["start_tick"]), tickrate), str(h["player"])) for h in hs}
+    plans = {k: v for k, v in plans.items() if v[0]}
+    if not plans:
+        return {}
+    try:
+        from .parser import eye_views
+        eyes = eye_views(dem, [(pl["to"], sid) for pl, sid in plans.values()])
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        return {}
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out = {}
+    for hid, (pl, sid) in plans.items():
+        eye = eyes.get((pl["to"], sid))
+        if not eye:
+            continue
+        xml = raw_dir / f"swoop_{hid}.xml"
+        xml.write_text(campath_xml(swoop_points(eye, (pl["to"] - pl["from"]) / tickrate)), encoding="utf-8")
+        out[hid] = {**pl, "xml": str(xml)}
+    return out
+
+
+def plan_swoop(h: dict, start: int, tickrate: int) -> dict | None:
+    """{"from", "to"} ticks of a play's swoop: it lands SWOOP_LEAD before the first kill and must lie inside the
+    recording (from `start`). None when there is no room. Pure function; unit-tested."""
+    kills = sorted(h.get("kills") or [])
+    if not kills:
+        return None
+    to = int(kills[0] - SWOOP_LEAD * tickrate)
+    frm = int(to - SWOOP_SECONDS * tickrate)
+    return {"from": frm, "to": to} if frm >= start + 4 else None
+
+
 PREROLL_TIMESCALE = 4   # record_fast_preroll: how fast the unrecorded 2 s before each highlight play
 
 
 def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, tickrate: int,
               demo_id_for_cfg: str = "demo", part: int = 1, next_cfg: str | None = None, playdemo: str | None = None,
-              demoui: bool = True) -> tuple[str, list[dict]]:
+              demoui: bool = True, swoops: dict | None = None) -> tuple[str, list[dict]]:
     """Return (cfg text, sequences). Pure function; unit-tested.
     One CS2 session can record several demos: part N > 1 is exec'd by the previous demo's cfg once its last
     highlight is recorded; it clears the schedule, schedules its own highlights and loads its demo (`playdemo`,
     HLAE forgets the old demo's ticks on level load). next_cfg: exec that instead of quitting at the end.
-    demoui: toggle the demo playback panel off at this demo's first highlight."""
+    demoui: toggle the demo playback panel off at this demo's first highlight.
+    swoops: {highlight id: {"from", "to" (ticks), "xml": campath file}} - the camera leaves the player's eyes for a
+    third-person swoop (HLAE's mirv_campath) that lands back in them at "to"."""
     fps = int(cfg.get("record_fps", 60))
     enc = encoder_args(cfg)
     fast_preroll = bool(cfg.get("record_fast_preroll", False))
@@ -382,13 +448,25 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
             # last spectator switch and the recording start
             lines += [f"mirv_cmd addAtTick {setup + 1} demo_timescale {PREROLL_TIMESCALE}",
                       f"mirv_cmd addAtTick {max(setup + 2, start - 8 - max(16, tickrate // 4))} demo_timescale 1"]
+        sw = (swoops or {}).get(h["id"])
+        swoop = None
+        if sw and sw["from"] >= start + 4 and sw["to"] < end:
+            ca, ce = f"hl{tag}_sw{i}", f"hl{tag}_swe{i}"
+            lines += [
+                f'alias {ca} "{cfg.get("record_swoop_spec", "spec_mode 5")}; mirv_campath clear; '
+                f'mirv_campath load {_fwd(Path(sw["xml"]))}; mirv_campath edit start; mirv_campath enabled 1"',
+                f'alias {ce} "mirv_campath enabled 0; {spec}"',
+                f"mirv_cmd addAtTick {sw['from']} {ca}",
+                f"mirv_cmd addAtTick {sw['to']} {ce}",
+            ]
+            swoop = {"from": round((sw["from"] - start) / tickrate, 3), "to": round((sw["to"] - start) / tickrate, 3)}
         lines += [
             f"mirv_cmd addAtTick {start} mirv_streams record start",
             f"mirv_cmd addAtTick {end} mirv_streams record end",
         ]
         seqs.append({"n": i, "highlight_id": h["id"], "name": name, "folder": folder, "rel": rel, "start": start, "end": end,
                      "type": h["type"], "round": h["round"], "player": player, "description": h["description"],
-                     "player_steamid": str(h["player"])})
+                     "player_steamid": str(h["player"]), **({"swoop": swoop} if swoop else {})})
         prev_end = end
     if next_cfg:
         lines.append(f"mirv_cmd addAtTick {prev_end + 2 * tickrate} exec {next_cfg}")   # as long as the quit: HLAE finishes the file
@@ -517,9 +595,12 @@ def is_recorded(v: dict) -> bool:
 
 def planned_entry(s: dict, tickrate: int) -> dict:
     """The videos.json entry a sequence will get once recorded (without "size" and "audio"). Pure function."""
-    return {"highlight_id": s["highlight_id"], "file": f"{s['name']}.mp4", "type": s["type"], "round": s["round"],
-            "player": s["player"], "player_steamid": s["player_steamid"], "description": s["description"],
-            "start_tick": s["start"], "end_tick": s["end"], "seconds": round((s["end"] - s["start"]) / tickrate, 1)}
+    out = {"highlight_id": s["highlight_id"], "file": f"{s['name']}.mp4", "type": s["type"], "round": s["round"],
+           "player": s["player"], "player_steamid": s["player_steamid"], "description": s["description"],
+           "start_tick": s["start"], "end_tick": s["end"], "seconds": round((s["end"] - s["start"]) / tickrate, 1)}
+    if s.get("swoop"):
+        out["swoop"] = s["swoop"]   # seconds into the clip: the third-person shot, back in his eyes at "to"
+    return out
 
 
 def long_video_name(n: int, cinematic: bool, when: float | None = None) -> str:
@@ -978,6 +1059,7 @@ def plan_sessions(parts: list[dict], cfg: dict) -> list[list[dict]]:
         if cur:
             prev = cur[-1]
             text, _ = build_cfg(p["hs"], p["raw_dir"], p["names"], cfg, p["tickrate"], p["demo_id"], part=len(cur) + 1,
+                                swoops=p.get("swoops"),
                                 playdemo=p["dem_name"], demoui=cfg.get("record_demoui_each_demo", True))
             handover = prev["last_end"] + 2 * prev["tickrate"]
             if can_chain(handover, cfg_ticks(text), p["tickrate"]):
@@ -989,6 +1071,7 @@ def plan_sessions(parts: list[dict], cfg: dict) -> list[list[dict]]:
             p["cfg_name"] = CFG_NAME if j == 0 else f"{CFG_NAME}_{j + 1}"
             nxt = f"{CFG_NAME}_{j + 2}" if j + 1 < len(sess) else None
             p["cfg_text"], p["seqs"] = build_cfg(p["hs"], p["raw_dir"], p["names"], cfg, p["tickrate"], p["demo_id"],
+                                                 swoops=p.get("swoops"),
                                                  part=j + 1, next_cfg=nxt, playdemo=p["dem_name"] if j else None,
                                                  demoui=j == 0 or cfg.get("record_demoui_each_demo", True))
     return sessions
@@ -1070,7 +1153,10 @@ def _run_session(todo: list[tuple[str, list[dict]]], opts: dict) -> None:
             p = {"demo_id": demo_id, "hs": hs, "dem": dem, "dem_name": dem.name, "raw_dir": raw_dir, "take_root": take_root,
                  "names": {pl["steamid"]: pl["name"] for pl in meta["players"]}, "tickrate": int(meta.get("tickrate", 64)),
                  "out_dir": VIDEOS_DIR / demo_id}
-            _, seqs = build_cfg(hs, raw_dir, p["names"], cfg, p["tickrate"], demo_id)
+            if cfg.get("record_swoop", True):
+                _set(stage="planning the third-person shots")
+                p["swoops"] = prepare_swoops(hs, dem, raw_dir, p["tickrate"])
+            _, seqs = build_cfg(hs, raw_dir, p["names"], cfg, p["tickrate"], demo_id, swoops=p.get("swoops"))
             p["last_end"] = seqs[-1]["end"]
             parts.append(p)
         sessions = plan_sessions(parts, cfg)
@@ -1783,7 +1869,8 @@ def pre_render_while_recording(predict, overrides: dict | None, intro: bool, reo
                     pp = per_play[i]
                     cine.cinematic_for_video(d, cur, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides, montage_piece=True,
                                              slow=pp.get("slow", True), lead=pp.get("lead"), low_priority=True,
-                                             trim=pp.get("trim", 0.0), t_in=pp.get("t_in"), t_out=pp.get("t_out"))
+                                             trim=pp.get("trim", 0.0), t_in=pp.get("t_in"), t_out=pp.get("t_out"),
+                                             swoop=bool(pp.get("swoop")))
                     with lock:
                         _squad_job["prerendered"] = int(_squad_job.get("prerendered") or 0) + 1
             n = max(1, min(2, int(cfg.get("render_parallel", 3) or 1)))
@@ -1923,6 +2010,32 @@ def plan_drop_slowmo(variants: list[list[dict]], start: float, drops: list[float
     return chosen, offset
 
 
+def play_variants(cine, demo_id: str, v: dict, opts0: dict, ffprobe: Path) -> list[dict]:
+    """The ways a montage play can be rendered, with their timing (clip_timing): slow motion on its kill or not, a
+    little more or less footage before its first kill ("lead"), and, when it was recorded with a third-person swoop,
+    opening on the swoop ("swoop": True; its footage is skipped in every other version). The default first, a
+    normal-speed one among them."""
+    kills = cine.video_kills(demo_id, v)
+    dur = float(v.get("seconds") or 0) or cine.probe_video(ffprobe, VIDEOS_DIR / demo_id / v["file"])["duration"]
+    base_lead = float(opts0.get("cine_trim_lead", 2.0))
+    sw = v.get("swoop")
+    base = {**opts0, "_skip_before": float(sw["to"])} if sw else opts0
+    vs = [{"slow": True, "lead": None, "swoop": False, **cine.clip_timing(kills, dur, base)},
+          {"slow": False, "lead": None, "swoop": False, **cine.clip_timing(kills, dur, {**base, "_no_slow": True})}]
+    if kills:   # the same play with a little more or less footage before its first kill
+        for k in range(3, 17):
+            lead = k * 0.25
+            if abs(lead - base_lead) > 0.01 and kills[0] - lead >= (float(sw["to"]) if sw else 0.0):
+                vs.append({"slow": True, "lead": lead, "swoop": False, **cine.clip_timing(kills, dur, {**base, "_lead": lead})})
+    if sw:
+        on = {**opts0, "_swoop": (float(sw["from"]), float(sw["to"]))}
+        vs += [{"slow": True, "lead": None, "swoop": True, **cine.clip_timing(kills, dur, on)},
+               {"slow": False, "lead": None, "swoop": True, **cine.clip_timing(kills, dur, {**on, "_no_slow": True})}]
+    if vs[0]["hit"] is None:   # a play without a kill inside the clip cannot carry a drop
+        vs = [dict(vs[1])] + vs[1:]
+    return vs
+
+
 def montage_reorders(reorder: bool | None) -> bool:
     """Whether a montage puts its plays in the order that fits the song best (config montage_order = "song")."""
     return str(load_config().get("montage_order", "song")) == "song" if reorder is None else bool(reorder)
@@ -1969,21 +2082,7 @@ def _plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: 
     song = cine.pick_music(opts0)
     if not song:
         return plan
-    variants = []
-    for demo_id, v in plays:
-        kills = cine.video_kills(demo_id, v)
-        dur = float(v.get("seconds") or 0) or cine.probe_video(ffprobe, VIDEOS_DIR / demo_id / v["file"])["duration"]
-        base_lead = float(opts0.get("cine_trim_lead", 2.0))
-        vs = [{"slow": True, "lead": None, **cine.clip_timing(kills, dur, opts0)},
-              {"slow": False, "lead": None, **cine.clip_timing(kills, dur, {**opts0, "_no_slow": True})}]
-        if kills:   # the same play with a little more or less footage before its first kill
-            for k in range(3, 17):
-                lead = k * 0.25
-                if abs(lead - base_lead) > 0.01 and kills[0] - lead >= 0:
-                    vs.append({"slow": True, "lead": lead, **cine.clip_timing(kills, dur, {**opts0, "_lead": lead})})
-        if vs[0]["hit"] is None:   # a play without a kill inside the clip cannot carry a drop
-            vs = [dict(vs[1])] + vs[1:]
-        variants.append(vs)
+    variants = [play_variants(cine, demo_id, v, opts0, ffprobe) for demo_id, v in plays]
     curve = cine.loudness_curve(FFMPEG_EXE, song)
     drops = cine.find_drops(curve)
     start = cine.INTRO_SECONDS if intro else 0.0
@@ -2035,7 +2134,8 @@ def _plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: 
             hits += 1
         t += c["seconds"]
     plan.update({"song": song, "offset": offset, "follow": used_follow, "order": order,
-                 "per_play": [{"slow": c["slow"], "lead": c["lead"], "trim": c.get("trim", 0.0)} for c in picked],
+                 "per_play": [{"slow": c["slow"], "lead": c["lead"], "trim": c.get("trim", 0.0),
+                               "swoop": bool(c.get("swoop"))} for c in picked],
                  "note": f"plays ordered to the song: {hits} of {len(plays)} kills on a drop"})
     return plan
 
@@ -2077,6 +2177,8 @@ def bed_pieces(songs: list[tuple[object, list[tuple[float, float]]]], offset: fl
 
 
 ORDER_BEAM = 120          # states kept per step by plan_song_order
+SWOOP_GAP = 3             # plays without a third-person swoop between two that have one
+SWOOP_BONUS = 0.5         # how much the order search wants a swoop where one is allowed
 ORDER_OPENERS = 4         # strongest plays tried as the opener
 
 
@@ -2118,8 +2220,13 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
     n = len(variants)
     if n == 0:
         return [], [], 0.0
-    normal = [next(v for v in vs if not v["slow"]) for vs in variants]
+    normal = [next(v for v in vs if not v["slow"] and not v.get("swoop")) for vs in variants]
+    swoop_normal = [next((v for v in vs if not v["slow"] and v.get("swoop")), None) for vs in variants]
     slow = [[v for v in vs if v["slow"] and v.get("hit") is not None] for vs in variants]
+    # a little randomness in which plays get the third-person swoop, the same for the same plays every time
+    import random as _random
+    rnd = _random.Random(len(variants) * 7919 + round(sum(vs[0]["seconds"] for vs in variants) * 10))
+    swoop_bonus = [SWOOP_BONUS * (0.6 + 0.8 * rnd.random()) for _ in variants]
     players = players or [""] * n
     openers = sorted((i for i in range(n) if variants[i][0]["slow"] and variants[i][0].get("hit") is not None),
                      key=lambda i: -scores[i])[:ORDER_OPENERS] or [0]
@@ -2138,6 +2245,12 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
         gain0 = (0.5 + (drops[j0][1] if used0 else 0.0)) * (0.6 + scores[o])
         # state: (gain, end time, plays used bitmask, drops used bitmask, sequence of (play, variant))
         beam = [(gain0, start + first["seconds"], 1 << o, used0, ((o, first),))]
+
+        def since_swoop(seq) -> int:
+            for back, (_, v_) in enumerate(reversed(seq)):
+                if v_.get("swoop"):
+                    return back
+            return SWOOP_GAP + 1
         for step in range(n - 1):
             last_step = step == n - 2
             nxt: dict = {}
@@ -2148,8 +2261,13 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
                         continue
                     pen = 0.05 if players[i] and players[i] == prev_player else 0.0
                     fin = 0.6 * scores[i] if last_step else 0.0
+                    may_swoop = since_swoop(seq) >= SWOOP_GAP     # at least SWOOP_GAP plays without one in between
                     cands = [(gain - pen + fin, dm, snap_to_beat(normal[i], t, beats))]
+                    if may_swoop and swoop_normal[i]:
+                        cands.append((gain - pen + fin + swoop_bonus[i], dm, snap_to_beat(swoop_normal[i], t, beats)))
                     for v in slow[i]:
+                        if v.get("swoop") and not may_swoop:
+                            continue
                         k = t + v["hit"]
                         lo = bisect.bisect_left(times, k - tol)
                         for j in range(lo, len(times)):
@@ -2158,9 +2276,11 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
                             if dm >> j & 1:
                                 continue
                             w = (0.5 + drops[j][1]) * (0.6 + scores[i]) * (1 - 0.5 * abs(times[j] - k) / tol)
-                            cands.append((gain - pen + fin + w, dm | (1 << j), snap_to_beat(v, t, beats)))
+                            cands.append((gain - pen + fin + w + (swoop_bonus[i] if v.get("swoop") else 0.0), dm | (1 << j),
+                                          snap_to_beat(v, t, beats)))
                     for g, dm2, v in cands:
-                        key = (pm | (1 << i), dm2, round((t + v["seconds"]) * 4))
+                        key = (pm | (1 << i), dm2, round((t + v["seconds"]) * 4),
+                               0 if v.get("swoop") else min(SWOOP_GAP, since_swoop(seq) + 1))
                         if key not in nxt or nxt[key][0] < g:
                             nxt[key] = (g, t + v["seconds"], pm | (1 << i), dm2, seq + ((i, v),))
             beam = sorted(nxt.values(), key=lambda s: -s[0])[:ORDER_BEAM]
@@ -2226,7 +2346,8 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             pp = per_play[i]
             nv = cine.cinematic_for_video(demo_id, v, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides, progress=prog,
                                           montage_piece=True, slow=pp.get("slow", True), lead=pp.get("lead"),
-                                          trim=pp.get("trim", 0.0), t_in=pp.get("t_in"), t_out=pp.get("t_out"))
+                                          trim=pp.get("trim", 0.0), t_in=pp.get("t_in"), t_out=pp.get("t_out"),
+                                          swoop=bool(pp.get("swoop")))
             with lock:
                 if not nv.get("cine_path"):   # a cached piece stays in the cache
                     made_files.append(VIDEOS_DIR / demo_id / nv["cine"])

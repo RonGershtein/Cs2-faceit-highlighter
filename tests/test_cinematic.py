@@ -429,3 +429,15 @@ def test_title_counts_only_the_kills_the_clip_shows():
     clutch = {"type": "clutch", "n": 2, "kills": [1, 2, 3], "player_name": "InvviS", "round": 7}
     assert c.title_for_shown(c.title_for(clutch), clutch, 2)[0] == "DOUBLE KILL"
     assert c.title_for_shown(None, h, 1) is None
+
+
+def test_a_recorded_swoop_is_shown_or_skipped():
+    opts = c.options({}, {"cine_trim": "fast", "cine_fast": 6.0, "cine_skip_waits": False})
+    kills = [6.0, 12.0]
+    _, _, keep, _, plan = c.plan_clip(kills, 20.0, {**opts, "_swoop": (2.2, 4.0)})
+    segs = plan(keep)
+    assert segs[0][0] == 2.2 and segs[0][2] == 1.0                          # opens on the swoop, at normal speed
+    _, _, keep, _, plan = c.plan_clip(kills, 20.0, {**opts, "_skip_before": 4.0})
+    segs = plan(keep)
+    assert segs[0][0] >= 4.0                                                 # no third-person footage
+    assert c.trim_out_start([(0.0, 3.0, 6.0), (3.0, 8.0, 1.0)], 4.0) == [(4.0, 8.0, 1.0)]

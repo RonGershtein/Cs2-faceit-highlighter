@@ -34,6 +34,8 @@ DEFAULTS: dict = {
     "render_while_recording": True,  # a montage starts rendering the plays already recorded while CS2 records the rest
     "record_encoder": "auto",  # recording in CS2: "auto" (the graphics card's encoder when it works here, else the CPU),
                                # "x264" (CPU), "nvenc" (NVIDIA), "amf" (AMD) or "qsv" (Intel)
+    "record_swoop": True,      # record a third-person swoop into the player's eyes before each play (montages show some)
+    "record_swoop_spec": "spec_mode 5",  # the spectator mode during the swoop (one that shows the player's body)
     "record_fast_preroll": False,  # play the unrecorded 2 s before each highlight at 4x (a little faster recording)
     "cine_drop_slowmo": True,  # long montages: slow motion only on the plays whose kill lands on a drop of the song
     "cine_drop_min_plays": 6,  # from how many plays on

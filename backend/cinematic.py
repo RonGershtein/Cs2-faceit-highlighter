@@ -274,6 +274,16 @@ def split_at_out(segs: list[Seg], t: float) -> list[Seg]:
     return out
 
 
+def trim_out_start(segs: list[Seg], at: float) -> list[Seg]:
+    """The segments from source time `at` on (whatever came before it is left out). Pure function; unit-tested."""
+    out = []
+    for a, b, s in segs:
+        if b <= at + 1e-6:
+            continue
+        out.append((max(a, at), b, s))
+    return out
+
+
 def trim_out_end(segs: list[Seg], cut: float) -> list[Seg]:
     """The segments with the last `cut` output seconds removed (a montage play ends on a beat). Pure function."""
     out = list(segs)
@@ -1193,6 +1203,14 @@ def plan_clip(kill_times: list[float], duration: float, opts: dict):
         keep = [(max(0.0, kills[0] - float(lead)), duration)]   # no trimming: only the start moves
     else:
         keep = [(0.0, duration)]
+    # a clip recorded with a third-person swoop: shown, the play starts on it at normal speed; not shown, the play
+    # starts after it, so no third-person footage leaks in
+    swoop, skip = opts.get("_swoop"), opts.get("_skip_before")
+    first_at = float(swoop[0]) if swoop else float(skip) if skip else 0.0
+    if swoop and keep:
+        keep[0] = (min(keep[0][0], float(swoop[0])), max(keep[0][1], float(swoop[1])))
+    elif skip and keep:
+        keep[0] = (max(keep[0][0], float(skip)), max(keep[0][1], float(skip) + 0.5))
 
     def plan(keep_windows_: list[tuple[float, float]]) -> list[Seg]:
         sg = speed_segments(slow_kills, keep_windows_, slow, ramp=bool(opts.get("cine_ramp")))
@@ -1200,6 +1218,8 @@ def plan_clip(kill_times: list[float], duration: float, opts: dict):
             sg = fill_gaps(sg, duration, float(opts.get("cine_fast", 6.0)))
             if opts.get("cine_skip_waits", True):
                 sg = skip_waits(sg, float(opts.get("cine_fast", 6.0)))
+        if first_at > 0:
+            sg = trim_out_start(sg, first_at)
         return sg or [(0.0, duration, 1.0)]
     return kills, slow_kills, keep, mode, plan
 
@@ -1702,7 +1722,7 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
                         smooth: bool | None = None, overrides: dict | None = None, progress=None,
                         montage_piece: bool = False, slow: bool = True, lead: float | None = None,
                         low_priority: bool = False, trim: float = 0.0, t_in: str | None = None,
-                        t_out: str | None = None) -> dict:
+                        t_out: str | None = None, swoop: bool = False) -> dict:
     """Create <name>_cine.mp4 next to the clip and return the updated video entry. montage_piece=True makes
     <name>_mtg.mp4 without music instead (the montage gets one song over everything); the entry is not meant to
     be saved. A montage piece without voice lines comes from (or goes into) the piece cache: the entry then has
@@ -1721,6 +1741,12 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         opts["_in"] = t_in        # transitions from / to the neighbouring plays of a montage
     if t_out:
         opts["_out"] = t_out
+    sw = video.get("swoop")
+    if sw:   # recorded with a third-person swoop: shown when the montage chose it, else skipped
+        if swoop:
+            opts["_swoop"] = (float(sw["from"]), float(sw["to"]))
+        else:
+            opts["_skip_before"] = float(sw["to"])
     src = videos_dir / demo_id / video["file"]
     dst = src.with_name(src.stem + ("_mtg.mp4" if montage_piece else "_cine.mp4"))
     ctx = clip_context(demo_id, video["highlight_id"], int(video["start_tick"]), video.get("end_tick"))

@@ -100,6 +100,11 @@ records, the plays already recorded are rendered in the background at low priori
 the montage is done. Rendered plays are kept (see `render_cache_gb`), so a second montage or a recap with the same
 plays only joins them.
 
+**Third-person swoops:** every play is recorded with a short camera move (HLAE's `mirv_campath`) that starts
+behind and above the player and swoops down into his eyes, landing on his exact view 2 s before his first kill. A
+montage shows it on about one play in four, never two close together; on the others the play starts after it.
+`record_swoop` turns it off; `record_swoop_spec` is the spectator mode used during the move.
+
 **Order: best fit to the song** (the default; `montage_order` in `config.toml`): the plays are not joined in match
 order but in the order that puts the most slow-motion kills exactly on the drops of the soundtrack, the biggest plays
 (aces, 4Ks, clutches) on the biggest drops and a big play last. The app measures every drop of every song that will
