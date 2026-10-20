@@ -1580,25 +1580,27 @@ def start_squad_reel(demo_id: str, min_kills: int = 3, cinematic: bool = True, o
             have = {v["highlight_id"] for v in videos_index(demo_id).get("videos", [])}
             need = [i for i in ids if i not in have]
             _squad_job["needs_recording"] = bool(need)
-            ov = overrides
+            ov, follow = overrides, None
             if need:
                 _squad_job["stage"] = "recording"
                 start(demo_id, need)
                 if cinematic:
+                    from . import cinematic as cine
                     ov = _pin_song(overrides)
+                    follow = cine.fresh_order(exclude={(ov or {}).get("cine_music", "")})
 
                     def predict(planned: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
                         by_id = {v["highlight_id"]: v for v in videos_index(demo_id).get("videos", [])}
                         by_id.update({v["highlight_id"]: v for d, v in planned if d == demo_id})
                         return [(demo_id, v) for v in sorted((by_id[i] for i in ids if i in by_id), key=lambda v: v["start_tick"])]
-                    pre_render_while_recording(predict, ov, load_team()["intro"])
+                    pre_render_while_recording(predict, ov, load_team()["intro"], follow=follow)
                 wait(lambda: (_job or {}).get("status") in ("preparing", "recording", "encoding"))
                 if (_job or {}).get("status") != "done":
                     raise RuntimeError("recording did not finish: " + str((_job or {}).get("error") or (_job or {}).get("status")))
             if cinematic:
                 _squad_job.update({"stage": "cinematic", "piece_i": 0, "piece_frac": 0.0, "render_started": time.time()})
                 _squad_job["render_from"] = squad_progress(_squad_job)
-                _squad_job.update({"status": "done", "stage": "done", "result": _squad_cinematic(demo_id, ids, ov)})
+                _squad_job.update({"status": "done", "stage": "done", "result": _squad_cinematic(demo_id, ids, ov, follow)})
                 return
             _squad_job["stage"] = "joining"
             recorded = [i for i in ids if i in {v["highlight_id"] for v in videos_index(demo_id).get("videos", [])}]
@@ -1626,13 +1628,15 @@ def start_squad_reel(demo_id: str, min_kills: int = 3, cinematic: bool = True, o
     return {**_squad_job, "highlights": [{"id": h["id"], "description": h["description"]} for h in hs]}
 
 
-def pre_render_while_recording(predict, overrides: dict | None, intro: bool) -> threading.Thread | None:
+def pre_render_while_recording(predict, overrides: dict | None, intro: bool, reorder: bool | None = None,
+                               follow: list[str] | None = None) -> threading.Thread | None:
     """While CS2 records a montage's missing clips, render the montage's pieces that can already be made (clips
     recorded earlier, and each new clip once it is muxed) into the piece cache, below normal priority so the game
     keeps the CPU it needs. The montage itself runs afterwards as always and finds those pieces made.
     predict(planned) -> the montage's plays [(demo_id, video entry)] as they will be once recorded, planned being
     the recording job's [(demo_id, planned entry)]; overrides and intro exactly as the montage will be made with
-    (the same song pinned in cine_music), so the plan and every piece come out the same."""
+    (the same song pinned in cine_music, the same follow-up songs, the same reorder), so the plan and every piece
+    come out the same."""
     from . import cinematic as cine
     cfg = load_config()
     if not cfg.get("render_while_recording", True) or cine.options(cfg, overrides).get("cine_voice"):
@@ -1650,7 +1654,7 @@ def pre_render_while_recording(predict, overrides: dict | None, intro: bool) -> 
             plays = predict(_job["planned"])
             if not plays:
                 return
-            per_play = plan_montage(plays, overrides, intro)["per_play"]
+            per_play = plan_montage(plays, overrides, intro, reorder=reorder, follow=follow)["per_play"]
             ffprobe = FFMPEG_DIR / "bin" / "ffprobe.exe"
             nxt, lock = [0], threading.Lock()
 
@@ -1727,10 +1731,13 @@ def _join(files: list[Path], infos: list[dict], out: Path, list_file: Path) -> N
         raise RuntimeError("joining the videos failed: " + r.stderr[-400:])
 
 
-def _music_bed(cine, ffprobe: Path, first: Path, offset: float, total: float, work_dir: Path, stamp: str):
+def _music_bed(cine, ffprobe: Path, first: Path, offset: float, total: float, work_dir: Path, stamp: str,
+               follow: list[str] | None = None):
     """(one long track made of `first` and the songs that follow it, their names) when the montage is longer than
-    `first` from `offset`; (None, []) when the song alone is long enough or there is nothing to follow it."""
-    first_len = cine.probe_video(ffprobe, first)["duration"]
+    `first` from `offset`; (None, []) when the song alone is long enough or there is nothing to follow it.
+    follow: the follow-up songs in the order to use them (the montage plan put its drops there); else the songs
+    not heard for the longest time."""
+    first_len = cine.song_span(cine.loudness_curve(FFMPEG_EXE, first))[1] or cine.probe_video(ffprobe, first)["duration"]
     if not first_len or first_len - offset >= total:
         return None, []
     others = [t for t in cine.music_files() if t.name != first.name]
@@ -1738,15 +1745,25 @@ def _music_bed(cine, ffprobe: Path, first: Path, offset: float, total: float, wo
         return None, []   # one song only: it loops
     picked: list[Path] = []
     lens: list[float] = []
+    spans: list[tuple[float, float]] = []   # the loud part of each song (song_span): intros and outros are cut
     while len(picked) < len(others) and cine.bed_tracks_needed(first_len, offset, total, lens) == len(lens) \
             and max(0.0, first_len - offset) + sum(max(0.0, x - 3.0) for x in lens) < total:
-        nxt = cine.pick_music({"cine_music": ""}, exclude={first.name, *(p.name for p in picked)})
+        if follow is not None:
+            nxt = next((cine.MUSIC_DIR / n for n in follow[len(picked):] if (cine.MUSIC_DIR / n).is_file()), None)
+            if nxt is not None:
+                cine.note_used(nxt.name)
+        else:
+            nxt = cine.pick_music({"cine_music": ""}, exclude={first.name, *(p.name for p in picked)})
         if nxt is None:
             break
         picked.append(nxt)
-        lens.append(cine.probe_video(ffprobe, nxt)["duration"])
+        c = cine.loudness_curve(FFMPEG_EXE, nxt)
+        a, b = cine.song_span(c) if c else (0.0, cine.probe_video(ffprobe, nxt)["duration"])
+        spans.append((a, b))
+        lens.append(b - a)
     bed = work_dir / f"music_bed_{stamp}.m4a"
-    r = subprocess.run(cine.music_bed_args(FFMPEG_EXE, first, offset, picked, bed), capture_output=True, text=True)
+    r = subprocess.run(cine.music_bed_args(FFMPEG_EXE, first, offset, picked, bed, first_end=first_len, spans=spans),
+                       capture_output=True, text=True)
     if r.returncode != 0 or not bed.exists():
         bed.unlink(missing_ok=True)
         return None, []
@@ -1792,15 +1809,25 @@ def plan_drop_slowmo(variants: list[list[dict]], start: float, drops: list[float
     return chosen, offset
 
 
-def plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: bool) -> dict:
-    """How every play of a montage is rendered: {"song": the song a drop plan was made on (None without one),
-    "offset": where that song starts, "per_play": [{"slow", "lead"}], "note": what the plan did}. A long montage
-    gets slow motion only on the plays whose kill lands on one of the song's drops. Uses the clips' recorded length
-    ("seconds"), not the files, so the same plan can be made before the clips are recorded (pre_render_while_recording).
-    Picks a song when none is set (pass cine_music in overrides for the same plan twice)."""
+def montage_reorders(reorder: bool | None) -> bool:
+    """Whether a montage puts its plays in the order that fits the song best (config montage_order = "song")."""
+    return str(load_config().get("montage_order", "song")) == "song" if reorder is None else bool(reorder)
+
+
+def plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: bool, reorder: bool | None = None,
+                 follow: list[str] | None = None) -> dict:
+    """How every play of a montage is rendered and in which order: {"song": the song a drop plan was made on (None
+    without one), "offset": where that song starts, "follow": the songs after it, "per_play": [{"slow", "lead"}] by
+    play index, "order": the play indices in montage order, "note": what the plan did}. A long montage gets slow
+    motion only on the plays whose kill lands on a drop of its soundtrack; with reorder (montage_reorders) the plays
+    are also put in the order that lands the most kills, the biggest plays on the biggest drops (plan_song_order),
+    else they keep the given order. Uses the clips' recorded length ("seconds"), not the files, so the same plan can
+    be made before the clips are recorded (pre_render_while_recording). Picks a song when none is set and the
+    follow-up songs when `follow` is None (pass cine_music and follow for the same plan twice)."""
     from . import cinematic as cine
     ffprobe = FFMPEG_DIR / "bin" / "ffprobe.exe"
-    plan = {"song": None, "offset": None, "per_play": [{} for _ in plays], "note": None}
+    plan = {"song": None, "offset": None, "follow": follow, "per_play": [{} for _ in plays],
+            "order": list(range(len(plays))), "note": None}
     cfg0 = load_config()
     opts0 = cine.options(cfg0, overrides)
     if not (cfg0.get("cine_drop_slowmo", True) and len(plays) >= int(cfg0.get("cine_drop_min_plays", 6))
@@ -1827,19 +1854,153 @@ def plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: b
     curve = cine.loudness_curve(FFMPEG_EXE, song)
     drops = cine.find_drops(curve)
     start = cine.INTRO_SECONDS if intro else 0.0
-    picked, offset = plan_drop_slowmo(variants, start, drops, lambda hit, total: cine.find_drop(curve, 0.5, hit, total) - hit)
-    plan.update({"song": song, "offset": offset, "per_play": [{"slow": c["slow"], "lead": c["lead"]} for c in picked],
-                 "note": f"{sum(1 for c in picked if c['slow'])} of {len(plays)} plays in slow motion, on the drops"})
+    est_total = start + sum(next(v for v in vs if not v["slow"])["seconds"] for vs in variants)
+    first_hit = lambda hit, total: cine.find_drop(curve, 0.5, hit, total) - hit   # noqa: E731
+    if not montage_reorders(reorder):
+        picked, offset = plan_drop_slowmo(variants, start, drops, first_hit)
+        plan.update({"song": song, "offset": offset, "per_play": [{"slow": c["slow"], "lead": c["lead"]} for c in picked],
+                     "note": f"{sum(1 for c in picked if c['slow'])} of {len(plays)} plays in slow motion, on the drops"})
+        return plan
+    # the whole soundtrack: the song, then the songs that follow it when the montage is longer, with every drop
+    if follow is None:
+        follow = cine.fresh_order(exclude={song.name})
+    # each song only plays its loud part (song_span), the first one up to its end: the drops are counted from there
+    songs = [(cine.song_span(curve)[1], drops, cine.drop_strengths(curve, drops))]
+    used_follow, have = [], songs[0][0] - 30.0   # the song starts somewhere in its first half minute or so
+    for name in follow:
+        if have >= est_total * 1.3:
+            break
+        f = cine.MUSIC_DIR / name
+        if not f.is_file():
+            continue
+        c = cine.loudness_curve(FFMPEG_EXE, f)
+        if not c:
+            continue
+        d = cine.find_drops(c)
+        a, b = cine.song_span(c)
+        st = cine.drop_strengths(c, d)
+        songs.append((b - a, [x - a for x in d if a <= x <= b], [y for x, y in zip(d, st) if a <= x <= b]))
+        used_follow.append(name)
+        have += b - a - 3.0
+    hls = [(v.get("ctx") or {}).get("highlight") or next((h for h in db.get_highlights(d) if h["id"] == v.get("highlight_id")), None)
+           for d, v in plays]
+    sizes = [play_score(v, h) for (_, v), h in zip(plays, hls)]
+    top = max(sizes) or 1
+    order, picked, offset = plan_song_order(
+        variants, [x / top for x in sizes], start, lambda hit: first_hit(hit, est_total),
+        lambda off: song_drops_in_montage(songs, off), players=[str(v.get("player") or "") for _, v in plays])
+    t, hits = start, 0
+    times = [d for d, _ in song_drops_in_montage(songs, offset)]
+    for i in order:
+        c = picked[i]
+        if c["slow"] and c.get("hit") is not None and any(abs(t + c["hit"] - d) <= DROP_TOLERANCE + 1e-6 for d in times):
+            hits += 1
+        t += c["seconds"]
+    plan.update({"song": song, "offset": offset, "follow": used_follow, "order": order,
+                 "per_play": [{"slow": c["slow"], "lead": c["lead"]} for c in picked],
+                 "note": f"plays ordered to the song: {hits} of {len(plays)} kills on a drop"})
     return plan
 
 
+def song_drops_in_montage(songs: list[tuple[float, list[float], list[float]]], offset: float,
+                          xfade: float = 3.0) -> list[tuple[float, float]]:
+    """(montage time, strength) of every drop of a soundtrack: songs = [(length, drops, strengths)] played one after
+    the other, the first from `offset` (montage time 0 = song time `offset`), each next one crossfading `xfade`
+    seconds into the previous. Drops before the offset are gone. Pure function; unit-tested."""
+    out, start = [], -offset
+    for k, (length, drops, strengths) in enumerate(songs):
+        for d, st in zip(drops, strengths):
+            t = start + d
+            # a drop inside the crossfade is drowned by the song before; one after a song's end is never heard
+            if t >= 0 and d <= length and (k == 0 or d >= xfade):
+                out.append((round(t, 3), st))
+        start += length - xfade
+    return sorted(out)
+
+
+ORDER_BEAM = 120          # states kept per step by plan_song_order
+ORDER_OPENERS = 4         # strongest plays tried as the opener
+
+
+def plan_song_order(variants: list[list[dict]], scores: list[float], start: float, opener_offset, drops_for,
+                    players: list[str] | None = None, tol: float = DROP_TOLERANCE) -> tuple[list[int], list[dict], float]:
+    """The order of a montage's plays and how each one is rendered so its slow-motion kills land on the song's
+    drops, the biggest plays on the biggest drops. variants[i]: the ways play i can be rendered (as for
+    plan_drop_slowmo, a normal-speed one among them); scores[i]: how big play i is, 0..1. start: where the first
+    play begins (after the intro). opener_offset(hit) -> song offset that puts the main drop on the opener's kill at
+    montage time `hit`; drops_for(offset) -> [(montage time, strength 0..1)] of every drop of the soundtrack.
+    The opener is one of the strongest plays (slow, on the main drop); the rest is a beam search over orders: a
+    kill within `tol` of an unused drop scores (0.5 + strength) * (0.6 + score), a bit less the further off; the
+    last play scores its own size (the finale); the same player twice in a row costs a little.
+    Returns (order of the play indices, the chosen variant per play index, song offset). Pure function; unit-tested."""
+    import bisect
+    n = len(variants)
+    if n == 0:
+        return [], [], 0.0
+    normal = [next(v for v in vs if not v["slow"]) for vs in variants]
+    slow = [[v for v in vs if v["slow"] and v.get("hit") is not None] for vs in variants]
+    players = players or [""] * n
+    openers = sorted((i for i in range(n) if variants[i][0]["slow"] and variants[i][0].get("hit") is not None),
+                     key=lambda i: -scores[i])[:ORDER_OPENERS] or [0]
+    best = None
+    for o in openers:
+        first = variants[o][0]
+        hit0 = start + (first.get("hit") or 0.0)
+        offset = max(0.0, opener_offset(hit0))
+        drops = drops_for(offset)
+        times = [d for d, _ in drops]
+        # the opener's kill takes the main drop: the drop nearest to it is used
+        j0 = min(range(len(times)), key=lambda j: abs(times[j] - hit0)) if times else None
+        used0 = (1 << j0) if j0 is not None and abs(times[j0] - hit0) <= 1.0 else 0
+        gain0 = (0.5 + (drops[j0][1] if used0 else 0.0)) * (0.6 + scores[o])
+        # state: (gain, end time, plays used bitmask, drops used bitmask, sequence of (play, variant))
+        beam = [(gain0, start + first["seconds"], 1 << o, used0, ((o, first),))]
+        for step in range(n - 1):
+            last_step = step == n - 2
+            nxt: dict = {}
+            for gain, t, pm, dm, seq in beam:
+                prev_player = players[seq[-1][0]]
+                for i in range(n):
+                    if pm >> i & 1:
+                        continue
+                    pen = 0.05 if players[i] and players[i] == prev_player else 0.0
+                    fin = 0.6 * scores[i] if last_step else 0.0
+                    cands = [(gain - pen + fin, dm, normal[i])]
+                    for v in slow[i]:
+                        k = t + v["hit"]
+                        lo = bisect.bisect_left(times, k - tol)
+                        for j in range(lo, len(times)):
+                            if times[j] > k + tol:
+                                break
+                            if dm >> j & 1:
+                                continue
+                            w = (0.5 + drops[j][1]) * (0.6 + scores[i]) * (1 - 0.5 * abs(times[j] - k) / tol)
+                            cands.append((gain - pen + fin + w, dm | (1 << j), v))
+                    for g, dm2, v in cands:
+                        key = (pm | (1 << i), dm2, round((t + v["seconds"]) * 4))
+                        if key not in nxt or nxt[key][0] < g:
+                            nxt[key] = (g, t + v["seconds"], pm | (1 << i), dm2, seq + ((i, v),))
+            beam = sorted(nxt.values(), key=lambda s: -s[0])[:ORDER_BEAM]
+        top = beam[0]
+        if best is None or top[0] > best[0][0]:
+            best = (top, offset)
+    (gain, _, _, _, seq), offset = best
+    chosen = [None] * n
+    for i, v in seq:
+        chosen[i] = v
+    return [i for i, _ in seq], chosen, offset
+
+
 def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, work_dir: Path, out: Path,
-                         base: int = 0, last: bool = True, intro: dict | None = None) -> dict:
+                         base: int = 0, last: bool = True, intro: dict | None = None, reorder: bool | None = None,
+                         follow: list[str] | None = None) -> dict:
     """Every play (demo_id, its videos.json entry) rendered cinematic without music, joined in the given order,
     then ONE song over the whole video (its drop on the first slow-motion kill, dipping under the voice lines).
     Progress goes to _squad_job; base / last: this is one part (plays base.. of the job's total) of a recap.
     intro: {"team", "sub", "stats"} puts the intro card first (the song already plays under it).
-    Returns {"seconds", "music"}. The clips' own cinematic versions are left alone."""
+    reorder / follow: see plan_montage (the plays may be joined in another order than given).
+    Returns {"seconds", "music", "songs", "order": the play indices in the order they were joined}. The clips' own
+    cinematic versions are left alone."""
     from . import cinematic as cine
     ffprobe = FFMPEG_DIR / "bin" / "ffprobe.exe"
     pieces: list[Path] = []
@@ -1850,8 +2011,8 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
     made_files: list[Path] = []   # every piece rendered so far, whatever the order, so a failure still cleans up
     try:
         _squad_job["piece"] = "planning the montage"
-        mp = plan_montage(plays, overrides, intro is not None)
-        plan_song, plan_offset, per_play = mp["song"], mp["offset"], mp["per_play"]
+        mp = plan_montage(plays, overrides, intro is not None, reorder=reorder, follow=follow)
+        plan_song, plan_offset, per_play, order = mp["song"], mp["offset"], mp["per_play"], mp["order"]
         if mp["note"]:
             _squad_job["drops"] = mp["note"]
         # several plays render at once: one FFmpeg filter chain keeps only a core or two busy
@@ -1899,10 +2060,11 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
                 for f in futs:
                     f.cancel()
                 raise
-        for (demo_id, _), nv in zip(plays, results):
+        for i in order:   # joined in the planned order
+            (demo_id, _), nv = plays[i], results[i]
             pieces.append(Path(nv["cine_path"]) if nv.get("cine_path") else VIDEOS_DIR / demo_id / nv["cine"])
             infos.append(nv["cine_info"])
-        cached = {p_ for p_, nv in zip(pieces, results) if nv.get("cine_path")}
+        cached = {Path(nv["cine_path"]) for nv in results if nv.get("cine_path")}
         if intro and pieces:
             _squad_job["piece"] = "making the intro"
             card = work_dir / f"montage_intro_{stamp}.mp4"
@@ -1929,7 +2091,8 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             else:
                 offset = cine.music_offset(FFMPEG_EXE, music, hit, total) if (opts.get("cine_music_sync") and hit is not None) else 0.0
             # longer than the song: the songs not heard for the longest time follow it, crossfading, instead of a loop
-            bed, songs = _music_bed(cine, ffprobe, music, offset, total, work_dir, stamp)
+            bed, songs = _music_bed(cine, ffprobe, music, offset, total, work_dir, stamp,
+                                    follow=mp["follow"] if plan_song is not None else None)
             src, off = (bed, 0.0) if bed else (music, offset)
             try:
                 r = subprocess.run(cine.montage_music_args(FFMPEG_EXE, joined, src, out, total, off,
@@ -1942,7 +2105,7 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             song = music.name
         else:
             joined.replace(out)
-        return {"seconds": round(total, 1), "music": song, "songs": [song] + songs if song else []}
+        return {"seconds": round(total, 1), "music": song, "songs": [song] + songs if song else [], "order": order}
     finally:
         for p_ in {*pieces, *made_files} - cached:
             p_.unlink(missing_ok=True)
@@ -1953,8 +2116,9 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             pass
 
 
-def _squad_cinematic(demo_id: str, ids: list[int], overrides: dict | None) -> dict:
-    """The cinematic montage of plays of one match, saved as one of its long videos."""
+def _squad_cinematic(demo_id: str, ids: list[int], overrides: dict | None, follow: list[str] | None = None) -> dict:
+    """The cinematic montage of plays of one match, saved as one of its long videos (in the order that fits the
+    song, see plan_montage; follow: the follow-up songs fixed in advance)."""
     vids = sorted((v for v in videos_index(demo_id).get("videos", []) if v["highlight_id"] in set(ids)),
                   key=lambda v: v["start_tick"])
     if not vids:
@@ -1964,7 +2128,9 @@ def _squad_cinematic(demo_id: str, ids: list[int], overrides: dict | None) -> di
     plays = [(demo_id, v) for v in vids]
     made = _render_song_montage(plays, overrides, out_dir, out,
                                 intro=squad_intro("Squad montage" if _squad_job.get("label") != "Montage" else "Montage",
-                                                  plays, {demo_id: (db.get_demo(demo_id) or {}).get("date")}))
+                                                  plays, {demo_id: (db.get_demo(demo_id) or {}).get("date")}),
+                                follow=follow)
+    vids = [vids[i] for i in made["order"]]
     song = made["music"]
     entry = {"file": out.name, "size": out.stat().st_size, "seconds": made["seconds"],
              "highlight_ids": [v["highlight_id"] for v in vids], "clips": [v["file"] for v in vids], "cinematic": True,
@@ -2014,7 +2180,8 @@ def start_library_montage(items: list[dict], title: str = "", overrides: dict | 
             MONTAGE_DIR.mkdir(parents=True, exist_ok=True)
             out = MONTAGE_DIR / f"montage_{len(plays)}clips_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
             dates = {d: (videos_index(d).get("match") or {}).get("date") or (db.get_demo(d) or {}).get("date") for d, _ in plays}
-            made = _render_song_montage(plays, overrides, MONTAGE_DIR, out, intro=squad_intro("Montage", plays, dates))
+            made = _render_song_montage(plays, overrides, MONTAGE_DIR, out, intro=squad_intro("Montage", plays, dates),
+                                        reorder=False)   # the order picked in the tray
             song = made["music"]
             maps = sorted({(db.get_demo(d) or {}).get("map") or "" for d, _ in plays} - {""})
             entry = {"file": out.name, "seconds": made["seconds"], "maps": maps, "cinematic": True, "music": song,
@@ -2160,7 +2327,7 @@ def start_recap(date_from: str, date_to: str, min_kills: int = 3, best_of: int |
                                                                  "best_of": best_of, "matches": len(groups)},
                      "music": [s_ for s_ in songs if s_],
                      "description": title.strip()[:80] or f"Recap · {period} · {len(plays)} plays from {len(groups)} match{'es' if len(groups) > 1 else ''}",
-                     "clips": [{"demo_id": p["demo_id"], "file": p["video"]["file"], "description": p["video"].get("description")} for p in plays],
+                     "clips": [{"demo_id": d, "file": v["file"], "description": v.get("description")} for d, v in made["plays"]],
                      "created": time.time()}
             _save_montage(out, entry)
             _squad_job.update({"status": "done", "stage": "done", "result": {**entry, "demo_id": MONTAGE_ID}})
@@ -2174,16 +2341,20 @@ def start_recap(date_from: str, date_to: str, min_kills: int = 3, best_of: int |
 
 
 def _render_match_groups(groups: list[list[tuple[str, dict]]], out: Path, stamp: str, intro: dict | None,
-                         music: str = "") -> dict:
+                         music: str = "", follow: list[str] | None = None, reorder: bool | None = None) -> dict:
     """Several matches in one video with ONE soundtrack over the whole of it: every play rendered cinematic, the
     matches oldest first, the intro before the first play, then the chosen song (`music`, or a song not heard
     lately) from its drop on the first slow-motion kill; when the video is longer than the song, the next
-    fresh songs follow it with a crossfade. Returns {"seconds", "music": [the songs, in order]}."""
+    fresh songs follow it with a crossfade. With reorder (montage_reorders) the plays are not in match order but
+    in the order that fits the songs (plan_montage). Returns {"seconds", "music": [the songs, in order],
+    "plays": [(demo_id, video) in the order they were joined]}."""
     from . import cinematic as cine
     MONTAGE_DIR.mkdir(parents=True, exist_ok=True)
     plays = [x for g in groups for x in g]
-    made = _render_song_montage(plays, cine.options(overrides={"cine_music": music or ""}), MONTAGE_DIR, out, intro=intro)
-    return {"seconds": made["seconds"], "music": made.get("songs") or ([made["music"]] if made.get("music") else [])}
+    made = _render_song_montage(plays, cine.options(overrides={"cine_music": music or ""}), MONTAGE_DIR, out, intro=intro,
+                                follow=follow, reorder=reorder)
+    return {"seconds": made["seconds"], "music": made.get("songs") or ([made["music"]] if made.get("music") else []),
+            "plays": [plays[i] for i in made["order"]]}
 
 
 def intro_dates(days: list[str]) -> str:
@@ -2281,16 +2452,18 @@ def multi_squad_plan(demo_ids: list[str], min_kills: int = 3) -> list[dict]:
 
 
 def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", cinematic: bool = True,
-                      music: str = "") -> dict:
+                      music: str = "", order: str = "") -> dict:
     """The squad montage of several matches as one video (background job, squad_status() with demo_id "montages"):
     record what is missing match by match in CS2, then every play cinematic with one soundtrack over the whole video
     (cinematic=False: the recorded clips as they are, no song), the intro first, the matches joined oldest first,
-    saved with the montages."""
+    saved with the montages. order: "song" (the plays in the order that fits the soundtrack, plan_montage),
+    "date" (match order) or "" (config montage_order)."""
     global _squad_job
     if _squad_job and _squad_job.get("status") == "running":
         raise RuntimeError("a montage is already being made")
     if not FFMPEG_EXE.exists():
         raise RuntimeError("FFmpeg is not installed (Install HLAE + FFmpeg)")
+    reorder = montage_reorders({"song": True, "date": False}.get(order))
     plan = [m for m in multi_squad_plan(demo_ids, min_kills) if m["ids"]]
     if not plan:
         raise RuntimeError(f"no {min_kills}K+ plays of your squad in these matches")
@@ -2302,13 +2475,14 @@ def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", 
 
     def run() -> None:
         try:
-            song = music
+            song, follow = music, None
             if to_record:   # every missing play of every match in one CS2 session (it loads demo after demo)
                 _squad_job.update({"stage": "recording", "rec_i": 0, "rec_n": 1})
                 start_session([(m["demo_id"], m["need"]) for m in to_record])
                 if cinematic:
                     from . import cinematic as cine
                     song = song or (_pin_song(None) or {}).get("cine_music", "")
+                    follow = cine.fresh_order(exclude={song})
 
                     def predict(planned: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
                         out = []
@@ -2318,7 +2492,8 @@ def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", 
                             vids = sorted((by_id[i] for i in m["ids"] if i in by_id), key=lambda v: v["start_tick"])
                             out += [(m["demo_id"], v) for v in vids]
                         return out
-                    pre_render_while_recording(predict, cine.options(overrides={"cine_music": song or ""}), load_team()["intro"])
+                    pre_render_while_recording(predict, cine.options(overrides={"cine_music": song or ""}), load_team()["intro"],
+                                               reorder=reorder, follow=follow)
                 while (_job or {}).get("status") in ("preparing", "recording", "encoding"):
                     if _squad_job.get("status") != "running":
                         raise RuntimeError("cancelled")
@@ -2345,7 +2520,11 @@ def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", 
             out = MONTAGE_DIR / f"squad_{len(groups)}matches_{stamp}.mp4"
             dates = {m["demo_id"]: m.get("date") for m in plan}
             intro = squad_intro("Squad montage", plays, dates)
-            made = _render_match_groups(groups, out, stamp, intro, song) if cinematic else _join_as_recorded(plays, out, stamp, intro)
+            if cinematic:
+                made = _render_match_groups(groups, out, stamp, intro, song, follow=follow, reorder=reorder)
+                plays = made["plays"]   # the order they were joined in
+            else:
+                made = _join_as_recorded(plays, out, stamp, intro)
             maps = sorted({m.get("map") or "" for m in plan if any(g[0][0] == m["demo_id"] for g in groups)} - {""})
             when = intro_dates([dates.get(g[0][0]) or "" for g in groups])
             entry = {"file": out.name, "seconds": made["seconds"], "maps": maps, "cinematic": cinematic, "music": made["music"],

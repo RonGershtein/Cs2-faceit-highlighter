@@ -175,7 +175,7 @@
       if (!m.files.length) sel.innerHTML = '<option value="">No music yet: add tracks in a match\'s Cinematic dialog</option>';
     } catch (_) { /* keep the list */ }
   }
-  const syncMultiStyle = () => { $('multi-song-row').style.display = $('multi-cine').checked ? '' : 'none'; };
+  const syncMultiStyle = () => { for (const id of ['multi-song-row', 'multi-order-row']) $(id).style.display = $('multi-cine').checked ? '' : 'none'; };
   $('multi-cine').addEventListener('change', syncMultiStyle);
   $('multi-plain').addEventListener('change', syncMultiStyle);
   $('match-go').onclick = async () => {
@@ -191,7 +191,7 @@
     $('multi-go').disabled = true; $('multi-msg').textContent = 'starting…';
     try {
       await API.saveTeam($('multi-team').value, $('multi-intro').checked);
-      await API.multiSquad({ demo_ids: mpicked, min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked, music: $('multi-cine').checked ? $('multi-music').value : '' });
+      await API.multiSquad({ demo_ids: mpicked, min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked, music: $('multi-cine').checked ? $('multi-music').value : '', order: $('multi-order').value });
       $('multi-modal').style.display = 'none'; $('multi-msg').textContent = ''; $('multi-name').value = '';
       selecting = false; mpicked = []; renderMatches(); renderBar();
       window.startMontagePoll && window.startMontagePoll();

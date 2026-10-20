@@ -401,14 +401,15 @@ def test_match_groups_get_one_soundtrack_over_the_whole_video(tmp_path, monkeypa
     monkeypatch.setattr(rec, "MONTAGE_DIR", tmp_path)
     seen = []
 
-    def fake(plays, overrides, work_dir, out, base=0, last=True, intro=None):
+    def fake(plays, overrides, work_dir, out, base=0, last=True, intro=None, follow=None, reorder=None):
         seen.append(([v["file"] for _, v in plays], overrides["cine_music"], intro is not None))
-        return {"seconds": 20.0, "music": "Granite.mp3", "songs": ["Granite.mp3", "Blood Sugar.mp3"]}
+        return {"seconds": 20.0, "music": "Granite.mp3", "songs": ["Granite.mp3", "Blood Sugar.mp3"], "order": [2, 0, 1]}
     monkeypatch.setattr(rec, "_render_song_montage", fake)
     groups = [[("d1", {"file": "a.mp4"})], [("d2", {"file": "b.mp4"}), ("d2", {"file": "c.mp4"})]]
     made = rec._render_match_groups(groups, tmp_path / "o.mp4", "s", {"team": "x"}, "Granite.mp3")
     assert seen == [(["a.mp4", "b.mp4", "c.mp4"], "Granite.mp3", True)]      # all matches in one render, one song
     assert made["music"] == ["Granite.mp3", "Blood Sugar.mp3"]
+    assert [v["file"] for _, v in made["plays"]] == ["c.mp4", "a.mp4", "b.mp4"]   # the order they were joined in
 
 
 def test_music_bed_follows_a_short_song_with_the_next_ones():
@@ -671,3 +672,64 @@ def test_recover_recordings_makes_clips_cs2_recorded_unwatched(tmp_path, monkeyp
     assert [v["highlight_id"] for v in idx["videos"]] == [1]
     assert not raw.exists()                                          # cleaned up like after a normal recording
     assert r.recover_recordings() == 0                               # nothing left to do
+
+
+def test_song_drops_in_montage_follow_the_soundtrack():
+    from backend.record import song_drops_in_montage
+    songs = [(100.0, [20.0, 60.0, 99.0, 120.0], [1.0, 0.5, 0.7, 0.9]),   # plays to 100 s: the drop at 120 is never heard
+             (80.0, [2.0, 30.0], [0.8, 1.0])]                             # the drop at 2 s is inside the crossfade
+    got = song_drops_in_montage(songs, offset=15.0)
+    # song 1 from 15 s: 20 -> 5, 60 -> 45, 99 -> 84; song 2 starts at 100 - 15 - 3 = 82: 30 -> 112
+    assert got == [(5.0, 1.0), (45.0, 0.5), (84.0, 0.7), (112.0, 1.0)]
+    assert song_drops_in_montage(songs, offset=50.0)[0] == (10.0, 0.5)     # drops before the offset are gone
+
+
+def test_plan_song_order_puts_kills_on_the_drops_and_big_plays_on_big_drops():
+    from backend.record import plan_song_order
+    def play(base, hit):
+        vs = [{"slow": True, "lead": None, "seconds": base + 4, "hit": hit}, {"slow": False, "lead": None, "seconds": base, "hit": None}]
+        vs += [{"slow": True, "lead": l, "seconds": base + 4 + (l - 2), "hit": hit + (l - 2)}
+               for l in [x * 0.25 for x in range(3, 17)] if abs(l - 2) > .01]
+        return vs
+    # a long play (20 s) and three short ones (10 s); kills 6 s into each
+    variants = [play(10, 6), play(10, 6), play(20, 6), play(10, 6)]
+    scores = [0.6, 0.6, 1.0, 0.6]
+    drops = [(9.5, 1.0), (23.0, 0.4), (57.0, 1.0)]   # montage time: the opener's kill, then two more
+    order, chosen, offset = plan_song_order(variants, scores, 3.5, lambda hit: 30.0 - hit, lambda off: drops)
+    assert sorted(order) == [0, 1, 2, 3]
+    t, hit_at = 3.5, {}
+    for i in order:
+        v = chosen[i]
+        if v["slow"]:
+            hit_at[i] = round(t + v["hit"], 2)
+        t += v["seconds"]
+    landed = [d for d, _ in drops if any(abs(h - d) <= 0.3 for h in hit_at.values())]
+    assert landed == [9.5, 23.0, 57.0]                # every drop gets a kill
+    assert offset == 30.0 - (3.5 + chosen[order[0]]["hit"])   # the opener's kill on the main drop
+
+
+def test_plan_song_order_keeps_the_same_player_apart_when_it_costs_nothing():
+    from backend.record import plan_song_order
+    normal = lambda s: [{"slow": True, "lead": None, "seconds": s + 4, "hit": 5.0}, {"slow": False, "lead": None, "seconds": s, "hit": None}]  # noqa: E731
+    variants = [normal(10), normal(10), normal(10)]
+    order, _, _ = plan_song_order(variants, [1.0, 0.5, 0.5], 0.0, lambda hit: 0.0, lambda off: [(5.0, 1.0)],
+                                  players=["a", "a", "b"])
+    assert order == [0, 2, 1]
+
+
+def test_song_span_cuts_the_quiet_intro_and_outro():
+    from backend.cinematic import song_span
+    curve = [0.02] * 20 + [0.3] * 300 + [0.05] * 30     # 10 s quiet intro, 150 s loud, 15 s fade-out (0.5 s steps)
+    a, b = song_span(curve)
+    assert 8.0 <= a <= 10.0 and 159.0 <= b <= 161.5   # a second or so of lead-in, the fade-out gone
+    assert song_span([0.3] * 40) == (0.0, 20.0)         # too short to trim: the whole song
+
+
+def test_plan_song_order_puts_the_biggest_play_on_the_biggest_drop():
+    from backend.record import plan_song_order
+    same = lambda: [{"slow": True, "lead": None, "seconds": 14.0, "hit": 6.0}, {"slow": False, "lead": None, "seconds": 10.0, "hit": None}]  # noqa: E731
+    # three equal plays: kills at 6, 20 and 34 s when all are slow; the drop at 20 is small, the one at 34 big
+    drops = [(6.0, 1.0), (20.0, 0.2), (34.0, 1.0)]
+    order, chosen, _ = plan_song_order([same(), same(), same()], [0.6, 1.0, 0.6], 0.0, lambda hit: 0.0, lambda off: drops)
+    assert order.index(1) in (0, 2)                    # the big play takes a big drop, not the small one
+    assert all(chosen[i]["slow"] for i in order)       # and all three drops still get a kill

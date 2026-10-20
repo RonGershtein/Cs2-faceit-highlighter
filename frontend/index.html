@@ -143,12 +143,13 @@
 
 <div class="modal" role="dialog" aria-modal="true" aria-labelledby="multi-title" id="multi-modal" style="display:none"><div class="modal-box">
   <div class="modal-head" id="multi-title"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Squad montage <span class="spacer"></span><button class="small ghost" id="multi-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
-  <p class="muted" style="margin:0 0 12px">Your squad's plays of the selected matches in one video, oldest match first. Plays that are not recorded yet are recorded in CS2 first, one match after the other.</p>
+  <p class="muted" style="margin:0 0 12px">Your squad's plays of the selected matches in one video. Plays that are not recorded yet are recorded in CS2 first, one match after the other.</p>
   <div class="field"><label for="multi-min">Plays</label><select id="multi-min"><option value="3">3 kills and more (3K, 4K, ace, 1v3+ clutch)</option><option value="4">4 kills and more</option><option value="5">aces only</option></select></div>
   <div class="field"><label>Matches</label><div id="multi-list" class="muted">…</div></div>
   <div class="field"><label>Style</label>
     <label class="opt"><input type="radio" name="multi-style" id="multi-cine" checked> <span><b>Cinematic</b>: slow motion on the kills, effects, title and player cards, and <b>one song over the whole montage</b>, its drop on the first slow-motion kill. A long montage continues with the next song, crossfading. Uses your cinematic settings; change them in a match's Cinematic dialog.</span></label>
     <div class="row" id="multi-song-row" style="gap:10px;margin:0 0 4px 27px;align-items:center"><span class="opt-text">Song</span><select id="multi-music" aria-label="Song"><option value="">Random (a song you have not heard lately)</option></select></div>
+    <div class="row" id="multi-order-row" style="gap:10px;margin:0 0 4px 27px;align-items:center"><span class="opt-text">Order</span><select id="multi-order" aria-label="Order of the plays"><option value="song">best fit to the song: kills on the drops, the biggest plays on the biggest drops</option><option value="date">match order, oldest first</option></select></div>
     <label class="opt"><input type="radio" name="multi-style" id="multi-plain"> <span><b>As recorded</b>: the clips joined as they are, with the game sound and no song</span></label></div>
   <div class="field"><label for="multi-team">Team name</label>
     <div class="row" style="gap:10px;flex-wrap:wrap"><input type="text" id="multi-team" maxlength="40" autocomplete="off" placeholder="Squad" style="flex:1;min-width:160px">

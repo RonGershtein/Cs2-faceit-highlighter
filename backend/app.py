@@ -515,6 +515,7 @@ class MultiSquadIn(BaseModel):
     title: str = ""
     cinematic: bool = True         # False: the recorded clips joined as they are, no song
     music: str = ""                # one track for every match; "" = a fresh random track per match
+    order: str = ""                # "song": the order that fits the song best, "date": match order, "" = config
 
 
 @app.post("/api/squad/multi/preview")
@@ -527,7 +528,8 @@ def multi_squad_preview(body: MultiSquadIn):
 def multi_squad(body: MultiSquadIn):
     """One squad montage of several matches (records what is missing first); poll /api/squad/status."""
     try:
-        return _rec().start_multi_squad(body.demo_ids, max(2, min(5, body.min_kills)), body.title, body.cinematic, body.music)
+        return _rec().start_multi_squad(body.demo_ids, max(2, min(5, body.min_kills)), body.title, body.cinematic, body.music,
+                                            body.order)
     except RuntimeError as e:
         raise HTTPException(409, str(e))
 

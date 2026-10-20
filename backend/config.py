@@ -36,6 +36,7 @@ DEFAULTS: dict = {
     "record_fast_preroll": False,  # play the unrecorded 2 s before each highlight at 4x (a little faster recording)
     "cine_drop_slowmo": True,  # long montages: slow motion only on the plays whose kill lands on a drop of the song
     "cine_drop_min_plays": 6,  # from how many plays on
+    "montage_order": "song",   # squad montages and recaps: "song" (plays ordered to fit the song's drops) or "date"
     "record_demoui_each_demo": True,  # several demos in one CS2 session: close the demo panel again after each playdemo
     "record_hud": "killfeed",  # "killfeed": a clean picture with the kill feed only; "health_ammo": CS2's full HUD
                                # (health and ammo, but also the players bar at the top: CS2 cannot hide only that)

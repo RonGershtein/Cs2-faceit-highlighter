@@ -331,6 +331,39 @@ def find_drops(curve: list[float], win: float = 0.5, min_gap: float = 10.0, shar
     return sorted(i * win for i in picked)
 
 
+def song_span(curve: list[float], win: float = 0.5, smooth: float = 2.0, level: float = 0.45) -> tuple[float, float]:
+    """(start, end) in seconds of the loud part of a track: a quiet intro (talking, a slow build) and the outro
+    (fade-out, a quiet ending, silence) are left out, so a montage crossfades from loud part to loud part. The loud
+    part is where the loudness over `smooth` seconds reaches `level` x the track's typical loud level (80th
+    percentile). The whole track when that leaves less than 30 s. Pure function; unit-tested."""
+    total = len(curve) * win
+    n = max(1, int(round(smooth / win)))
+    if len(curve) < 2 * n:
+        return 0.0, total
+    avg = [sum(curve[i:i + n]) / n for i in range(len(curve) - n + 1)]
+    thr = level * sorted(curve)[int(len(curve) * 0.8)]
+    loud = [i for i, a in enumerate(avg) if a >= thr]
+    if not loud:
+        return 0.0, total
+    a, b = max(0.0, loud[0] * win - 0.5), min(total, (loud[-1] + n) * win + 0.5)
+    return (a, b) if b - a >= 30.0 else (0.0, total)
+
+
+def drop_strengths(curve: list[float], drops: list[float], win: float = 0.5, after: float = 6.0,
+                   before: float = 3.0) -> list[float]:
+    """How big each drop is (the rise in loudness find_drops measured), the biggest being 1.0. Pure function."""
+    if not curve or not drops:
+        return []
+    na, nb = max(1, int(round(after / win))), max(1, int(round(before / win)))
+    rises = []
+    for d in drops:
+        i = min(len(curve) - 1, max(0, int(round(d / win))))
+        seg, prev = curve[i:i + na], curve[max(0, i - nb):i]
+        rises.append(max(0.0, (sum(seg) / len(seg)) - (sum(prev) / len(prev) if prev else 0.0)))
+    top = max(rises) or 1.0
+    return [r / top for r in rises]
+
+
 def music_offset(ffmpeg: Path, track: Path, hit_time: float, clip_len: float) -> float:
     """Seconds to skip at the start of `track` so that its drop plays at `hit_time` of the clip."""
     drop = find_drop(loudness_curve(ffmpeg, track), 0.5, hit_time, clip_len)
@@ -907,11 +940,19 @@ def bed_tracks_needed(first_len: float, offset: float, total: float, next_lens: 
     return n
 
 
-def music_bed_args(ffmpeg: Path, first: Path, offset: float, others: list[Path], dst: Path, xfade: float = 3.0) -> list[str]:
-    """FFmpeg command joining the first song (from `offset`) and the songs after it into one track, each
-    crossfading into the next, so a long montage keeps one continuous soundtrack. Pure function; unit-tested."""
-    args = [str(ffmpeg), "-y"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + ["-i", str(first)]
-    for o in others:
+def music_bed_args(ffmpeg: Path, first: Path, offset: float, others: list[Path], dst: Path, xfade: float = 3.0,
+                   first_end: float | None = None, spans: list[tuple[float, float]] | None = None) -> list[str]:
+    """FFmpeg command joining the first song (from `offset`, up to `first_end`) and the songs after it (each only
+    its span (start, end), see song_span) into one track, each crossfading into the next, so a long montage keeps
+    one continuous soundtrack. Pure function; unit-tested."""
+    args = [str(ffmpeg), "-y"] + (["-ss", f"{offset:.3f}"] if offset > 0 else [])
+    if first_end is not None and first_end > offset:
+        args += ["-t", f"{first_end - offset:.3f}"]
+    args += ["-i", str(first)]
+    for k, o in enumerate(others):
+        if spans and k < len(spans):
+            a, b = spans[k]
+            args += (["-ss", f"{a:.3f}"] if a > 0 else []) + ["-t", f"{b - a:.3f}"]
         args += ["-i", str(o)]
     chain, prev = [], "[0:a]"
     for i in range(1, len(others) + 1):
@@ -1089,6 +1130,24 @@ def pick_music(opts: dict, exclude: set[str] | None = None) -> Path | None:
         pick = random.choice([t for t in tracks if t.name in pool])
     _note_used(pick.name)
     return pick
+
+
+def fresh_order(exclude: set[str] | None = None) -> list[str]:
+    """Every track name (but `exclude`) in the order pick_music would reach for them: never-used ones first (shuffled),
+    then the one heard longest ago. Nothing is marked as used. A montage fixes its follow-up songs with this."""
+    names = [t.name for t in music_files() if t.name not in (exclude or set())]
+    try:
+        recent = json.loads(MUSIC_RECENT.read_text(encoding="utf-8")) if MUSIC_RECENT.is_file() else []
+    except (OSError, ValueError):
+        recent = []
+    last = {n: i for i, n in enumerate(recent if isinstance(recent, list) else [])}
+    never = [n for n in names if n not in last]
+    random.shuffle(never)
+    return never + sorted((n for n in names if n in last), key=lambda n: last[n])
+
+
+def note_used(name: str) -> None:
+    _note_used(name)
 
 
 def video_kills(demo_id: str, video: dict) -> list[float]:

@@ -93,11 +93,19 @@ and jobs started meanwhile wait in a queue.
 
 **Several matches at once:** in the library, **Select matches**, click the matches (or **Select all**), then
 **Squad montage** → **Create squad montage** (or **New squad montage** at the top). The squad's
-plays of all of them become one video, oldest match first, with the intro card (team name, dates, stats) and one song
-(the next songs crossfade in when the video is longer). Plays that are not recorded yet are recorded first in one CS2
-session that loads demo after demo. While CS2 records, the plays already recorded are rendered in the background at low
-priority, so when the game closes most of the montage is done. Rendered plays are kept (see `render_cache_gb`), so a
-second montage or a recap with the same plays only joins them.
+plays of all of them become one video with the intro card (team name, dates, stats) and one soundtrack (the next
+songs crossfade in when the video is longer; every song plays only its loud part, without the quiet intro and the
+outro). Plays that are not recorded yet are recorded first in one CS2 session that loads demo after demo. While CS2
+records, the plays already recorded are rendered in the background at low priority, so when the game closes most of
+the montage is done. Rendered plays are kept (see `render_cache_gb`), so a second montage or a recap with the same
+plays only joins them.
+
+**Order: best fit to the song** (the default; `montage_order` in `config.toml`): the plays are not joined in match
+order but in the order that puts the most slow-motion kills exactly on the drops of the soundtrack, the biggest plays
+(aces, 4Ks, clutches) on the biggest drops and a big play last. The app measures every drop of every song that will
+play, tries the strongest plays as the opener and searches the orders of the rest (each play can also start a little
+earlier or later). On a 20-play montage that is 18 kills on a drop instead of 5 in match order. Pick **match order** in
+the dialog for a chronological video. A montage you put together by hand in the Highlights tab keeps your order.
 
 **Recap:** the **Recap** button makes one video of every recorded squad play in a month, a year or any date range.
 
@@ -180,6 +188,7 @@ highlights you ticked (those are remade). Takes ~10-20 s per clip
 | `record_hud` | killfeed | `killfeed`: a clean picture with the kill feed only; `health_ammo`: CS2's HUD with health and ammo |
 | `record_encoder` | x264 | `amf` records with an AMD graphics card's encoder instead of the CPU (try it if recording is slow) |
 | `record_fast_preroll` | false | play the unrecorded 2 s before each highlight at 4x |
+| `montage_order` | song | `song`: squad montages and recaps put the plays in the order that fits the song's drops; `date`: match order |
 | `render_parallel` | 3 | montage plays rendered at the same time |
 | `render_while_recording` | true | render the plays already recorded while CS2 records the rest |
 | `render_cache_gb` | 20 | rendered montage plays kept for the next montage or recap (oldest go first) |
