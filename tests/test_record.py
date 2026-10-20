@@ -497,7 +497,7 @@ def test_song_montage_renders_plays_in_parallel_and_keeps_their_order(tmp_path, 
     import backend.cinematic as cine
     import backend.record as rec
     monkeypatch.setattr(rec, "VIDEOS_DIR", tmp_path)
-    monkeypatch.setattr(rec, "load_config", lambda: {"render_parallel": 3})
+    monkeypatch.setattr(rec, "load_config", lambda: {"render_parallel": 3, "montage_outro": False})
     monkeypatch.setattr(rec, "_squad_job", {"status": "running", "total": 5})
     (tmp_path / "d").mkdir()
     live, peak, lock = [0], [0], threading.Lock()
@@ -549,7 +549,7 @@ def test_find_drops_and_clip_timing():
     assert len(drops) == 2 and abs(drops[0] - 20.0) <= 1.0 and abs(drops[1] - 45.0) <= 1.0
     opts = {"cine_slow": 0.5, "cine_kills": "all", "cine_trim": "off", "cine_ramp": False}
     slow, normal = clip_timing([5.0], 10.0, opts), clip_timing([5.0], 10.0, {**opts, "_no_slow": True})
-    assert normal == {"seconds": 10.0, "hit": None} and slow["seconds"] > 10.0 and slow["hit"] > 5.0
+    assert normal == {"seconds": 10.0, "hit": None, "tail": 5.0} and slow["seconds"] > 10.0 and slow["hit"] > 5.0
     moved = clip_timing([5.0], 10.0, {**opts, "_lead": 2.0})                 # start 3 s in: the kill comes 3 s sooner
     assert abs(moved["hit"] - (slow["hit"] - 3.0)) < 1e-6
 
@@ -766,3 +766,68 @@ def test_song_pieces_cut_a_long_quiet_stretch_but_not_a_short_dip():
     args = pieces_bed_args(Path("ff"), [(Path("a.mp3"), 4.0, 86.5), (Path("a.mp3"), 113.5, 200.0), (Path("b.mp3"), 0.0, 90.0)], Path("o.m4a"))
     assert args[:8] == ["ff", "-y", "-ss", "4.000", "-t", "82.500", "-i", "a.mp3"]
     assert args[args.index("-filter_complex") + 1] == "[0:a][1:a]acrossfade=d=3:c1=tri:c2=tri[x1];[x1][2:a]acrossfade=d=3:c1=tri:c2=tri[x2]"
+
+
+def test_song_montage_ends_with_the_gg_card(tmp_path, monkeypatch):
+    import backend.cinematic as cine
+    import backend.record as rec
+    monkeypatch.setattr(rec, "VIDEOS_DIR", tmp_path)
+    monkeypatch.setattr(rec, "load_config", lambda: {"render_parallel": 1, "montage_outro": True})
+    monkeypatch.setattr(rec, "load_team", lambda: {"team": "Your Team", "intro": True})
+    monkeypatch.setattr(rec, "_squad_job", {"status": "running", "total": 2})
+    (tmp_path / "d").mkdir()
+
+    def fake(demo_id, v, ffmpeg, ffprobe, vdir, overrides=None, progress=None, montage_piece=False, **kw):
+        (tmp_path / "d" / f"m{v['file']}").write_bytes(b"x")
+        return {**v, "cine": f"m{v['file']}", "cine_info": {"seconds": 4.0, "name": v["file"]}}
+    monkeypatch.setattr(cine, "cinematic_for_video", fake)
+    cards = []
+
+    def card(ffmpeg, ffprobe, piece, at, dst, team, sub, stats, crf=20):
+        cards.append((piece.name, at, team, sub, stats))
+        dst.write_bytes(b"c")
+        return 3.5
+    monkeypatch.setattr(cine, "make_intro", card)
+    joined = []
+    monkeypatch.setattr(rec, "_join", lambda files, infos, out, lst: (joined.extend(f.name for f in files), out.write_bytes(b"j")))
+    monkeypatch.setattr(cine, "pick_music", lambda opts, exclude=None: None)
+    made = rec._render_song_montage([("d", {"file": "0.mp4"}), ("d", {"file": "1.mp4"})], None, tmp_path, tmp_path / "o.mp4",
+                                    intro={"team": "Your Team", "sub": "Squad montage", "stats": "2 plays"})
+    assert joined[0].startswith("montage_intro_") and joined[-1].startswith("montage_outro_")
+    assert cards[-1] == ("m1.mp4", 3.85, "GG", "Your Team", "2 plays")      # the last frame of the last play
+    assert made["seconds"] == 3.5 + 4.0 + 4.0 + 3.5
+
+
+def test_snap_to_beat_cuts_the_tail_back_to_a_beat():
+    from backend.record import snap_to_beat
+    v = {"slow": False, "lead": None, "seconds": 10.0, "hit": None, "tail": 3.0}
+    got = snap_to_beat(v, 5.0, [13.0, 14.6, 15.4])           # ends at 15.0: the beat at 14.6 is 0.4 s back
+    assert got["seconds"] == 9.6 and got["trim"] == 0.4
+    assert snap_to_beat(v, 5.0, [14.0, 15.5]) == v              # 1 s back is more than SNAP_MAX
+    assert snap_to_beat({**v, "tail": 1.2}, 5.0, [14.6]) == {**v, "tail": 1.2}   # would leave < 1 s after the kill
+    assert snap_to_beat(v, 5.0, []) == v
+
+
+def test_plan_song_order_ends_plays_on_beats():
+    from backend.record import plan_song_order
+    same = lambda: [{"slow": True, "lead": None, "seconds": 14.0, "hit": 6.0, "tail": 4.0},  # noqa: E731
+                    {"slow": False, "lead": None, "seconds": 10.0, "hit": None, "tail": 4.0}]
+    beats = [round(0.5 * k, 3) for k in range(1, 200)]       # 120 BPM
+    beats = [b for b in beats if abs(b % 1.0 - 0.5) < 1e-6]   # only the off-beats: x.5
+    order, chosen, _ = plan_song_order([same(), same(), same()], [1.0, 0.6, 0.6], 0.0, lambda hit: 0.0,
+                                       lambda off: [(6.0, 1.0)], beats_for=lambda off: beats)
+    t = 0.0
+    for i in order:
+        t += chosen[i]["seconds"]
+        assert abs(t % 1.0 - 0.5) < 1e-6                    # every cut lands on a beat
+
+
+def test_montage_plan_puts_a_transition_between_every_two_plays(monkeypatch):
+    import backend.record as rec
+    monkeypatch.setattr(rec, "_plan_montage", lambda plays, ov, intro, reorder, follow: {
+        "per_play": [{} for _ in plays], "order": [2, 0, 1], "song": None, "offset": None, "follow": None, "note": None})
+    monkeypatch.setattr(rec, "load_config", lambda: {"montage_transition": "mixed"})
+    pp = rec.plan_montage([("d", {}), ("d", {}), ("d", {})], None, False)["per_play"]
+    assert pp[2] == {"t_out": "whip"} and pp[0] == {"t_in": "whip", "t_out": "zoom"} and pp[1] == {"t_in": "zoom"}
+    monkeypatch.setattr(rec, "load_config", lambda: {"montage_transition": "none"})
+    assert rec.plan_montage([("d", {}), ("d", {})], None, False)["per_play"] == [{}, {}]

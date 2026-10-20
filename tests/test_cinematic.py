@@ -303,3 +303,65 @@ def test_fresh_tracks_avoid_the_songs_just_heard():
     assert fresh_tracks(names, ["c", "a", "d", "b"]) == ["c", "a"]  # the half heard longest ago
     assert fresh_tracks(["a"], ["a"]) == ["a"]
     assert fresh_tracks([], ["a"]) == []
+
+
+def test_clutch_counter_counts_down_to_clutch():
+    s = c.clutch_states(3, [2.0, 5.0, 9.0], 12.0)
+    assert [x["text"] for x in s] == ["1v3", "1v2", "1v1", "CLUTCH"]
+    assert (s[0]["from"], s[0]["to"], s[-1]["from"]) == (0.0, 2.0, 9.0)
+    assert [x["text"] for x in c.clutch_states(3, [2.0, 5.0], 8.0)] == ["1v3", "1v2", "1v1"]   # the last one died otherwise
+
+
+def test_round_score_follows_the_player_across_the_side_swap():
+    me = "1"
+    rounds = [{"num": i, "winner": w, "teams": {me: side}} for i, (w, side) in
+              enumerate([("T", "T"), ("CT", "T"), ("T", "T"), ("T", "CT"), ("CT", "CT")], start=1)]
+    meta = {"rounds": rounds}
+    assert c.round_score(meta, 1, me) == (0, 0)
+    assert c.round_score(meta, 4, me) == (2, 1)          # won 1 and 3 as T, lost 2
+    assert c.round_score(meta, 6, me) == (3, 2)          # after the swap: lost 4 (T won), won 5 as CT
+    assert c.round_score({}, 3, me) is None
+
+
+def test_plan_texts_put_the_clutch_odds_top_left(tmp_path):
+    segs = [(0.0, 10.0, 1.0)]
+    texts, files, _ = c.plan_texts(segs, [3.0, 7.0], width=1920, height=1080, title=None, counter=False,
+                                   font=tmp_path / "f.ttf", tmp_base=tmp_path / "o.mp4",
+                                   clutch={"n": 2, "round": 8, "score": (7, 4)})
+    words = [p.read_text(encoding="utf-8") for p in files]
+    assert words == ["1v2", "1v1", "CLUTCH", "ROUND 8  ·  7–4"]
+    assert all(t["x"] == "54" for t in texts)
+
+
+def test_track_beats_finds_a_steady_beat():
+    import random
+    random.seed(1)
+    fps, period = 43.07, 0.5                       # 120 BPM, onset frames of ~23 ms
+    onset = [random.random() * 0.2 for _ in range(int(fps * 30))]
+    true = [1.0 + k * period for k in range(56)]
+    for b in true:
+        onset[int(round(b * fps))] += 3.0
+    beats = c.track_beats(onset, fps)
+    hits = sum(1 for b in true if any(abs(b - x) < 0.05 for x in beats))
+    assert hits >= 50 and len(beats) <= 62
+    gaps = sorted(beats[i + 1] - beats[i] for i in range(len(beats) - 1))
+    assert abs(gaps[len(gaps) // 2] - period) < 0.03
+    assert c.track_beats([0.0] * 50, fps) == []
+
+
+def test_split_and_trim_segments():
+    segs = [(0.0, 6.0, 6.0), (6.0, 9.0, 1.0)]       # 1 s fast-forward, then 3 s normal
+    split = c.split_at_out(segs, 0.25)
+    assert split[0] == (0.0, 1.5, 6.0) and split[1] == (1.5, 6.0, 6.0) and c.total_duration(split) == pytest.approx(4.0)
+    end = c.split_at_out(segs, c.total_duration(segs) - 0.25)
+    assert end[-1] == (8.75, 9.0, 1.0)
+    assert c.trim_out_end(segs, 0.5) == [(0.0, 6.0, 6.0), (6.0, 8.5, 1.0)]
+    assert c.trim_out_end(segs, 3.5) == [(0.0, 3.0, 6.0)]
+
+
+def test_edge_filters():
+    assert "avgblur=sizeX=64" in c.edge_filter("whip", "out", 1920, 1080)
+    z = c.edge_filter("zoom", "in", 1920, 1080)
+    assert "eval=frame" in z and z.endswith("crop=1920:1080,setsar=1") and "(1-t/0.250)" in z
+    assert c.edge_filter("flash", "in", 1920, 1080).startswith("fade=t=in") and "color=white" in c.edge_filter("flash", "out", 1920, 1080)
+    assert c.edge_filter("none", "in", 1920, 1080) == "null"

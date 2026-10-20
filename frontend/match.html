@@ -164,9 +164,12 @@
     <div class="field"><label>Effects</label>
       <label class="opt"><input type="checkbox" id="cine_impact"> zoom punch + flash on each kill</label>
       <label class="opt"><input type="checkbox" id="cine_look"> cinematic look (vignette + colour grade)</label>
+      <div class="row cine-grade-opt"><span class="opt-text">colour grade</span>
+        <select id="cine_grade"><option value="teal_orange">teal &amp; orange</option><option value="dark">dark cinematic</option><option value="classic">classic</option></select></div>
       <label class="opt"><input type="checkbox" id="cine_fade"> fade in and out</label>
       <label class="opt" id="cine_title-opt"><input type="checkbox" id="cine_title"> title card (TRIPLE KILL / ACE / 1v3 CLUTCH, player, map, round)</label>
       <label class="opt" id="cine_counter-opt"><input type="checkbox" id="cine_counter"> kill counter</label>
+      <label class="opt" id="cine_clutch-opt"><input type="checkbox" id="cine_clutch"> clutch odds (1v3 counting down, round and score)</label>
       <label class="opt" id="cine_card-opt"><input type="checkbox" id="cine_card"> player card (round avatar + nickname for the whole clip, like a pro match)</label>
       <span class="hint" id="cine-font-warn" style="display:none">text overlays need a font – none was found, so the title card and kill counter are skipped</span>
     </div>

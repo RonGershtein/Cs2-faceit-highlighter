@@ -447,9 +447,9 @@
   // ---- cinematic (slow-motion + music) -------------------------------------------------------------
   let cinePoll = null;
   const CINE_NUM = ['cine_slow', 'cine_game_volume', 'cine_music_volume', 'cine_trim_lead', 'cine_fast', 'cine_voice_volume'];
-  const CINE_STR = ['cine_kills', 'cine_music', 'cine_trim'];
+  const CINE_STR = ['cine_kills', 'cine_music', 'cine_trim', 'cine_grade'];
   let voicePins = { start: [], kill: [], final: [] };   // cine_voice_pick: pinned lines per slot (empty = random)
-  const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_skip_waits', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_card', 'cine_voice'];
+  const CINE_BOOL = ['cine_smooth', 'cine_music_sync', 'cine_skip_waits', 'cine_ramp', 'cine_impact', 'cine_look', 'cine_fade', 'cine_title', 'cine_counter', 'cine_clutch', 'cine_card', 'cine_voice'];
   const VOICE_SLOTS = ['start', 'kill', 'final'];
   const VOICE_SUB_LABEL = { ace: 'ace', clutch: 'clutch', multikill: 'multikill', knife: 'knife', ninja_defuse: 'ninja', 2: '2nd kill', 3: '3rd kill', 4: '4th kill', 5: '5th kill' };
   let cineInfo = null;
@@ -478,8 +478,8 @@
     const parts = [];
     parts.push(`slow motion ${Math.round(parseFloat($('cine_slow').value) * 100)}% on ${$('cine_kills').value === 'all' ? 'every kill' : 'the final kill'}`);
     const trim = $('cine_trim').value; parts.push(trim === 'fast' ? `dead time fast-forwarded ${$('cine_fast').value}×${on('cine_skip_waits') ? ', long waits skipped' : ''}` : trim === 'cut' ? 'dead time cut out' : 'full length');
-    const fx = [on('cine_impact') && 'kill punch', on('cine_look') && 'cinematic look', on('cine_fade') && 'fades'].filter(Boolean); if (fx.length) parts.push(fx.join(', '));
-    const txt = [on('cine_title') && 'title card', on('cine_counter') && 'kill counter', on('cine_card') && 'player card'].filter(Boolean); if (txt.length) parts.push(txt.join(', '));
+    const fx = [on('cine_impact') && 'kill punch', on('cine_look') && `${$('cine_grade').selectedOptions[0]?.textContent || 'cinematic'} grade`, on('cine_fade') && 'fades'].filter(Boolean); if (fx.length) parts.push(fx.join(', '));
+    const txt = [on('cine_title') && 'title card', on('cine_counter') && 'kill counter', on('cine_clutch') && 'clutch odds', on('cine_card') && 'player card'].filter(Boolean); if (txt.length) parts.push(txt.join(', '));
     const nMusic = $('cine_music').options.length - 1; parts.push(nMusic ? ($('cine_music').value ? `music: ${$('cine_music').value}` : 'music: random track') : 'no music yet');
     const pinned = Object.values(voicePins).reduce((a, l) => a + l.length, 0);
     parts.push(!on('cine_voice') ? 'casters off' : `real caster lines${pinned ? ` (${pinned} ticked)` : ' (random)'}`);
@@ -493,7 +493,7 @@
     document.querySelectorAll('#music-modal input[type=range]').forEach(cineRangeLabel);
     const fontOk = info.font !== false;
     $('cine-font-warn').style.display = fontOk ? 'none' : '';
-    for (const k of ['cine_title', 'cine_counter', 'cine_card']) { $(k).disabled = !fontOk; $(k + '-opt').classList.toggle('off', !fontOk); }
+    for (const k of ['cine_title', 'cine_counter', 'cine_clutch', 'cine_card']) { $(k).disabled = !fontOk; $(k + '-opt').classList.toggle('off', !fontOk); }
     cinePaceVis();
     voiceVis();
     cineSummary();

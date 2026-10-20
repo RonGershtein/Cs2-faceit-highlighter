@@ -36,7 +36,7 @@ CARD_BG = "0x2a2f3a"                   # blank avatar colour
 # cine_* keys of config.toml that the UI can change per job (see options())
 OPTION_KEYS = ("cine_slow", "cine_kills", "cine_smooth", "cine_game_volume", "cine_music_volume", "cine_music",
                "cine_music_sync", "cine_trim", "cine_trim_lead", "cine_fast", "cine_skip_waits", "cine_ramp",
-               "cine_impact", "cine_look", "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice",
+               "cine_impact", "cine_look", "cine_grade", "cine_clutch", "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice",
                "cine_voice_volume", "cine_voice_pick")
 TRIM_MODES = ("off", "cut", "fast")   # dead time between kills: keep / drop / fast-forward
 
@@ -91,6 +91,7 @@ def options(cfg: dict | None = None, overrides: dict | None = None) -> dict:
     out["cine_trim"] = mode if mode in TRIM_MODES else ("cut" if mode in ("1", "true", "yes", "on") else "off")
     out["cine_trim_lead"] = min(15.0, max(0.5, float(out["cine_trim_lead"])))
     out["cine_fast"] = min(30.0, max(1.5, float(out["cine_fast"])))
+    out["cine_grade"] = out["cine_grade"] if out["cine_grade"] in GRADES else "teal_orange"
     return out
 
 
@@ -257,6 +258,56 @@ def skip_waits(segs: list[Seg], fast: float, burst: float = WAIT_BURST, max_out:
     return out
 
 
+def split_at_out(segs: list[Seg], t: float) -> list[Seg]:
+    """The same segments with a split at output time `t` (so an effect can cover exactly the part after or before
+    it). Pure function; unit-tested."""
+    out, acc = [], 0.0
+    for a, b, s in segs:
+        length = (b - a) / s
+        if acc + 0.02 < t < acc + length - 0.02:
+            m = a + (t - acc) * s
+            out += [(a, m, s), (m, b, s)]
+        else:
+            out.append((a, b, s))
+        acc += length
+    return out
+
+
+def trim_out_end(segs: list[Seg], cut: float) -> list[Seg]:
+    """The segments with the last `cut` output seconds removed (a montage play ends on a beat). Pure function."""
+    out = list(segs)
+    while cut > 1e-3 and out:
+        a, b, s = out[-1]
+        length = (b - a) / s
+        if length <= cut + 1e-3:
+            out.pop()
+            cut -= length
+        else:
+            out[-1] = (a, b - cut * s, s)
+            cut = 0.0
+    return out
+
+
+TRANSITIONS = ("whip", "zoom", "flash")
+EDGE_SECONDS = 0.25     # each side of a transition between montage plays
+
+
+def edge_filter(style: str, side: str, width: int, height: int, d: float = EDGE_SECONDS) -> str:
+    """Filters for the first (side "in") or last ("out") EDGE_SECONDS of a montage play, in that piece's own time
+    (0..d): a whip (sideways motion blur), a zoom punch, or a white flash. The two halves meet on the cut, which
+    lands on a beat. Pure function; unit-tested."""
+    rise = f"(t/{d:.3f})" if side == "out" else f"(1-t/{d:.3f})"     # 0 -> 1 towards the cut
+    if style == "whip":
+        return (f"avgblur=sizeX=18:sizeY=1:enable='lt({rise},0.5)',avgblur=sizeX=64:sizeY=1:enable='gte({rise},0.5)'")
+    if style == "zoom":
+        z = f"(1+0.45*{rise}*{rise})"
+        return (f"scale=w='trunc(iw*{z}/2)*2':h='trunc(ih*{z}/2)*2':eval=frame,crop={width}:{height},setsar=1")
+    if style == "flash":
+        return (f"fade=t=out:st={d * 0.4:.3f}:d={d * 0.6:.3f}:color=white" if side == "out"
+                else f"fade=t=in:st=0:d={d:.3f}:color=white")
+    return "null"
+
+
 def total_duration(segs: list[Seg]) -> float:
     return sum((b - a) / s for a, b, s in segs)
 
@@ -331,6 +382,61 @@ def find_drops(curve: list[float], win: float = 0.5, min_gap: float = 10.0, shar
     return sorted(i * win for i in picked)
 
 
+# ---- colour grades: 3D LUTs made here (no files to download), applied with FFmpeg's lut3d ----------------------
+
+GRADES = ("classic", "teal_orange", "dark")   # classic = the old eq colour boost
+LUT_DIR = DATA_DIR / "luts"
+LUT_VERSION = 2
+
+
+def grade_rgb(r: float, g: float, b: float, style: str) -> tuple[float, float, float]:
+    """One colour through a grade (0..1 in, 0..1 out). Pure function; unit-tested.
+    teal_orange: a soft S-curve for contrast, shadows pushed to teal and highlights to warm orange (skin, fire and
+    muzzle flashes stay warm, walls and sky go cool). dark: crushed blacks, a gentle highlight roll-off, 20 % less
+    saturation and cool shadows."""
+    def s_curve(x: float, k: float) -> float:
+        return x + k * (x * x * (3 - 2 * x) - x)
+    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    if style == "teal_orange":
+        r, g, b = (s_curve(x, 0.6) for x in (r, g, b))
+        lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        sh, hi = (1 - lum) ** 1.5, lum ** 1.5
+        r, g, b = r - 0.09 * sh + 0.10 * hi, g + 0.03 * sh + 0.02 * hi, b + 0.08 * sh - 0.10 * hi
+        r, g, b = (lum + (x - lum) * 1.15 for x in (r, g, b))
+    elif style == "dark":
+        r, g, b = (max(0.0, (x - 0.06) / 0.94) ** 1.12 for x in (r, g, b))
+        r, g, b = (1 - (1 - s_curve(x, 0.5)) ** 1.15 for x in (r, g, b))
+        lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        r, g, b = (lum + (x - lum) * 0.72 for x in (r, g, b))
+        sh = (1 - lum) ** 2
+        r, g, b = r - 0.04 * sh, g + 0.005 * sh, b + 0.06 * sh
+    return tuple(min(1.0, max(0.0, x)) for x in (r, g, b))
+
+
+def lut_cube(style: str, size: int = 33) -> str:
+    """The .cube text of a grade (red changes fastest, as the format wants). Pure function."""
+    lines = [f'TITLE "cs2-watcher {style}"', f"LUT_3D_SIZE {size}", "DOMAIN_MIN 0 0 0", "DOMAIN_MAX 1 1 1"]
+    n = size - 1
+    for bi in range(size):
+        for gi in range(size):
+            for ri in range(size):
+                lines.append("%.5f %.5f %.5f" % grade_rgb(ri / n, gi / n, bi / n, style))
+    return "\n".join(lines) + "\n"
+
+
+def lut_file(style: str) -> Path | None:
+    """data/luts/<style>_v<n>.cube, written the first time it is needed; None for the classic grade."""
+    if style not in GRADES or style == "classic":
+        return None
+    p = LUT_DIR / f"{style}_v{LUT_VERSION}.cube"
+    if not p.is_file():
+        LUT_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(lut_cube(style), encoding="ascii")
+        tmp.replace(p)
+    return p
+
+
 def song_span(curve: list[float], win: float = 0.5, smooth: float = 2.0, level: float = 0.45) -> tuple[float, float]:
     """(start, end) in seconds of the loud part of a track: a quiet intro (talking, a slow build) and the outro
     (fade-out, a quiet ending, silence) are left out, so a montage crossfades from loud part to loud part. The loud
@@ -347,6 +453,59 @@ def song_span(curve: list[float], win: float = 0.5, smooth: float = 2.0, level: 
         return 0.0, total
     a, b = max(0.0, loud[0] * win - 0.5), min(total, (loud[-1] + n) * win + 0.5)
     return (a, b) if b - a >= 30.0 else (0.0, total)
+
+
+# ---- beats: where the cuts between montage plays land --------------------------------------------------------
+
+def onset_envelope(ffmpeg: Path, path: Path, sr: int = 11025, hop: int = 256, n_fft: int = 1024) -> tuple[list[float], float]:
+    """(how much new sound starts in each 23 ms frame of a track — spectral flux —, frames per second)."""
+    import numpy as np
+    r = subprocess.run([str(ffmpeg), "-v", "error", "-i", str(path), "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"],
+                       capture_output=True)
+    if r.returncode != 0 or len(r.stdout) < n_fft * 4:
+        return [], sr / hop
+    x = np.frombuffer(r.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+    n = 1 + (len(x) - n_fft) // hop
+    frames = np.lib.stride_tricks.as_strided(x, shape=(n, n_fft), strides=(x.strides[0] * hop, x.strides[0]))
+    mag = np.log1p(10.0 * np.abs(np.fft.rfft(frames * np.hanning(n_fft), axis=1)))
+    flux = np.maximum(0.0, np.diff(mag, axis=0)).sum(axis=1)
+    return [0.0] + flux.tolist(), sr / hop
+
+
+def track_beats(onset: list[float], fps: float, bpm_lo: float = 70.0, bpm_hi: float = 180.0,
+                tightness: float = 100.0) -> list[float]:
+    """Beat times (seconds) from an onset envelope: the tempo from its autocorrelation (leaning to 120 BPM), then the
+    beats by dynamic programming (each beat on a strong onset about one beat period after the previous one, the
+    classic Ellis tracker). Pure function; unit-tested."""
+    import numpy as np
+    o = np.asarray(onset, dtype=np.float64)
+    if len(o) < fps * 4 or o.std() == 0:
+        return []
+    o = (o - o.mean()) / o.std()
+    lags = np.arange(max(1, int(fps * 60 / bpm_hi)), int(fps * 60 / bpm_lo) + 1)
+    ac = np.array([np.dot(o[:-lag], o[lag:]) / (len(o) - lag) for lag in lags])
+    bpm = 60.0 * fps / lags
+    period = int(lags[int(np.argmax(ac * np.exp(-0.5 * np.log2(bpm / 120.0) ** 2)))])
+    score, back = o.copy(), np.full(len(o), -1)
+    for t in range(period // 2, len(o)):
+        ps = np.arange(max(0, t - 2 * period), t - period // 2)
+        if not len(ps):
+            continue
+        cand = score[ps] - tightness * np.log((t - ps) / period) ** 2
+        k = int(np.argmax(cand))
+        score[t] = o[t] + cand[k]
+        back[t] = ps[k]
+    t = len(o) - period + int(np.argmax(score[-period:]))
+    beats = [t]
+    while back[t] >= 0:
+        t = int(back[t])
+        beats.append(t)
+    return [round(b / fps, 3) for b in sorted(beats)]
+
+
+def beat_times(ffmpeg: Path, path: Path) -> list[float]:
+    onset, fps = onset_envelope(ffmpeg, path)
+    return track_beats(onset, fps) if onset else []
 
 
 QUIET_MIN = 8.0     # a quiet stretch inside a song at least this long is cut out of a montage's soundtrack
@@ -577,7 +736,8 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
                  impact: bool, look: bool, fade: bool, has_music: bool, game_vol: float, music_vol: float,
                  texts: list[dict], voices: list[float] | None = None, voice_vol: float = 1.0,
                  card: dict | None = None, pad: float = 0.0, duck: list[tuple[float, float]] | None = None,
-                 music_later: bool = False) -> str:
+                 music_later: bool = False, lut: Path | None = None, edge_in: str | None = None,
+                 edge_out: str | None = None) -> str:
     """texts: [{"file": Path, "size": int, "x": str, "y": str, "alpha": str|None, "enable": str|None, "font": Path}]
     voices: output-time offsets of the extra audio inputs that follow the clip (and the music, when there is one).
     card: {"idx": input index of the photo or None, "d": avatar px, "x", "y", "initial": Path|None, "font": Path}
@@ -607,6 +767,12 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
             if s > 1.5:
                 au += ",volume=0.35"   # fast-forwarded game audio is a blur: keep it under the music and the voice lines
         seg_len = (b - a) / s
+        if i == 0 and edge_in:     # a transition from the play before (montage_piece): no fade from black here
+            v += "," + edge_filter(edge_in, "in", width, height, seg_len)
+            au += ",afade=t=in:st=0:d=0.05"
+        if i == len(segs) - 1 and edge_out:
+            v += "," + edge_filter(edge_out, "out", width, height, seg_len)
+            au += f",afade=t=out:st={max(0.0, seg_len - 0.05):.3f}:d=0.05"
         if cut_after:     # a cut is a quick flash: out to white, back in from white, the sound dips with it
             v += f",fade=t=out:st={max(0.0, seg_len - CUT_FLASH_OUT):.3f}:d={CUT_FLASH_OUT}:color=white"
             au += f",afade=t=out:st={max(0.0, seg_len - CUT_AUDIO_FADE):.3f}:d={CUT_AUDIO_FADE}"
@@ -626,23 +792,28 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
     cur = "[vc0]"
     if look:
         # no dithering: it only adds ±1 level of noise per frame, which the encoder smooths away, at half the cost
-        parts.append(f"{cur}eq=contrast=1.06:saturation=1.18:gamma=0.98,vignette=angle=PI/4.6:dither=0[vl]")
+        grade = f"lut3d=file={_fesc(lut)}:interp=trilinear" if lut else "eq=contrast=1.06:saturation=1.18:gamma=0.98"
+        parts.append(f"{cur}{grade},vignette=angle=PI/4.6:dither=0[vl]")
         cur = "[vl]"
     if card:
         parts += _card_chain(card, fps)
         parts.append(f"{cur}[card]overlay=x={card['x']}:y={card['y']}:eof_action=pass[vcard]")
         cur = "[vcard]"
     post = [_drawtext(t["font"], t["file"], t["size"], t["x"], t["y"], t.get("alpha"), t.get("enable")) for t in texts]
-    if fade:
-        post.append(f"fade=t=in:st=0:d=0.5,fade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7")
+    if fade and not edge_in:
+        post.append("fade=t=in:st=0:d=0.5")
+    if fade and not edge_out:
+        post.append(f"fade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7")
     post.append(f"fps={fps:g}")   # constant frame rate: speed changes leave irregular timestamps behind
     parts.append(cur + ",".join(post) + "[vc]")
     ag = f"volume={game_vol:.2f}" if has_music or music_later else "anull"
     win = "+".join(f"between(t\\,{a - 0.25:.2f}\\,{b + 0.25:.2f})" for a, b in duck) if duck else ""
     if win:   # the game audio drops to half while a voice line plays (0.25 s either side), evaluated per frame
         ag = f"volume='{(game_vol if has_music or music_later else 1.0):.2f}*(1-0.5*min(1\\,{win}))':eval=frame"
-    if fade:
-        ag += f",afade=t=in:st=0:d=0.4,afade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7"
+    if fade and not edge_in:
+        ag += ",afade=t=in:st=0:d=0.4"
+    if fade and not edge_out:
+        ag += f",afade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7"
     mix = ["[ag]"]
     parts.append(f"[ac0]{ag}[ag]")
     if has_music:
@@ -688,10 +859,13 @@ def _card_chain(card: dict, fps: float) -> list[str]:
 
 
 def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, title: tuple[str, str] | None,
-               counter: bool, font: Path, tmp_base: Path, card: dict | None = None) -> tuple[list[dict], list[Path], dict | None]:
+               counter: bool, font: Path, tmp_base: Path, card: dict | None = None,
+               clutch: dict | None = None) -> tuple[list[dict], list[Path], dict | None]:
     """Describe the drawtext calls (title card, player card texts, kill counter) and the player card geometry.
     The texts are written to small files next to the output (drawtext's textfile= needs no escaping); the caller
-    deletes them after the encode. card: {"name", "photo"} -> returned spec has d/x/y/initial/idx(None)."""
+    deletes them after the encode. card: {"name", "photo"} -> returned spec has d/x/y/initial/idx(None).
+    clutch: {"n", "round", "score": (ours, theirs) | None} puts the odds at the top left: 1vN counting down with the
+    clutcher's kills, CLUTCH once all are down, the round and score under it."""
     texts: list[dict] = []
     files: list[Path] = []
     card_spec: dict | None = None
@@ -745,7 +919,51 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
                           "y": str(margin), "alpha": f"min(1,(t-{o:.3f})/0.12)", "enable": f"between(t,{o:.3f},{end:.3f})"})
         texts.append({"font": font, "file": label, "size": lab_px, "x": f"w-tw-{margin}",
                       "y": str(margin + num_px + 2), "alpha": "0.85", "enable": f"gte(t,{outs[0]:.3f})"})
+    if clutch and clutch.get("n"):
+        for state in clutch_states(int(clutch["n"]), [out_time(segs, k) for k in sorted(kills)], total_duration(segs)):
+            texts.append({"font": font, "file": tf(state["text"]), "size": int(h * 0.09), "x": str(int(h * 0.05)),
+                          "y": str(int(h * 0.05)), "alpha": f"min(1,(t-{state['from']:.3f})/0.12)",
+                          "enable": f"between(t,{state['from']:.3f},{state['to']:.3f})"})
+        sc = clutch.get("score")
+        line = "  ·  ".join(x for x in (f"ROUND {clutch['round']}" if clutch.get("round") else "",
+                                         f"{sc[0]}–{sc[1]}" if sc else "") if x)
+        if line:
+            texts.append({"font": font, "file": tf(line), "size": int(h * 0.024), "x": str(int(h * 0.05)),
+                          "y": str(int(h * 0.05) + int(h * 0.09) + 2), "alpha": "0.85", "enable": None})
     return texts, files, card_spec
+
+
+def clutch_states(n: int, kills_out: list[float], total: float) -> list[dict]:
+    """[{"text", "from", "to"}] of the clutch counter: 1vN from the start, one fewer at each of the clutcher's kills,
+    CLUTCH once nobody is left. Pure function; unit-tested."""
+    out, t, left = [], 0.0, n
+    for k in kills_out:
+        if k > t + 0.05:
+            out.append({"text": f"1v{left}" if left > 0 else "CLUTCH", "from": t, "to": k})
+        t, left = k, max(0, left - 1)
+    if total > t + 0.05:
+        out.append({"text": f"1v{left}" if left > 0 else "CLUTCH", "from": t, "to": total + 1})
+    return out
+
+
+def round_score(meta: dict, round_num: int, steamid: str) -> tuple[int, int] | None:
+    """(rounds won by the player's side, rounds lost) before `round_num`, following the player across the halftime
+    side swap. None without round data. Pure function; unit-tested."""
+    rounds = meta.get("rounds") or []
+    if not rounds or not steamid:
+        return None
+    ours = theirs = 0
+    for r in rounds:
+        if int(r.get("num") or 0) >= round_num:
+            break
+        side = (r.get("teams") or {}).get(str(steamid))
+        if not side or not r.get("winner"):
+            continue
+        if r["winner"] == side:
+            ours += 1
+        else:
+            theirs += 1
+    return ours, theirs
 
 
 def voice_prefs(highlight: dict | None) -> list[str]:
@@ -876,13 +1094,16 @@ def clip_timing(kill_times: list[float], duration: float, opts: dict) -> dict:
     `opts` (no voice lines). Pure function; unit-tested."""
     kills, slow_kills, keep, mode, plan = plan_clip(kill_times, duration, opts)
     segs = plan(keep)
-    return {"seconds": total_duration(segs), "hit": out_time(segs, slow_kills[0]) if slow_kills else None}
+    total = total_duration(segs)
+    return {"seconds": total, "hit": out_time(segs, slow_kills[0]) if slow_kills else None,
+            "tail": total - out_time(segs, kills[-1]) if kills else total}
 
 
 def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times: list[float], music: Path | None,
                    opts: dict, title: tuple[str, str] | None = None, fps_hint: float | None = None,
                    crf: int = 20, highlight: dict | None = None, card: dict | None = None,
-                   progress=None, music_later: bool = False, low_priority: bool = False) -> dict:
+                   progress=None, music_later: bool = False, low_priority: bool = False,
+                   score: tuple[int, int] | list[int] | None = None) -> dict:
     """low_priority: FFmpeg runs below normal priority (it renders while CS2 records and must not slow it down).
     music_later: a montage piece; no music now (one song goes over the joined montage), game audio already
     at the music mix level. The result has "hits" (output seconds of the slow-motion kills) and "duck" (output
@@ -900,6 +1121,8 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     fps = info["fps"] or fps_hint or 60.0
     kills, slow_kills, keep, mode, plan = plan_clip(kill_times, duration, opts)
     segs = plan(keep)
+    if float(opts.get("_trim") or 0) > 0:          # a montage play ends on a beat: its tail is cut that much
+        segs = trim_out_end(segs, float(opts["_trim"]))
     pins = voice.parse_pins(opts.get("cine_voice_pick"))
     voices = plan_voices(segs, kills, total_duration(segs), highlight, pins=pins) if opts.get("cine_voice") else []
     pad = 0.0
@@ -919,14 +1142,23 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
             else:
                 pad = need
                 break
+    edge_in, edge_out = opts.get("_in"), opts.get("_out")   # transitions to the plays before and after
+    if edge_in:
+        segs = split_at_out(segs, EDGE_SECONDS)
+    if edge_out and not pad:
+        segs = split_at_out(segs, total_duration(segs) - EDGE_SECONDS)
+    else:
+        edge_out = None
     total_out = total_duration(segs) + pad
     has_music = music is not None and music.exists()
-    want_text = opts.get("cine_title") or opts.get("cine_counter") or (opts.get("cine_card") and card)
+    clutch = ({"n": int(highlight.get("n") or 0), "round": highlight.get("round"), "score": score}
+              if opts.get("cine_clutch", True) and highlight and highlight.get("type") == "clutch" else None)
+    want_text = opts.get("cine_title") or opts.get("cine_counter") or (opts.get("cine_card") and card) or clutch
     font = find_font() if want_text else None
     texts, text_files, card_spec = plan_texts(
         segs, kills, width=width, height=height, title=title if opts.get("cine_title") else None,
         counter=bool(opts.get("cine_counter")), font=font, tmp_base=dst,
-        card=card if opts.get("cine_card") else None) if font else ([], [], None)
+        card=card if opts.get("cine_card") else None, clutch=clutch) if font else ([], [], None)
     offset = 0.0
     if has_music and opts.get("cine_music_sync") and slow_kills:
         report("finding the drop in the music")
@@ -946,7 +1178,9 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
                          voices=[at for _, at in voices], voice_vol=float(opts.get("cine_voice_volume", 1.0)),
                          card=card_spec, pad=pad,
                          duck=[(at, at + durs.get(pth, 1.5)) for pth, at in voices] if voices else None,
-                         music_later=music_later)
+                         music_later=music_later,
+                         lut=lut_file(str(opts.get("cine_grade", "teal_orange"))) if opts.get("cine_look") else None,
+                         edge_in=edge_in, edge_out=edge_out)
     args += ["-filter_complex", graph, "-map", "[vc]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast",
              "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
              "-t", f"{total_out:.3f}", str(dst)]
@@ -958,7 +1192,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         for p in text_files:
             p.unlink(missing_ok=True)
     if code != 0 or not dst.exists():
-        raise RuntimeError("ffmpeg failed: " + err[-800:])
+        raise RuntimeError("ffmpeg failed: " + err[-1500:])
     report("done", 1.0)
     effects = [k[5:] for k in ("cine_ramp", "cine_impact", "cine_look", "cine_fade", "cine_title", "cine_counter")
                if opts.get(k)]
@@ -1132,7 +1366,8 @@ def clip_context(demo_id: str, highlight_id: int, clip_start_tick: int, clip_end
         if h["id"] == highlight_id:
             ks = [(t - clip_start_tick) / tr for t in h.get("kills", [])
                   if t >= clip_start_tick and (clip_end_tick is None or t <= clip_end_tick)]
-            return {"kills": ks, "highlight": h, "map": meta.get("map", "")}
+            return {"kills": ks, "highlight": h, "map": meta.get("map", ""),
+                    "score": round_score(meta, int(h.get("round") or 0), str(h.get("player") or ""))}
     return {"kills": [], "highlight": None, "map": meta.get("map", "")}
 
 
@@ -1214,7 +1449,8 @@ def video_kills(demo_id: str, video: dict) -> list[float]:
 def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, videos_dir: Path,
                         smooth: bool | None = None, overrides: dict | None = None, progress=None,
                         montage_piece: bool = False, slow: bool = True, lead: float | None = None,
-                        low_priority: bool = False) -> dict:
+                        low_priority: bool = False, trim: float = 0.0, t_in: str | None = None,
+                        t_out: str | None = None) -> dict:
     """Create <name>_cine.mp4 next to the clip and return the updated video entry. montage_piece=True makes
     <name>_mtg.mp4 without music instead (the montage gets one song over everything); the entry is not meant to
     be saved. A montage piece without voice lines comes from (or goes into) the piece cache: the entry then has
@@ -1227,6 +1463,12 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         opts["_no_slow"] = True   # a montage play that does not land on a drop of the song
     if lead is not None:
         opts["_lead"] = lead      # shifts the play's kills so a kill lands on a drop
+    if trim:
+        opts["_trim"] = round(float(trim), 3)   # ends the play on a beat
+    if t_in:
+        opts["_in"] = t_in        # transitions from / to the neighbouring plays of a montage
+    if t_out:
+        opts["_out"] = t_out
     src = videos_dir / demo_id / video["file"]
     dst = src.with_name(src.stem + ("_mtg.mp4" if montage_piece else "_cine.mp4"))
     ctx = clip_context(demo_id, video["highlight_id"], int(video["start_tick"]), video.get("end_tick"))
@@ -1238,11 +1480,12 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         return make_cinematic(ffmpeg, ffprobe, src, out, ctx["kills"], None if montage_piece else pick_music(opts), opts,
                               title=title, fps_hint=float(cfg.get("record_fps", 60)), crf=int(cfg.get("record_crf", 20)),
                               highlight=ctx["highlight"], card=card, progress=progress, music_later=montage_piece,
-                              low_priority=low_priority)
+                              low_priority=low_priority, score=ctx.get("score"))
     video = dict(video)
     if montage_piece and not opts.get("cine_voice"):   # voice lines are picked at random: nothing to reuse
         shape = {k: x for k, x in opts.items() if k not in PIECE_IGNORES}
-        key = piece_key(src, {"kills": ctx["kills"], "opts": shape, "title": title, "card": card,
+        key = piece_key(src, {"kills": ctx["kills"], "opts": shape, "title": title, "card": card, "score": ctx.get("score"),
+                              "clutch": [(ctx["highlight"] or {}).get(k) for k in ("type", "n", "round")],
                               "photo": _mtime((card or {}).get("photo")), "font": str(find_font()),
                               "fps": cfg.get("record_fps", 60), "crf": cfg.get("record_crf", 20)})
         path, info, hit = cached_piece(key, make)

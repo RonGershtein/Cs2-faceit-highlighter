@@ -36,6 +36,9 @@ DEFAULTS: dict = {
     "record_fast_preroll": False,  # play the unrecorded 2 s before each highlight at 4x (a little faster recording)
     "cine_drop_slowmo": True,  # long montages: slow motion only on the plays whose kill lands on a drop of the song
     "cine_drop_min_plays": 6,  # from how many plays on
+    "montage_transition": "mixed",  # between montage plays: "mixed" (whip, zoom, flash in turn), "whip", "zoom", "flash", "none"
+    "montage_beat_cuts": True, # end every montage play on a beat of the song (its tail cut a little)
+    "montage_outro": True,     # end montages with the end card: GG, the team name and the stats of the plays
     "montage_order": "song",   # squad montages and recaps: "song" (plays ordered to fit the song's drops) or "date"
     "record_demoui_each_demo": True,  # several demos in one CS2 session: close the demo panel again after each playdemo
     "record_hud": "killfeed",  # "killfeed": a clean picture with the kill feed only; "health_ammo": CS2's full HUD
@@ -57,9 +60,11 @@ DEFAULTS: dict = {
     "cine_ramp": True,         # ease in and out of slow motion instead of a hard cut
     "cine_impact": True,       # zoom punch + flash on each kill
     "cine_look": True,         # vignette + colour grade
+    "cine_grade": "teal_orange",  # the colour grade: "teal_orange", "dark" (cinematic 3D LUTs) or "classic"
     "cine_fade": True,         # fade in/out at the clip edges
     "cine_title": True,        # title card (3K / ACE / clutch, player, map, round)
     "cine_counter": True,      # kill counter in the corner
+    "cine_clutch": True,       # clutches: 1vN counting down at the top left, with the round and the score
     "cine_card": True,         # player card: round avatar (data/players/<steam64>.png, blank until added) + nickname
     "cine_voice": False,       # real caster voice lines from data/voice; per run only (cinematic.PER_RUN_KEYS), never saved
     "cine_voice_volume": 1.0,
