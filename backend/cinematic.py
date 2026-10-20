@@ -15,6 +15,7 @@ import json
 import math
 import os
 import random
+import re
 import subprocess
 import sys
 import threading
@@ -660,6 +661,20 @@ def title_for(h: dict, map_name: str = "", with_player: bool = True) -> tuple[st
     return big, "  ·  ".join(parts)
 
 
+def title_for_shown(title: tuple[str, str] | None, h: dict | None, shown: int) -> tuple[str, str] | None:
+    """The title card for the kills the clip really shows: a recording cut off early (or a kill outside it) must not
+    say TRIPLE KILL over two kills. Pure function; unit-tested."""
+    ks = list((h or {}).get("kills") or [])
+    if not title or not h or shown >= len(ks):
+        return title
+    h2 = {**h, "kills": ks[:shown]}
+    if h.get("type") in ("multikill", "ace"):
+        h2.update({"n": shown, "type": "multikill"})
+    big = title_for(h2)[0]
+    sub = re.sub(r"^\d+K(  ·  )?", f"{shown}K\\1" if shown >= 2 else "", title[1])
+    return big, sub
+
+
 def player_card(h: dict | None) -> dict | None:
     """{"name", "photo": Path|None, "steamid"} for the highlight's player. Nickname from data/players.json
     ({steam64: {"name": ..., "photo": ...}}) when present, else the in-game name; photo data/players/<steam64>.<ext>."""
@@ -1154,6 +1169,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     duration, width, height = info["duration"], info["width"], info["height"]
     fps = info["fps"] or fps_hint or 60.0
     kills, slow_kills, keep, mode, plan = plan_clip(kill_times, duration, opts)
+    title = title_for_shown(title, highlight, len(kills))
     segs = plan(keep)
     if float(opts.get("_trim") or 0) > 0:          # a montage play ends on a beat: its tail is cut that much
         segs = trim_out_end(segs, float(opts["_trim"]))

@@ -408,3 +408,13 @@ def test_card_args_build_an_animated_card(tmp_path):
     intro = c.card_args(Path("ff"), Path("p.mp4"), 3.0, Path("o.mp4"), files, {"big": "YOUR TEAM", "line": "x", "small": "y"},
                         Path("f.ttf"), Path("d.ttf"), 1920, 1080, 60.0, 48000, 2, 20, c.INTRO_SECONDS, "intro")
     assert "pow(max(0,(on-" in intro[intro.index("-filter_complex") + 1]           # the push in at the end of the intro
+
+
+def test_title_counts_only_the_kills_the_clip_shows():
+    h = {"type": "multikill", "n": 3, "kills": [1, 2, 3], "player_name": "Ldr", "round": 17}
+    t = c.title_for(h, "de_inferno")
+    assert t[0] == "TRIPLE KILL" and c.title_for_shown(t, h, 3) == t
+    assert c.title_for_shown(t, h, 2) == ("DOUBLE KILL", "2K  ·  Ldr  ·  Inferno  ·  round 17")
+    clutch = {"type": "clutch", "n": 2, "kills": [1, 2, 3], "player_name": "InvviS", "round": 7}
+    assert c.title_for_shown(c.title_for(clutch), clutch, 2)[0] == "DOUBLE KILL"
+    assert c.title_for_shown(None, h, 1) is None

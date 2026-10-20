@@ -613,7 +613,7 @@ def squad_preview(demo_id: str, min_kills: int = 3):
     _demo_or_404(demo_id)
     r = _rec()
     r.recover_recordings([demo_id])
-    have = {v["highlight_id"]: v for v in r.videos_index(demo_id).get("videos", [])}
+    have = {v["highlight_id"]: v for v in r.videos_index(demo_id).get("videos", []) if r.is_recorded(v)}
     hs = r.squad_highlights(db.get_highlights(demo_id), r.load_squad(), min_kills)
     return {"highlights": [{"id": h["id"], "description": h["description"], "player_name": h.get("player_name"),
                             "recorded": h["id"] in have, "cinematic": bool(have.get(h["id"], {}).get("cine"))} for h in hs]}

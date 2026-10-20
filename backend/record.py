@@ -233,8 +233,9 @@ def hud_cvars(mode: str) -> list[str]:
 # the CPU to the game; the GPU ones at a quantizer a little finer than the x264 crf so the quality holds
 ENCODERS = {
     "x264": "-c:v libx264 -preset veryfast -crf {crf} -pix_fmt yuv420p",
-    "nvenc": "-c:v h264_nvenc -preset p5 -tune hq -rc constqp -qp {qp} -pix_fmt yuv420p",
-    "amf": "-c:v h264_amf -quality quality -rc cqp -qp_i {qp} -qp_p {qp} -pix_fmt yuv420p",
+    # the GPU encoders at a capped bitrate: at a fixed quantizer AMF wrote 80 Mbit/s, 4.6x the size of x264's files
+    "nvenc": "-c:v h264_nvenc -preset p5 -tune hq -rc vbr -cq {qp} -b:v 20M -maxrate 32M -bufsize 40M -pix_fmt yuv420p",
+    "amf": "-c:v h264_amf -quality quality -rc vbr_peak -b:v 20M -maxrate 32M -bufsize 40M -pix_fmt yuv420p",
     "qsv": "-c:v h264_qsv -preset medium -global_quality {qp} -pix_fmt nv12",
 }
 VENDOR_ENCODER = {"nvidia": "nvenc", "amd": "amf", "intel": "qsv"}
@@ -483,7 +484,35 @@ def encode_one(s: dict, out_dir: Path, tickrate: int) -> dict | None:
     r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode != 0 or not out.exists():
         shutil.copyfile(video, out)
-    return {**planned_entry(s, tickrate), "size": out.stat().st_size, "audio": bool(wavs)}
+    entry = {**planned_entry(s, tickrate), "size": out.stat().st_size, "audio": bool(wavs)}
+    return check_length(entry, out)
+
+
+SHORT_BY = 1.5   # seconds a recording may come out shorter than its highlight before it counts as cut off
+
+
+def check_length(entry: dict, path: Path) -> dict:
+    """The clip entry with its real length: when the recording stopped early (CS2 or HLAE under strain), "seconds" is
+    what the file holds and "short" marks it, so it is recorded again (is_recorded) and its title counts only the
+    kills it shows."""
+    real = clip_seconds(path)
+    if real and real < float(entry.get("seconds") or 0) - SHORT_BY:
+        print(f"[record] {path.name} stopped early: {real:.1f} s of {entry['seconds']} s", flush=True)
+        return {**entry, "seconds": round(real, 1), "expected": entry["seconds"], "short": True}
+    return entry
+
+
+def clip_seconds(path: Path) -> float:
+    from . import cinematic as cine
+    try:
+        return cine.probe_duration(FFMPEG_DIR / "bin" / "ffprobe.exe", path)
+    except OSError:
+        return 0.0
+
+
+def is_recorded(v: dict) -> bool:
+    """A clip that holds its whole highlight (one cut off early is recorded again). Pure function."""
+    return not v.get("short")
 
 
 def planned_entry(s: dict, tickrate: int) -> dict:
@@ -1652,7 +1681,7 @@ def start_squad_reel(demo_id: str, min_kills: int = 3, cinematic: bool = True, o
 
     def run() -> None:
         try:
-            have = {v["highlight_id"] for v in videos_index(demo_id).get("videos", [])}
+            have = {v["highlight_id"] for v in videos_index(demo_id).get("videos", []) if is_recorded(v)}
             need = [i for i in ids if i not in have]
             _squad_job["needs_recording"] = bool(need)
             ov, follow = overrides, None
@@ -2423,7 +2452,7 @@ def recap_preview(date_from: str, date_to: str, min_kills: int = 3, best_of: int
     members = load_squad()
     matches = _recap_matches()
     plays = recap_plays(matches, members, date_from, date_to, min_kills, best_of)
-    have = {(m["demo_id"], v["highlight_id"]) for m in matches for v in m["videos"]}
+    have = {(m["demo_id"], v["highlight_id"]) for m in matches for v in m["videos"] if is_recorded(v)}
     missing = []
     for d in db.list_demos():
         day = str(d.get("date") or "")[:10]
@@ -2599,7 +2628,7 @@ def multi_squad_plan(demo_ids: list[str], min_kills: int = 3) -> list[dict]:
         if not demo:
             continue
         hs = squad_highlights(db.get_highlights(d), members, min_kills)
-        have = {v["highlight_id"] for v in videos_index(d).get("videos", [])}
+        have = {v["highlight_id"] for v in videos_index(d).get("videos", []) if is_recorded(v)}
         plan.append({"demo_id": d, "map": demo.get("map"), "date": demo.get("date"),
                      "score": f"{demo.get('score_a')}–{demo.get('score_b')}", "ids": [h["id"] for h in hs],
                      "need": [h["id"] for h in hs if h["id"] not in have],

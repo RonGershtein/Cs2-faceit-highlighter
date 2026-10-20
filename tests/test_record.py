@@ -574,8 +574,8 @@ def test_encoder_args_auto_and_by_name():
     assert encoder_args({"record_crf": 20, "record_encoder": "x264"}) == "-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p"
     assert encoder_args({"record_crf": 20}, auto="x264").startswith("-c:v libx264")          # auto, nothing found
     amf = encoder_args({"record_crf": 20}, auto="amf")
-    assert amf.startswith("-c:v h264_amf") and "-qp_i 18 -qp_p 18" in amf
-    assert "h264_nvenc" in encoder_args({"record_encoder": "nvenc"}) and "-qp 18" in encoder_args({"record_encoder": "nvenc"})
+    assert amf.startswith("-c:v h264_amf") and "-b:v 20M -maxrate 32M" in amf
+    assert "h264_nvenc" in encoder_args({"record_encoder": "nvenc"}) and "-cq 18" in encoder_args({"record_encoder": "nvenc"})
     assert "h264_qsv" in encoder_args({"record_encoder": "qsv"})
     assert encoder_args({"record_encoder": "bogus"}).startswith("-c:v libx264")
     text, _ = build_cfg([hl(0, 5000, 5600)], Path("C:/x/raw"), {}, {"record_encoder": "amf"}, 64)
@@ -849,3 +849,14 @@ def test_montage_plan_puts_a_transition_between_every_two_plays(monkeypatch):
     assert pp[2] == {"t_out": "whip"} and pp[0] == {"t_in": "whip", "t_out": "zoom"} and pp[1] == {"t_in": "zoom"}
     monkeypatch.setattr(rec, "load_config", lambda: {"montage_transition": "none"})
     assert rec.plan_montage([("d", {}), ("d", {})], None, False)["per_play"] == [{}, {}]
+
+
+def test_a_recording_cut_off_early_is_marked_and_recorded_again(tmp_path, monkeypatch):
+    import backend.record as r
+    monkeypatch.setattr(r, "clip_seconds", lambda p: 37.2)
+    e = r.check_length({"file": "x.mp4", "seconds": 67.2}, tmp_path / "x.mp4")
+    assert e["short"] and e["seconds"] == 37.2 and e["expected"] == 67.2 and not r.is_recorded(e)
+    monkeypatch.setattr(r, "clip_seconds", lambda p: 66.4)          # a frame or two short is fine
+    assert r.is_recorded(r.check_length({"file": "x.mp4", "seconds": 67.2}, tmp_path / "x.mp4"))
+    monkeypatch.setattr(r, "clip_seconds", lambda p: 0.0)           # could not measure: trust it
+    assert r.is_recorded(r.check_length({"file": "x.mp4", "seconds": 67.2}, tmp_path / "x.mp4"))
