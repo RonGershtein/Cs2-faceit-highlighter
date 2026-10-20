@@ -871,5 +871,5 @@ def test_lineup_adds_up_each_players_kills():
     b = {"name": "Ldr", "photo": "ldr.png", "steamid": "2"}
     got = lineup_players([(a, 3), (b, 4), (a, 2), (None, 5)])
     assert [(p["name"], p["kills"]) for p in got] == [("invis", 5), ("Ldr", 4)] and got[1]["photo"] == "ldr.png"
-    many = [({"name": f"p{i}", "steamid": str(i)}, i) for i in range(9)]
-    assert len(lineup_players(many)) == 6 and lineup_players(many)[0]["name"] == "p8"
+    many = [({"name": f"p{i}", "steamid": str(i)}, i) for i in range(10)]
+    assert len(lineup_players(many)) == 8 and lineup_players(many)[0]["name"] == "p9"

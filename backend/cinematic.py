@@ -1468,6 +1468,8 @@ def card_args(ffmpeg: Path, src: Path, at: float, dst: Path, texts: dict, words:
         d = round(height * 0.14)
         ring = d + 8
         step = max(round(ring * 1.9), round(width * 0.12))
+        if len(lineup) > 1:   # a full squad still fits the width
+            step = min(step, (round(width * 0.94) - ring) // (len(lineup) - 1))
         x_first = (width - step * (len(lineup) - 1)) // 2 - ring // 2
         y_av = round(height * 0.665)
         rgb = "r='r(X,Y)':g='g(X,Y)':b='b(X,Y)'"
@@ -1537,7 +1539,7 @@ def _make_card(ffmpeg: Path, ffprobe: Path, piece: Path, at: float, dst: Path, w
             f.unlink(missing_ok=True)
 
 
-LINEUP_MAX = 6
+LINEUP_MAX = 8
 OUTRO_LINEUP_SECONDS = 6.0
 
 
