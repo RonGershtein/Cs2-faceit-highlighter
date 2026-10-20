@@ -812,7 +812,7 @@ def test_song_montage_ends_with_the_gg_card(tmp_path, monkeypatch):
     made = rec._render_song_montage([("d", {"file": "0.mp4"}), ("d", {"file": "1.mp4"})], None, tmp_path, tmp_path / "o.mp4",
                                     intro={"team": "Your Team", "sub": "Squad montage", "stats": "2 plays"})
     assert joined[0].startswith("montage_intro_") and joined[-1].startswith("montage_outro_")
-    assert cards[-1] == ("m1.mp4", 3.85, "GG", "Your Team", "2 plays")      # the last frame of the last play
+    assert cards[-1] == ("m1.mp4", 2.5, "GG", "Your Team", "2 plays")       # 1.5 s before the end, not a faded frame
     assert made["seconds"] == 3.5 + 4.0 + 4.0 + 4.5
 
 
@@ -844,9 +844,12 @@ def test_montage_plan_puts_a_transition_between_every_two_plays(monkeypatch):
     import backend.record as rec
     monkeypatch.setattr(rec, "_plan_montage", lambda plays, ov, intro, reorder, follow: {
         "per_play": [{} for _ in plays], "order": [2, 0, 1], "song": None, "offset": None, "follow": None, "note": None})
-    monkeypatch.setattr(rec, "load_config", lambda: {"montage_transition": "mixed"})
+    monkeypatch.setattr(rec, "load_config", lambda: {"montage_transition": "mixed", "montage_outro": False})
     pp = rec.plan_montage([("d", {}), ("d", {}), ("d", {})], None, False)["per_play"]
     assert pp[2] == {"t_out": "whip"} and pp[0] == {"t_in": "whip", "t_out": "zoom"} and pp[1] == {"t_in": "zoom"}
+    monkeypatch.setattr(rec, "load_config", lambda: {"montage_transition": "mixed", "montage_outro": True})
+    pp = rec.plan_montage([("d", {}), ("d", {}), ("d", {})], None, False)["per_play"]
+    assert pp[1] == {"t_in": "zoom", "t_out": "flash"}                   # the last play flashes into the end card
     monkeypatch.setattr(rec, "load_config", lambda: {"montage_transition": "none"})
     assert rec.plan_montage([("d", {}), ("d", {})], None, False)["per_play"] == [{}, {}]
 

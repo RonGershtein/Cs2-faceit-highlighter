@@ -1925,13 +1925,16 @@ def plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: b
     of the one after; config montage_transition: "mixed" rotates whip, zoom and flash, "none" keeps hard cuts)."""
     from . import cinematic as cine
     plan = _plan_montage(plays, overrides, intro, reorder, follow)
-    style = str(load_config().get("montage_transition", "mixed"))
+    cfg = load_config()
+    style = str(cfg.get("montage_transition", "mixed"))
     if style != "none":
         order = plan["order"]
         for j in range(len(order) - 1):
             st = cine.TRANSITIONS[j % len(cine.TRANSITIONS)] if style == "mixed" else style
             plan["per_play"][order[j]]["t_out"] = st
             plan["per_play"][order[j + 1]]["t_in"] = st
+        if order and cfg.get("montage_outro", True):
+            plan["per_play"][order[-1]]["t_out"] = "flash"   # into the end card on a flash, not a fade to black
     return plan
 
 
@@ -2253,7 +2256,9 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             _squad_job["piece"] = "making the end card"
             team = (intro or {}).get("team") or load_team()["team"] or "Squad"
             card = work_dir / f"montage_outro_{stamp}.mp4"
-            at = max(0.0, float(infos[-1].get("seconds") or 1.0) - 0.15)
+            # behind the card: the last play's slow-motion kill, else a moment before its end (never a faded frame)
+            hits = infos[-1].get("hits") or []
+            at = float(hits[-1]) if hits else max(0.0, float(infos[-1].get("seconds") or 1.0) - 1.5)
             secs = cine.make_outro(FFMPEG_EXE, ffprobe, pieces[-1], at, card, team, (intro or {}).get("stats", ""),
                                    int(load_config().get("record_crf", 20)))
             if secs:
