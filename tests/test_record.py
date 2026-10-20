@@ -570,12 +570,24 @@ def test_session_log_says_which_demo_recorded_what(tmp_path):
     assert "Recording to seq1" in text
 
 
-def test_encoder_args_x264_by_default_and_amd_on_request():
-    assert encoder_args({"record_crf": 20}) == "-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p"
-    amf = encoder_args({"record_crf": 20, "record_encoder": "amf"})
+def test_encoder_args_auto_and_by_name():
+    assert encoder_args({"record_crf": 20, "record_encoder": "x264"}) == "-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p"
+    assert encoder_args({"record_crf": 20}, auto="x264").startswith("-c:v libx264")          # auto, nothing found
+    amf = encoder_args({"record_crf": 20}, auto="amf")
     assert amf.startswith("-c:v h264_amf") and "-qp_i 18 -qp_p 18" in amf
+    assert "h264_nvenc" in encoder_args({"record_encoder": "nvenc"}) and "-qp 18" in encoder_args({"record_encoder": "nvenc"})
+    assert "h264_qsv" in encoder_args({"record_encoder": "qsv"})
+    assert encoder_args({"record_encoder": "bogus"}).startswith("-c:v libx264")
     text, _ = build_cfg([hl(0, 5000, 5600)], Path("C:/x/raw"), {}, {"record_encoder": "amf"}, 64)
     assert '"-c:v h264_amf' in text and "libx264" not in text
+
+
+def test_pick_encoder_only_takes_an_encoder_that_works():
+    from backend.record import pick_encoder
+    assert pick_encoder(["amd"], lambda e: True) == "amf"
+    assert pick_encoder(["nvidia", "intel"], lambda e: e == "qsv") == "qsv"     # NVENC failed: Intel's next
+    assert pick_encoder(["amd"], lambda e: False) == "x264"                    # broken driver: the CPU
+    assert pick_encoder([], lambda e: True) == "x264"
 
 
 def test_build_cfg_fast_preroll_is_back_to_normal_before_recording():
@@ -787,7 +799,13 @@ def test_song_montage_ends_with_the_gg_card(tmp_path, monkeypatch):
         cards.append((piece.name, at, team, sub, stats))
         dst.write_bytes(b"c")
         return 3.5
+
+    def outro(ffmpeg, ffprobe, piece, at, dst, team, stats, crf=20):
+        cards.append((piece.name, at, "GG", team, stats))
+        dst.write_bytes(b"c")
+        return 4.5
     monkeypatch.setattr(cine, "make_intro", card)
+    monkeypatch.setattr(cine, "make_outro", outro)
     joined = []
     monkeypatch.setattr(rec, "_join", lambda files, infos, out, lst: (joined.extend(f.name for f in files), out.write_bytes(b"j")))
     monkeypatch.setattr(cine, "pick_music", lambda opts, exclude=None: None)
@@ -795,7 +813,7 @@ def test_song_montage_ends_with_the_gg_card(tmp_path, monkeypatch):
                                     intro={"team": "Your Team", "sub": "Squad montage", "stats": "2 plays"})
     assert joined[0].startswith("montage_intro_") and joined[-1].startswith("montage_outro_")
     assert cards[-1] == ("m1.mp4", 3.85, "GG", "Your Team", "2 plays")      # the last frame of the last play
-    assert made["seconds"] == 3.5 + 4.0 + 4.0 + 3.5
+    assert made["seconds"] == 3.5 + 4.0 + 4.0 + 4.5
 
 
 def test_snap_to_beat_cuts_the_tail_back_to_a_beat():

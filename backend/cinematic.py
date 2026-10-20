@@ -289,22 +289,32 @@ def trim_out_end(segs: list[Seg], cut: float) -> list[Seg]:
 
 
 TRANSITIONS = ("whip", "zoom", "flash")
-EDGE_SECONDS = 0.25     # each side of a transition between montage plays
+EDGE_SECONDS = 0.4      # each side of a transition between montage plays
 
 
 def edge_filter(style: str, side: str, width: int, height: int, d: float = EDGE_SECONDS) -> str:
     """Filters for the first (side "in") or last ("out") EDGE_SECONDS of a montage play, in that piece's own time
-    (0..d): a whip (sideways motion blur), a zoom punch, or a white flash. The two halves meet on the cut, which
-    lands on a beat. Pure function; unit-tested."""
+    (0..d), meeting on the cut (which lands on a beat):
+    whip: the picture swings sideways out of the play and into the next, in one direction, smeared by motion blur;
+    zoom: a punch in to 1.6x with blur, a white flash on the cut;
+    flash: the picture blows out to white and the next play comes back from it.
+    Pure function; unit-tested."""
     rise = f"(t/{d:.3f})" if side == "out" else f"(1-t/{d:.3f})"     # 0 -> 1 towards the cut
+    ease = f"({rise}*{rise})"
     if style == "whip":
-        return (f"avgblur=sizeX=18:sizeY=1:enable='lt({rise},0.5)',avgblur=sizeX=64:sizeY=1:enable='gte({rise},0.5)'")
+        # 20 % larger, then the crop window slides: the content moves left, faster towards the cut
+        shift = f"(iw-ow)/2*(1+{ease})" if side == "out" else f"(iw-ow)/2*(1-{ease})"
+        blur = ",".join(f"avgblur=sizeX={b}:sizeY=1:enable='between({rise},{lo},{hi})'"
+                        for b, lo, hi in ((12, 0.25, 0.5), (36, 0.5, 0.75), (90, 0.75, 1.01)))
+        return f"scale={int(width * 1.2) // 2 * 2}:{int(height * 1.2) // 2 * 2},crop={width}:{height}:x='{shift}':y=(ih-oh)/2,{blur},setsar=1"
     if style == "zoom":
-        z = f"(1+0.45*{rise}*{rise})"
-        return (f"scale=w='trunc(iw*{z}/2)*2':h='trunc(ih*{z}/2)*2':eval=frame,crop={width}:{height},setsar=1")
+        z = f"(1+0.6*{rise})" if side == "in" else f"(1+0.6*{ease})"   # in: settles over the whole 0.4 s
+        blur = ",".join(f"avgblur=sizeX={b}:sizeY={b}:enable='between({rise},{lo},{hi})'" for b, lo, hi in ((4, 0.5, 0.8), (10, 0.8, 1.01)))
+        flash = (f"fade=t=out:st={d - 0.06:.3f}:d=0.06:color=white" if side == "out" else "fade=t=in:st=0:d=0.12:color=white")
+        return (f"scale=w='trunc(iw*{z}/2)*2':h='trunc(ih*{z}/2)*2':eval=frame,crop={width}:{height},{blur},{flash},setsar=1")
     if style == "flash":
-        return (f"fade=t=out:st={d * 0.4:.3f}:d={d * 0.6:.3f}:color=white" if side == "out"
-                else f"fade=t=in:st=0:d={d:.3f}:color=white")
+        return (f"eq=brightness='0.35*{ease}':eval=frame,fade=t=out:st={d * 0.55:.3f}:d={d * 0.45:.3f}:color=white"
+                if side == "out" else f"fade=t=in:st=0:d={d:.3f}:color=white")
     return "null"
 
 
@@ -603,6 +613,16 @@ def find_font() -> Path | None:
     return None
 
 
+def find_display_font() -> Path | None:
+    """A heavy display face for the intro and end cards (Segoe UI Black, Arial Black, Impact), else find_font()."""
+    windir = Path(os.environ.get("WINDIR", "C:/Windows"))
+    for d in (windir / "Fonts", Path("/mnt/c/Windows/Fonts")):
+        for n in ("seguibl.ttf", "ariblk.ttf", "impact.ttf", "segoeuib.ttf"):
+            if (d / n).is_file():
+                return d / n
+    return find_font()
+
+
 def pretty_map(name: str) -> str:
     n = str(name or "")
     for pre in ("de_", "cs_", "ar_"):
@@ -618,7 +638,10 @@ def title_for(h: dict, map_name: str = "", with_player: bool = True) -> tuple[st
     if typ == "ace" or (typ == "multikill" and n >= 5):
         big = "ACE"
     elif typ == "clutch":
-        big = f"1v{n} CLUTCH" if n else "CLUTCH"
+        # named by its kills like any play (the 1vN odds are on screen while the clutch is on)
+        k = len(h.get("kills") or [])
+        big = ({2: "DOUBLE KILL", 3: "TRIPLE KILL", 4: "QUAD KILL"}.get(k, "ACE" if k >= 5 else "")
+               or (f"1v{n}" if n else "CLUTCH"))
     elif typ == "ninja_defuse":
         big = "NINJA DEFUSE"
     elif typ == "knife":
@@ -865,7 +888,7 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
     The texts are written to small files next to the output (drawtext's textfile= needs no escaping); the caller
     deletes them after the encode. card: {"name", "photo"} -> returned spec has d/x/y/initial/idx(None).
     clutch: {"n", "round", "score": (ours, theirs) | None} puts the odds at the top left: 1vN counting down with the
-    clutcher's kills, CLUTCH once all are down, the round and score under it."""
+    clutcher's kills (gone once all are down), the round and score under it."""
     texts: list[dict] = []
     files: list[Path] = []
     card_spec: dict | None = None
@@ -920,7 +943,14 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
         texts.append({"font": font, "file": label, "size": lab_px, "x": f"w-tw-{margin}",
                       "y": str(margin + num_px + 2), "alpha": "0.85", "enable": f"gte(t,{outs[0]:.3f})"})
     if clutch and clutch.get("n"):
-        for state in clutch_states(int(clutch["n"]), [out_time(segs, k) for k in sorted(kills)], total_duration(segs)):
+        n = int(clutch["n"])
+        ks = sorted(kills)
+        # the odds start when the clutch does (the last teammate down); kills before it were made with help
+        start = clutch.get("start")
+        if start is None:   # not known (an old clip of a deleted match): the last n kills are the clutch
+            start = max(0.0, ks[-n] - 1.5) if len(ks) >= n else 0.0
+        ks = [k for k in ks if k >= start - 0.01]
+        for state in clutch_states(n, [out_time(segs, k) for k in ks], total_duration(segs), out_time(segs, start)):
             texts.append({"font": font, "file": tf(state["text"]), "size": int(h * 0.09), "x": str(int(h * 0.05)),
                           "y": str(int(h * 0.05)), "alpha": f"min(1,(t-{state['from']:.3f})/0.12)",
                           "enable": f"between(t,{state['from']:.3f},{state['to']:.3f})"})
@@ -929,20 +959,24 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
                                          f"{sc[0]}–{sc[1]}" if sc else "") if x)
         if line:
             texts.append({"font": font, "file": tf(line), "size": int(h * 0.024), "x": str(int(h * 0.05)),
-                          "y": str(int(h * 0.05) + int(h * 0.09) + 2), "alpha": "0.85", "enable": None})
+                          "y": str(int(h * 0.05) + int(h * 0.09) + 2), "alpha": "0.85",
+                          "enable": f"gte(t,{out_time(segs, start):.3f})"})
     return texts, files, card_spec
 
 
-def clutch_states(n: int, kills_out: list[float], total: float) -> list[dict]:
-    """[{"text", "from", "to"}] of the clutch counter: 1vN from the start, one fewer at each of the clutcher's kills,
-    CLUTCH once nobody is left. Pure function; unit-tested."""
-    out, t, left = [], 0.0, n
+def clutch_states(n: int, kills_out: list[float], total: float, start: float = 0.0) -> list[dict]:
+    """[{"text", "from", "to"}] of the clutch odds: 1vN from `start` (when the clutch began), one fewer at each of
+    the clutcher's kills after it, gone once nobody is left. Pure function; unit-tested."""
+    out, t, left = [], start, n
+    kills_out = [k for k in kills_out if k >= start - 0.01]
     for k in kills_out:
+        if left <= 0:
+            break
         if k > t + 0.05:
-            out.append({"text": f"1v{left}" if left > 0 else "CLUTCH", "from": t, "to": k})
-        t, left = k, max(0, left - 1)
-    if total > t + 0.05:
-        out.append({"text": f"1v{left}" if left > 0 else "CLUTCH", "from": t, "to": total + 1})
+            out.append({"text": f"1v{left}", "from": t, "to": k})
+        t, left = k, left - 1
+    if left > 0 and total > t + 0.05:
+        out.append({"text": f"1v{left}", "from": t, "to": total + 1})
     return out
 
 
@@ -1103,7 +1137,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
                    opts: dict, title: tuple[str, str] | None = None, fps_hint: float | None = None,
                    crf: int = 20, highlight: dict | None = None, card: dict | None = None,
                    progress=None, music_later: bool = False, low_priority: bool = False,
-                   score: tuple[int, int] | list[int] | None = None) -> dict:
+                   score: tuple[int, int] | list[int] | None = None, clutch_at: float | None = None) -> dict:
     """low_priority: FFmpeg runs below normal priority (it renders while CS2 records and must not slow it down).
     music_later: a montage piece; no music now (one song goes over the joined montage), game audio already
     at the music mix level. The result has "hits" (output seconds of the slow-motion kills) and "duck" (output
@@ -1151,7 +1185,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         edge_out = None
     total_out = total_duration(segs) + pad
     has_music = music is not None and music.exists()
-    clutch = ({"n": int(highlight.get("n") or 0), "round": highlight.get("round"), "score": score}
+    clutch = ({"n": int(highlight.get("n") or 0), "round": highlight.get("round"), "score": score, "start": clutch_at}
               if opts.get("cine_clutch", True) and highlight and highlight.get("type") == "clutch" else None)
     want_text = opts.get("cine_title") or opts.get("cine_counter") or (opts.get("cine_card") and card) or clutch
     font = find_font() if want_text else None
@@ -1285,38 +1319,100 @@ def intro_stats(kills: list[int], types: list[str]) -> str:
     return " · ".join(parts)
 
 
-def intro_args(ffmpeg: Path, src: Path, at: float, dst: Path, texts: dict, font: Path, width: int, height: int,
-               fps: float, sample_rate: int, channels: int, crf: int = 20, seconds: float = INTRO_SECONDS) -> list[str]:
-    """FFmpeg command for the intro card: one frame of `src` at `at` s (the first kill), blurred, darkened and slowly
-    zooming, with the team name (texts["team"] textfile), a line in the accent colour (texts["sub"]) and the stats
-    (texts["stats"]) fading in one after the other; fades in from black and out to black. Encoded like the
-    cinematic pieces (same size, frame rate, codecs, sample rate) so it joins them without re-encoding.
-    Pure function; unit-tested."""
-    frames = max(1, round(seconds * fps))
-    big, mid, small = round(height * 0.115), round(height * 0.042), round(height * 0.032)
-    bar_w = round(width * 0.16)
+OUTRO_SECONDS = 4.5
 
-    def fade(t0: float, d: float = 0.45) -> str:
-        return f"if(lt(t,{t0}),0,if(lt(t,{t0 + d}),(t-{t0})/{d},if(gt(t,{seconds - 0.35}),max(0,({seconds}-t)/0.35),1)))"
-    team_y = f"(h/2)-{round(height * 0.11)}-6*(1-min(1,max(0,(t-0.25)/0.5)))"
+
+def _ease(t0: float, d: float) -> str:
+    """0 -> 1 between t0 and t0 + d, easing out (a strong start that settles), as an FFmpeg expression of t."""
+    return f"(1-pow(1-min(1,max(0,(t-{t0})/{d})),3))"
+
+
+def fit_size(text: str, width: int, height: int, top: float, share: float = 0.86, aspect: float = 0.62) -> int:
+    """The font size that makes `text` fill about `share` of the width, `top` x height at most (a display face's
+    letters are about `aspect` of the size wide). Pure function; unit-tested."""
+    n = max(1, len(text.strip()))
+    return max(round(height * 0.05), min(round(height * top), round(width * share / (n * aspect))))
+
+
+def card_args(ffmpeg: Path, src: Path, at: float, dst: Path, texts: dict, words: dict, font: Path, display: Path,
+              width: int, height: int, fps: float, sample_rate: int, channels: int, crf: int, seconds: float,
+              kind: str) -> list[str]:
+    """FFmpeg command for an animated title card on one frame of `src` (at `at` s): the frame punches in and melts
+    into a dark blurred backdrop that keeps drifting, an accent bar sweeps in, the big title (texts["big"], the
+    display face, sized to fill the width) rises into place over its accent shadow, the accent line
+    (texts["line"]) slides in, the small line (texts["small"]) fades in, and a light sweep crosses the screen.
+    kind "intro" ends with a push in and a fade to black (the montage starts), "outro" with a slow fade to black.
+    words: the same texts as strings (for sizing). Encoded like the montage pieces so it joins them without
+    re-encoding. Pure function; unit-tested."""
+    frames = max(1, round(seconds * fps))
+    big = fit_size(words["big"], width, height, 0.36 if kind == "outro" else 0.24)
+    line_px, small_px = round(height * 0.058), round(height * 0.036)
+    bar_w, bar_h = round(width * 0.24), max(4, round(height * 0.01))
+    cy = round(height * 0.42)
+    off = max(4, round(big * 0.035))                # the accent shadow's offset
+    end_fade = 0.35 if kind == "intro" else 0.6
+    out_a = f"*if(gt(t,{seconds - end_fade:.2f}),max(0,({seconds:.2f}-t)/{end_fade}),1)"
+    punch = f"min(1,on/{max(1, round(0.7 * fps))})"
+    push = f"+0.25*pow(max(0,(on-{frames - round(0.45 * fps)})/{max(1, round(0.45 * fps))}),2)" if kind == "intro" else ""
+    z = f"1+0.15*(1-pow(1-{punch},3))+0.04*on/{frames}{push}"
+    big_y = f"{cy}-{big}/2+{round(height * 0.07)}*(1-{_ease(0.4, 0.55)})"
+    line_y = cy + big // 2 + round(height * 0.075)
+    sweep_w = round(width * 0.06)
     chain = [
-        f"loop=loop={frames}:size=1:start=0", f"fps={fps:g}", f"trim=end_frame={frames}", "setpts=N/FRAME_RATE/TB",
-        f"scale={round(width * 1.12)}:-2", "gblur=sigma=14", "eq=brightness=-0.18:saturation=0.55",
-        f"zoompan=z='1+0.035*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps={fps:g}",
-        "vignette=PI/4.2",
-        _drawtext(font, texts["team"], big, "(w-text_w)/2", team_y, alpha=fade(0.25)),
-        f"drawbox=x=(iw-{bar_w})/2:y=ih/2+{round(height * 0.035)}:w={bar_w}:h={max(2, round(height * 0.004))}:"
-        f"color={INTRO_ACCENT}@0.95:t=fill:enable='between(t,0.7,{seconds - 0.3})'",
-        _drawtext(font, texts["sub"], mid, "(w-text_w)/2", f"(h/2)+{round(height * 0.07)}", alpha=fade(0.75), color=INTRO_ACCENT),
-        _drawtext(font, texts["stats"], small, "(w-text_w)/2", f"(h/2)+{round(height * 0.14)}", alpha=fade(1.2)),
-        "fade=t=in:st=0:d=0.4", f"fade=t=out:st={seconds - 0.3:.2f}:d=0.3", "format=yuv420p",
+        f"[0:v]loop=loop={frames}:size=1:start=0,fps={fps:g},trim=end_frame={frames},setpts=N/FRAME_RATE/TB,"
+        f"scale={round(width * 1.25) // 2 * 2}:-2,"
+        f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps={fps:g},split[sharp][soft]",
+        "[soft]gblur=sigma=22,eq=brightness=-0.26:saturation=0.45,vignette=PI/3.6[dark]",
+        "[sharp][dark]xfade=transition=fade:duration=0.7:offset=0.05[bg]",
+        f"color=c={INTRO_ACCENT}:s={bar_w}x{bar_h}:r={fps:g}:d={seconds:.3f}[bar]",
+        f"[bg][bar]overlay=x='-w+((W-w)/2+w)*{_ease(0.3, 0.45)}':y={line_y - round(height * 0.03)}:eof_action=pass[bb]",
+        f"color=c=white:s={sweep_w}x{height * 2}:r={fps:g}:d={seconds:.3f},format=rgba,colorchannelmixer=aa=0.16,"
+        f"rotate=0.4:c=none:ow=rotw(0.4):oh=roth(0.4)[shine]",
+        "[bb]" + ",".join([
+            _drawtext(display, texts["big"], big, f"(w-text_w)/2+{off}", f"{big_y}+{off}",
+                      alpha=f"0.95*{_ease(0.45, 0.4)}{out_a}", color=INTRO_ACCENT),
+            _drawtext(display, texts["big"], big, "(w-text_w)/2", big_y, alpha=f"{_ease(0.4, 0.4)}{out_a}"),
+            _drawtext(display, texts["line"], line_px, f"(w-text_w)/2-{round(width * 0.04)}*(1-{_ease(0.85, 0.5)})",
+                      str(line_y), alpha=f"{_ease(0.85, 0.35)}{out_a}", color=INTRO_ACCENT),
+            _drawtext(font, texts["small"], small_px, "(w-text_w)/2", str(line_y + line_px + round(height * 0.03)),
+                      alpha=f"{_ease(1.25, 0.5)}{out_a}")]) + "[tx]",
+        f"[tx][shine]overlay=x='-w+(W+2*w)*min(1,max(0,(t-1.0)/0.8))':y=-h/4:eof_action=pass,"
+        f"fade=t=out:st={seconds - end_fade:.2f}:d={end_fade},format=yuv420p[v]",
     ]
     layout = "stereo" if channels == 2 else "mono" if channels == 1 else f"{channels}c"
     return [str(ffmpeg), "-y", "-ss", f"{max(0.0, at):.3f}", "-i", str(src), "-f", "lavfi", "-t", f"{seconds:.3f}",
-            "-i", f"anullsrc=r={sample_rate}:cl={layout}", "-filter_complex", f"[0:v]{','.join(chain)}[v]",
+            "-i", f"anullsrc=r={sample_rate}:cl={layout}", "-filter_complex", ";".join(chain),
             "-map", "[v]", "-map", "1:a", "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast",
             "-crf", str(crf), "-pix_fmt", "yuv420p", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k",
             "-ar", str(sample_rate), "-ac", str(channels), "-movflags", "+faststart", "-t", f"{seconds:.3f}", str(dst)]
+
+
+def _make_card(ffmpeg: Path, ffprobe: Path, piece: Path, at: float, dst: Path, words: dict, crf: int, seconds: float,
+               kind: str) -> float:
+    font, display = find_font(), find_display_font()
+    if font is None or display is None:
+        return 0.0
+    info = probe_video(ffprobe, piece)
+    sr, ch = probe_audio(ffprobe, piece)
+    files = {}
+    for k, v in words.items():
+        f = dst.with_name(f"{dst.stem}_{k}.txt")
+        f.write_text(v or " ", encoding="utf-8")
+        files[k] = f
+    try:
+        r = subprocess.run(card_args(ffmpeg, piece, at, dst, files, words, font, display, info["width"], info["height"],
+                                     float(info["fps"] or 60), sr, ch, crf, seconds, kind), capture_output=True, text=True)
+        return seconds if r.returncode == 0 and dst.exists() and dst.stat().st_size > 0 else 0.0
+    finally:
+        for f in files.values():
+            f.unlink(missing_ok=True)
+
+
+def make_outro(ffmpeg: Path, ffprobe: Path, last_piece: Path, at: float, dst: Path, team: str, stats: str,
+               crf: int = 20) -> float:
+    """Render the animated end card (GG, the team, the stats) from the last frame; its length, 0 when it failed."""
+    return _make_card(ffmpeg, ffprobe, last_piece, at, dst, {"big": "GG", "line": team.upper(), "small": stats},
+                      crf, OUTRO_SECONDS, "outro")
 
 
 def probe_audio(ffprobe: Path, path: Path) -> tuple[int, int]:
@@ -1332,25 +1428,10 @@ def probe_audio(ffprobe: Path, path: Path) -> tuple[int, int]:
 
 def make_intro(ffmpeg: Path, ffprobe: Path, first_piece: Path, at: float, dst: Path, team: str, sub: str, stats: str,
                crf: int = 20) -> float:
-    """Render the intro card next to the montage pieces; returns its length in seconds (0 when it failed or no
-    font was found: the montage simply starts without one)."""
-    font = find_font()
-    if font is None:
-        return 0.0
-    info = probe_video(ffprobe, first_piece)
-    sr, ch = probe_audio(ffprobe, first_piece)
-    files = {}
-    for k, v in (("team", team.upper()), ("sub", sub), ("stats", stats)):
-        f = dst.with_name(f"{dst.stem}_{k}.txt")
-        f.write_text(v or " ", encoding="utf-8")
-        files[k] = f
-    try:
-        r = subprocess.run(intro_args(ffmpeg, first_piece, at, dst, files, font, info["width"], info["height"],
-                                      float(info["fps"] or 60), sr, ch, crf), capture_output=True, text=True)
-        return INTRO_SECONDS if r.returncode == 0 and dst.exists() and dst.stat().st_size > 0 else 0.0
-    finally:
-        for f in files.values():
-            f.unlink(missing_ok=True)
+    """Render the animated intro card (the team, what and when, the stats) next to the montage pieces; returns its
+    length in seconds (0 when it failed or no font was found: the montage simply starts without one)."""
+    return _make_card(ffmpeg, ffprobe, first_piece, at, dst, {"big": team.upper(), "line": sub, "small": stats},
+                      crf, INTRO_SECONDS, "intro")
 
 
 # ---- glue to the app's data --------------------------------------------------------------------------
@@ -1366,9 +1447,30 @@ def clip_context(demo_id: str, highlight_id: int, clip_start_tick: int, clip_end
         if h["id"] == highlight_id:
             ks = [(t - clip_start_tick) / tr for t in h.get("kills", [])
                   if t >= clip_start_tick and (clip_end_tick is None or t <= clip_end_tick)]
-            return {"kills": ks, "highlight": h, "map": meta.get("map", ""),
-                    "score": round_score(meta, int(h.get("round") or 0), str(h.get("player") or ""))}
+            out = {"kills": ks, "highlight": h, "map": meta.get("map", ""),
+                   "score": round_score(meta, int(h.get("round") or 0), str(h.get("player") or ""))}
+            if h.get("type") == "clutch":
+                tick = h.get("clutch_tick") or _clutch_tick(demo_id, meta, h)
+                if tick is not None:
+                    out["clutch_at"] = round(max(0.0, (tick - clip_start_tick) / tr), 3)
+            return out
     return {"kills": [], "highlight": None, "map": meta.get("map", "")}
+
+
+def _clutch_tick(demo_id: str, meta: dict, h: dict) -> int | None:
+    """When the clutch began (the clutcher became the last one alive), for highlights found before the detector
+    kept it: replayed from the round's kills."""
+    from .highlights import clutch_start
+    rnd = next((r for r in meta.get("rounds") or [] if r.get("num") == h.get("round")), None)
+    try:
+        ev = json.loads((DATA_DIR / "parsed" / demo_id / "events.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not rnd:
+        return None
+    got = clutch_start([k for k in ev.get("kills", []) if k.get("round") == h.get("round")], rnd.get("teams") or {},
+                       str(h.get("player") or ""))
+    return got[0] if got else None
 
 
 def kill_times_for(demo_id: str, highlight_id: int, clip_start_tick: int) -> list[float]:
@@ -1480,12 +1582,12 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         return make_cinematic(ffmpeg, ffprobe, src, out, ctx["kills"], None if montage_piece else pick_music(opts), opts,
                               title=title, fps_hint=float(cfg.get("record_fps", 60)), crf=int(cfg.get("record_crf", 20)),
                               highlight=ctx["highlight"], card=card, progress=progress, music_later=montage_piece,
-                              low_priority=low_priority, score=ctx.get("score"))
+                              low_priority=low_priority, score=ctx.get("score"), clutch_at=ctx.get("clutch_at"))
     video = dict(video)
     if montage_piece and not opts.get("cine_voice"):   # voice lines are picked at random: nothing to reuse
         shape = {k: x for k, x in opts.items() if k not in PIECE_IGNORES}
         key = piece_key(src, {"kills": ctx["kills"], "opts": shape, "title": title, "card": card, "score": ctx.get("score"),
-                              "clutch": [(ctx["highlight"] or {}).get(k) for k in ("type", "n", "round")],
+                              "clutch": [(ctx["highlight"] or {}).get(k) for k in ("type", "n", "round")] + [ctx.get("clutch_at")],
                               "photo": _mtime((card or {}).get("photo")), "font": str(find_font()),
                               "fps": cfg.get("record_fps", 60), "crf": cfg.get("record_crf", 20)})
         path, info, hit = cached_piece(key, make)

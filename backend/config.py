@@ -32,7 +32,8 @@ DEFAULTS: dict = {
     "render_parallel": 3,      # montage plays rendered at the same time (FFmpeg uses only a core or two per play)
     "render_cache_gb": 20,     # finished montage pieces kept for the next montage/recap (least recently used go first)
     "render_while_recording": True,  # a montage starts rendering the plays already recorded while CS2 records the rest
-    "record_encoder": "x264",  # "x264" (CPU) or "amf" (the AMD graphics card's encoder) for recording in CS2
+    "record_encoder": "auto",  # recording in CS2: "auto" (the graphics card's encoder when it works here, else the CPU),
+                               # "x264" (CPU), "nvenc" (NVIDIA), "amf" (AMD) or "qsv" (Intel)
     "record_fast_preroll": False,  # play the unrecorded 2 s before each highlight at 4x (a little faster recording)
     "cine_drop_slowmo": True,  # long montages: slow motion only on the plays whose kill lands on a drop of the song
     "cine_drop_min_plays": 6,  # from how many plays on

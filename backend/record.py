@@ -229,15 +229,87 @@ def hud_cvars(mode: str) -> list[str]:
             "hud_showtargetid 0", "cl_drawhud_force_deathnotices 1"]
 
 
-def encoder_args(cfg: dict) -> str:
-    """The video encoder HLAE's FFmpeg records with. "x264" (the default) on the CPU; "amf" on the AMD graphics
-    card's own encoder chip, which leaves the CPU to the game, at a quantizer a little finer than the x264 crf so
-    the quality holds. Pure function; unit-tested."""
+# the video encoders HLAE's FFmpeg can record with: the CPU (x264) or a graphics card's own encoder chip, which leaves
+# the CPU to the game; the GPU ones at a quantizer a little finer than the x264 crf so the quality holds
+ENCODERS = {
+    "x264": "-c:v libx264 -preset veryfast -crf {crf} -pix_fmt yuv420p",
+    "nvenc": "-c:v h264_nvenc -preset p5 -tune hq -rc constqp -qp {qp} -pix_fmt yuv420p",
+    "amf": "-c:v h264_amf -quality quality -rc cqp -qp_i {qp} -qp_p {qp} -pix_fmt yuv420p",
+    "qsv": "-c:v h264_qsv -preset medium -global_quality {qp} -pix_fmt nv12",
+}
+VENDOR_ENCODER = {"nvidia": "nvenc", "amd": "amf", "intel": "qsv"}
+ENCODER_NAMES = {"x264": "CPU (x264)", "nvenc": "NVIDIA (NVENC)", "amf": "AMD (AMF)", "qsv": "Intel (Quick Sync)"}
+_auto_encoder: str | None = None   # what "auto" resolved to on this PC (resolve_encoder)
+
+
+def encoder_args(cfg: dict, auto: str | None = None) -> str:
+    """The FFmpeg options HLAE records with. record_encoder: "auto" (the default: the graphics card's encoder when
+    a test encode with it worked on this PC, see resolve_encoder, else the CPU), "x264", "nvenc", "amf" or "qsv".
+    Pure function; unit-tested."""
     crf = int(cfg.get("record_crf", 20))
-    if str(cfg.get("record_encoder", "x264")).lower() == "amf":
-        qp = max(10, crf - 2)
-        return f"-c:v h264_amf -quality quality -rc cqp -qp_i {qp} -qp_p {qp} -pix_fmt yuv420p"
-    return f"-c:v libx264 -preset veryfast -crf {crf} -pix_fmt yuv420p"
+    enc = str(cfg.get("record_encoder", "auto")).lower()
+    if enc == "auto":
+        enc = auto or _auto_encoder or "x264"
+    return ENCODERS.get(enc, ENCODERS["x264"]).format(crf=crf, qp=max(10, crf - 2))
+
+
+def gpu_vendors() -> list[str]:
+    """The graphics card makers of this PC, the dedicated card first: ["nvidia"], ["amd", "intel"], …"""
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                              "(Get-CimInstance Win32_VideoController).Name"], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found = []
+    for line in out.lower().splitlines():
+        for key, vendor in (("nvidia", "nvidia"), ("geforce", "nvidia"), ("radeon", "amd"), ("amd", "amd"), ("intel", "intel")):
+            if key in line and vendor not in found:
+                found.append(vendor)
+    return sorted(found, key=lambda v: v == "intel")   # an integrated Intel GPU last
+
+
+def encoder_works(enc: str) -> bool:
+    """Whether HLAE's FFmpeg really encodes with `enc` on this PC: a second of 1080p60 test video, as a recording."""
+    args = [str(FFMPEG_EXE), "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=60", "-frames:v", "60"]
+    args += ENCODERS[enc].format(crf=20, qp=18).split() + ["-f", "null", "-"]
+    try:
+        return subprocess.run(args, capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def pick_encoder(vendors: list[str], works) -> str:
+    """The first graphics card encoder (in vendor order) that works, else "x264". Pure function; unit-tested."""
+    for v in vendors:
+        enc = VENDOR_ENCODER.get(v)
+        if enc and works(enc):
+            return enc
+    return "x264"
+
+
+def resolve_encoder(force: bool = False) -> str:
+    """What record_encoder "auto" means on this PC, found once (the card is asked, its encoder tried) and kept in
+    data/encoder.json until FFmpeg changes."""
+    global _auto_encoder
+    if _auto_encoder and not force:
+        return _auto_encoder
+    p = DATA_DIR / "encoder.json"
+    stamp = FFMPEG_EXE.stat().st_mtime if FFMPEG_EXE.exists() else 0
+    try:
+        j = json.loads(p.read_text(encoding="utf-8")) if p.is_file() and not force else {}
+    except (OSError, ValueError):
+        j = {}
+    if j.get("ffmpeg") == stamp and j.get("encoder") in ENCODERS:
+        _auto_encoder = j["encoder"]
+        return _auto_encoder
+    vendors = gpu_vendors() if is_windows() else []
+    _auto_encoder = pick_encoder(vendors, encoder_works) if FFMPEG_EXE.exists() else "x264"
+    try:
+        p.write_text(json.dumps({"ffmpeg": stamp, "encoder": _auto_encoder, "vendors": vendors}), encoding="utf-8")
+    except OSError:
+        pass
+    print(f"[record] encoder for 'auto': {ENCODER_NAMES[_auto_encoder]} (graphics: {', '.join(vendors) or 'unknown'})", flush=True)
+    return _auto_encoder
 
 
 PREROLL_TIMESCALE = 4   # record_fast_preroll: how fast the unrecorded 2 s before each highlight play
@@ -952,6 +1024,9 @@ def _run_session(todo: list[tuple[str, list[dict]]], opts: dict) -> None:
     cfg = load_config()
     parts: list[dict] = []
     try:
+        if str(cfg.get("record_encoder", "auto")).lower() == "auto":
+            _set(stage="checking the graphics card's encoder")
+            resolve_encoder()
         cs2 = find_cs2_path()
         csgo_dir = cs2 / "game" / "csgo"
         (csgo_dir / "cfg").mkdir(exist_ok=True)
@@ -1193,7 +1268,7 @@ def _log_timing(sess: list[dict], timing: list[dict], t_launch: float) -> None:
     summary = {"launched": t_launch, "wall": round(total, 1), "recorded": round(recorded, 1),
                "speed": round(recorded / total, 2) if total > 0 else None,
                "recording_speed": round(recorded / max(0.1, sum(t["wall"] for t in rows)), 2) if rows else None,
-               "encoder": str(load_config().get("record_encoder", "x264")),
+               "encoder": (lambda e: _auto_encoder or "x264" if e == "auto" else e)(str(load_config().get("record_encoder", "auto"))),
                "fast_preroll": bool(load_config().get("record_fast_preroll", False))}
     print(f"[record] session: {summary['recorded']} s of game in {summary['wall']} s "
           f"(x{summary['speed']} overall, x{summary['recording_speed']} while recording)", flush=True)
@@ -2150,7 +2225,7 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             team = (intro or {}).get("team") or load_team()["team"] or "Squad"
             card = work_dir / f"montage_outro_{stamp}.mp4"
             at = max(0.0, float(infos[-1].get("seconds") or 1.0) - 0.15)
-            secs = cine.make_intro(FFMPEG_EXE, ffprobe, pieces[-1], at, card, "GG", team, (intro or {}).get("stats", ""),
+            secs = cine.make_outro(FFMPEG_EXE, ffprobe, pieces[-1], at, card, team, (intro or {}).get("stats", ""),
                                    int(load_config().get("record_crf", 20)))
             if secs:
                 pieces.append(card)

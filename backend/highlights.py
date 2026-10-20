@@ -27,6 +27,22 @@ KNIFE_SCORE = 3
 NINJA_RADIUS = 500.0
 
 
+def clutch_start(kills: list[dict], teams: dict, player: str) -> tuple[int, int] | None:
+    """(tick, enemies alive) when `player` became the last one alive of their team in a round, from the round's kills
+    in order and its {steamid: side}; None when they never were. Pure function; unit-tested."""
+    side = teams.get(str(player))
+    if side not in ("CT", "T"):
+        return None
+    alive = {"CT": {s for s, t in teams.items() if t == "CT"}, "T": {s for s, t in teams.items() if t == "T"}}
+    for k in sorted(kills, key=lambda k: k["tick"]):
+        vt = k.get("victim_team") or teams.get(k.get("victim"))
+        if vt in alive:
+            alive[vt].discard(k.get("victim"))
+        if alive[side] == {str(player)} and alive[_other(side)]:
+            return k["tick"], len(alive[_other(side)])
+    return None
+
+
 def _other(team: str) -> str:
     return "T" if team == "CT" else "CT"
 
@@ -196,7 +212,7 @@ def detect(kills: list[dict], rounds: list[dict], bomb: list[dict] | None = None
             desc += f" ({len(own_kills)}K)"
         out.append({"type": "clutch", "player": sid, "player_name": names.get(sid, sid), "round": rnum,
                     "start_tick": s, "end_tick": e, "score": CLUTCH_SCORE.get(min(n, 5), 15) + bonus,
-                    "kills": ticks, "n": n, "tags": [], "description": desc})
+                    "kills": ticks, "n": n, "tags": [], "description": desc, "clutch_tick": sit["tick"]})
 
     # ---- ninja defuse ------------------------------------------------------------
     for b in bomb:

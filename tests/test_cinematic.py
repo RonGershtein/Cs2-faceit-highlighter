@@ -174,7 +174,7 @@ def test_title_for():
     assert c.title_for({"type": "multikill", "n": 3, "player_name": "s1mple", "round": 12}, "de_mirage", with_player=False)[1] == \
         "3K  ·  Mirage  ·  round 12"
     assert c.title_for({"type": "ace", "n": 5, "player_name": "x", "round": 2}, "de_inferno")[0] == "ACE"
-    assert c.title_for({"type": "clutch", "n": 3, "player_name": "x", "round": 2}, "")[0] == "1v3 CLUTCH"
+    assert c.title_for({"type": "clutch", "n": 3, "player_name": "x", "round": 2}, "")[0] == "1v3"         # no kills listed
     assert c.title_for({"type": "ninja_defuse", "player_name": "x"}, "de_nuke") == ("NINJA DEFUSE", "x  ·  Nuke")
 
 
@@ -307,8 +307,8 @@ def test_fresh_tracks_avoid_the_songs_just_heard():
 
 def test_clutch_counter_counts_down_to_clutch():
     s = c.clutch_states(3, [2.0, 5.0, 9.0], 12.0)
-    assert [x["text"] for x in s] == ["1v3", "1v2", "1v1", "CLUTCH"]
-    assert (s[0]["from"], s[0]["to"], s[-1]["from"]) == (0.0, 2.0, 9.0)
+    assert [x["text"] for x in s] == ["1v3", "1v2", "1v1"]                 # gone after the last kill
+    assert (s[0]["from"], s[0]["to"], s[-1]["to"]) == (0.0, 2.0, 9.0)
     assert [x["text"] for x in c.clutch_states(3, [2.0, 5.0], 8.0)] == ["1v3", "1v2", "1v1"]   # the last one died otherwise
 
 
@@ -329,7 +329,7 @@ def test_plan_texts_put_the_clutch_odds_top_left(tmp_path):
                                    font=tmp_path / "f.ttf", tmp_base=tmp_path / "o.mp4",
                                    clutch={"n": 2, "round": 8, "score": (7, 4)})
     words = [p.read_text(encoding="utf-8") for p in files]
-    assert words == ["1v2", "1v1", "CLUTCH", "ROUND 8  ·  7–4"]
+    assert words == ["1v2", "1v1", "ROUND 8  ·  7–4"]
     assert all(t["x"] == "54" for t in texts)
 
 
@@ -360,8 +360,51 @@ def test_split_and_trim_segments():
 
 
 def test_edge_filters():
-    assert "avgblur=sizeX=64" in c.edge_filter("whip", "out", 1920, 1080)
+    w = c.edge_filter("whip", "out", 1920, 1080)
+    assert w.startswith("scale=2304:1296,crop=1920:1080:x=") and "avgblur=sizeX=90" in w and w.endswith("setsar=1")
     z = c.edge_filter("zoom", "in", 1920, 1080)
-    assert "eval=frame" in z and z.endswith("crop=1920:1080,setsar=1") and "(1-t/0.250)" in z
+    assert "eval=frame" in z and "crop=1920:1080" in z and "(1-t/0.400)" in z and "color=white" in z
     assert c.edge_filter("flash", "in", 1920, 1080).startswith("fade=t=in") and "color=white" in c.edge_filter("flash", "out", 1920, 1080)
     assert c.edge_filter("none", "in", 1920, 1080) == "null"
+
+
+def test_clutch_counter_starts_when_the_clutch_does():
+    # 4 kills: two with teammates alive, then the 1v2 from 6 s on: 1v2 until 8 s, 1v1 until 11 s, CLUTCH
+    s = c.clutch_states(2, [2.0, 4.0, 8.0, 11.0], 15.0, start=6.0)
+    assert [(x["text"], x["from"], x["to"]) for x in s] == [("1v2", 6.0, 8.0), ("1v1", 8.0, 11.0)]
+
+
+def test_clutch_start_from_the_round_kills():
+    from backend.highlights import clutch_start
+    teams = {"me": "T", "a": "T", "b": "T", "x": "CT", "y": "CT", "z": "CT"}
+    kills = [{"tick": 100, "victim": "x", "victim_team": "CT"}, {"tick": 200, "victim": "a", "victim_team": "T"},
+             {"tick": 300, "victim": "y", "victim_team": "CT"}, {"tick": 400, "victim": "b", "victim_team": "T"},
+             {"tick": 500, "victim": "z", "victim_team": "CT"}]
+    assert clutch_start(kills, teams, "me") == (400, 1)      # alone from tick 400, against one
+    assert clutch_start(kills[:3], teams, "me") is None
+
+
+def test_clutch_title_names_the_kills():
+    h = {"type": "clutch", "n": 2, "kills": [1, 2, 3, 4], "player_name": "a", "round": 5}
+    assert c.title_for(h)[0] == "QUAD KILL"
+    assert c.title_for({**h, "kills": [1, 2, 3]})[0] == "TRIPLE KILL"
+    assert c.title_for({**h, "kills": [1]})[0] == "1v2"
+    assert c.title_for({**h, "kills": [1, 2, 3, 4, 5]})[0] == "ACE"
+
+
+def test_fit_size_fills_the_width_without_running_off():
+    assert c.fit_size("GG", 1920, 1080, 0.36) == round(1080 * 0.36)              # short: capped by the height share
+    long = c.fit_size("TEAMX5 -GAYEDITION", 1920, 1080, 0.24)
+    assert long < round(1080 * 0.24) and long * 18 * 0.62 <= 1920 * 0.87       # long: shrunk to fit the width
+
+
+def test_card_args_build_an_animated_card(tmp_path):
+    files = {k: tmp_path / f"{k}.txt" for k in ("big", "line", "small")}
+    args = c.card_args(Path("ff"), Path("p.mp4"), 3.0, Path("o.mp4"), files, {"big": "GG", "line": "TEAM", "small": "2 plays"},
+                       Path("f.ttf"), Path("d.ttf"), 1920, 1080, 60.0, 48000, 2, 20, c.OUTRO_SECONDS, "outro")
+    g = args[args.index("-filter_complex") + 1]
+    assert "xfade=transition=fade" in g and "rotate=0.4" in g and g.count("drawtext=") == 4
+    assert args[args.index("-frames:v") + 1] == str(round(c.OUTRO_SECONDS * 60))
+    intro = c.card_args(Path("ff"), Path("p.mp4"), 3.0, Path("o.mp4"), files, {"big": "YOUR TEAM", "line": "x", "small": "y"},
+                        Path("f.ttf"), Path("d.ttf"), 1920, 1080, 60.0, 48000, 2, 20, c.INTRO_SECONDS, "intro")
+    assert "pow(max(0,(on-" in intro[intro.index("-filter_complex") + 1]           # the push in at the end of the intro

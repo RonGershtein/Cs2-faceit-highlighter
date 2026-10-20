@@ -73,9 +73,11 @@ class ConfigIn(BaseModel):
     export_folder: str | None = None
     share_email: str | None = None
     share_app_password: str | None = None
+    record_encoder: str | None = None
 
 
-CONFIG_KEYS = ("my_steamid", "cs2_path", "watch_folder", "export_folder", "tick_step", "watch_interval", "share_email")
+CONFIG_KEYS = ("my_steamid", "cs2_path", "watch_folder", "export_folder", "tick_step", "watch_interval", "share_email",
+               "record_encoder")
 
 
 @app.get("/api/config")
@@ -84,7 +86,18 @@ def get_config():
     out = {k: c[k] for k in CONFIG_KEYS}
     out["default_export_folder"] = str(Path.home() / "Downloads" / "cs2-watcher")
     out["share_password_set"] = bool(c.get("share_app_password"))   # the password itself never leaves the PC
+    out["auto_encoder"] = _auto_encoder_name()
     return out
+
+
+def _auto_encoder_name() -> str | None:
+    """What record_encoder "auto" was found to use on this PC (data/encoder.json), as shown in Settings."""
+    try:
+        from .record import ENCODER_NAMES
+        j = json.loads((cfgmod.DATA_DIR / "encoder.json").read_text(encoding="utf-8"))
+        return ENCODER_NAMES.get(j.get("encoder"))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @app.post("/api/config")

@@ -110,7 +110,9 @@ the dialog for a chronological video. A montage you put together by hand in the 
 **Edited to the music:** the app finds the beat of every song (tempo and beat times) and ends each play exactly on a
 beat (its tail after the last kill is cut by up to 0.6 s), so every cut between plays lands on the music. Each cut
 is a **transition** (whip blur, zoom punch or white flash in turn; `montage_transition`) that meets on the beat, and
-the montage closes with an **end card**: GG, the team name and the stats of the plays over the last frame.
+the montage opens and closes with **animated title cards**: the frame punches in and melts into a dark backdrop, an
+orange bar sweeps in, the title rises in a heavy display face (your team name at the start, **GG** at the end) with
+the plays' stats, and a light sweep crosses the screen.
 
 **Recap:** the **Recap** button makes one video of every recorded squad play in a month, a year or any date range.
 
@@ -167,8 +169,9 @@ highlights you ticked (those are remade). Takes ~10-20 s per clip
 - **Effects:** zoom punch and flash on each kill, vignette, fade in/out, and a **colour grade**: *teal & orange*
   (film contrast, warm highlights, teal shadows), *dark cinematic* (crushed blacks, less colour, cool) or *classic*.
   The grades are 3D LUTs the app makes itself (`data/luts/`).
-- **Clutch odds:** in a clutch, a big **1v3** at the top left counts down with each kill to **CLUTCH**, with the round
-  and the score from your side under it.
+- **Clutch odds:** from the moment the clutch starts (the last teammate down), a big **1v3** at the top left counts
+  down with each kill, with the round and the score from your side under it. The title names the play by its kills
+  (TRIPLE KILL, QUAD KILL, ACE).
 - **Text:** a title card for the first seconds (TRIPLE KILL / ACE / 1v3 CLUTCH, then "3K · map · round") and a kill counter.
   Uses Bahnschrift or Arial from Windows; drop any `.ttf` into `assets/fonts/` to use that instead.
 - **Player card:** a round avatar with the player's nickname at the bottom left, like a pro-match lower third. It stays on screen for the whole clip. Photos go in
@@ -215,7 +218,7 @@ something is recording or rendering. Clips and montages are deleted in the Highl
 | `record_crf` | 20 | x264 quality, lower = better and bigger |
 | `record_close_game` | true | quit CS2 after the last clip |
 | `record_hud` | killfeed | `killfeed`: a clean picture with the kill feed only; `health_ammo`: CS2's HUD with health and ammo |
-| `record_encoder` | x264 | `amf` records with an AMD graphics card's encoder instead of the CPU (try it if recording is slow) |
+| `record_encoder` | auto | `auto`: the graphics card's encoder (NVIDIA NVENC, AMD AMF, Intel Quick Sync) when a test encode with it works on this PC, else the CPU; or `x264`, `nvenc`, `amf`, `qsv`. Also in Settings |
 | `record_fast_preroll` | false | play the unrecorded 2 s before each highlight at 4x |
 | `montage_transition` | mixed | between montage plays: `mixed` (whip, zoom, flash in turn), `whip`, `zoom`, `flash` or `none` |
 | `montage_beat_cuts` | true | end every montage play on a beat of the song |
