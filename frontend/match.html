@@ -135,13 +135,15 @@
   <div class="modal-head">Cinematic clips <span class="spacer"></span><button class="small ghost" id="music-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
   <p class="muted" style="margin:0 0 12px">One click makes the cinematic version: slow motion on the kills, dead time fast-forwarded, music under the game sound, title card, kill counter and player card. The casters are off unless you turn them on in the options.</p>
 
-  <div class="field" id="cine-format-field"><label>Format</label>
-    <label class="opt"><input type="radio" name="cine-format" id="cine-format-wide" value="wide" checked> <span>Widescreen 16:9 (YouTube, the montages)</span></label>
-    <label class="opt"><input type="radio" name="cine-format" id="cine-format-reel" value="reel"> <span>Reel 9:16 for the phone (YouTube Shorts, Instagram Reels, TikTok): the middle of the picture, where the crosshair is</span></label>
+  <div class="field" id="cine-format-field"><label id="cine-format-label">Format</label>
+    <div class="sq-choice" role="radiogroup" aria-labelledby="cine-format-label">
+      <label class="sq-tile fmt-tile"><input type="radio" name="cine-format" id="cine-format-wide" value="wide" checked><i class="fmt-shape" aria-hidden="true"></i><b>Widescreen</b><span>16:9 for YouTube and the montages</span></label>
+      <label class="sq-tile fmt-tile"><input type="radio" name="cine-format" id="cine-format-reel" value="reel"><i class="fmt-shape tall" aria-hidden="true"></i><b>Reel</b><span>9:16 for Shorts, Instagram and TikTok, cropped to the crosshair</span></label>
+    </div>
   </div>
   <div class="field" id="cine-which-field"><label>Clips</label>
-    <label class="opt"><input type="radio" name="cine-which" id="cine-which-all" value="all"> <span>all clips without a cinematic version (<span id="cine-n-all">0</span>)</span></label>
-    <label class="opt"><input type="radio" name="cine-which" id="cine-which-sel" value="sel"> <span>the selected highlights (<span id="cine-n-sel">0</span>) – existing cinematic versions are remade</span></label>
+    <label class="opt"><input type="radio" name="cine-which" id="cine-which-all" value="all"> <span>all clips without a <span class="cine-what">cinematic version</span> (<span id="cine-n-all">0</span>)</span></label>
+    <label class="opt"><input type="radio" name="cine-which" id="cine-which-sel" value="sel"> <span>the selected highlights (<span id="cine-n-sel">0</span>) – existing <span class="cine-what">cinematic versions</span> are remade</span></label>
   </div>
 
   <div class="cine-summary" id="cine-summary"></div>

@@ -561,6 +561,8 @@
   $('music-close').onclick = () => $('music-modal').style.display = 'none';
   ['cine-format-wide', 'cine-format-reel'].forEach(k => $(k).addEventListener('change', () => {
     cineCounts();
+    const w = document.querySelectorAll('.cine-what');
+    w[0].textContent = cineReel() ? 'reel' : 'cinematic version'; w[1].textContent = cineReel() ? 'reels' : 'cinematic versions';
     if (cineFor !== 'squad') $('cine-go').innerHTML = cineReel() ? `${ic('sparkles')} Create reel` : `${ic('sparkles')} Create cinematic`;
   }));
   $('music-modal').addEventListener('click', async (e) => {
