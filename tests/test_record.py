@@ -941,6 +941,7 @@ def test_montage_spaces_the_swoops_out():
     assert len(pos) >= 2                                                    # some plays swoop...
     assert all(b - a > SWOOP_GAP for a, b in zip(pos, pos[1:]))             # ...never two close together
     assert all(b - a <= 6 for a, b in zip(pos, pos[1:]))                    # one, then 3-5 without, then the next
+    assert pos and pos[0] <= 6 and len(order) - 1 - pos[-1] <= 5             # it starts early and keeps coming
 
 
 def test_montage_slow_motion_modes():

@@ -2367,7 +2367,7 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
             for back, (_, v_) in enumerate(reversed(seq)):
                 if v_.get("swoop"):
                     return back
-            return SWOOP_GAP + 1
+            return len(seq) + 2       # none yet: the first can come from the second or third play on
         for step in range(n - 1):
             last_step = step == n - 2
             nxt: dict = {}
@@ -2378,7 +2378,10 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
                         continue
                     pen = 0.05 if players[i] and players[i] == prev_player else 0.0
                     fin = 0.6 * scores[i] if last_step else 0.0
-                    may_swoop = since_swoop(seq) >= swoop_gap[i]  # 3-5 plays without one in between
+                    since = since_swoop(seq)
+                    may_swoop = since >= swoop_gap[i]       # 3-5 plays without one in between
+                    # and no more than that: once 5 plays went by without one, the next play has it (when it can)
+                    must_swoop = since >= max(SWOOP_GAPS) and (swoop_normal[i] or any(v.get("swoop") for v in slow[i]))
                     cands = [(gain - pen + fin, dm, snap_to_beat(normal[i], t, beats))]
                     if may_swoop and swoop_normal[i]:
                         cands.append((gain - pen + fin + swoop_bonus[i], dm, snap_to_beat(swoop_normal[i], t, beats)))
@@ -2395,9 +2398,11 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
                             w = (0.5 + drops[j][1]) * (0.6 + scores[i]) * (1 - 0.5 * abs(times[j] - k) / tol)
                             cands.append((gain - pen + fin + w + (swoop_bonus[i] if v.get("swoop") else 0.0), dm | (1 << j),
                                           snap_to_beat(v, t, beats)))
+                    if must_swoop:
+                        cands = [c for c in cands if c[2].get("swoop")] or cands
                     for g, dm2, v in cands:
                         key = (pm | (1 << i), dm2, round((t + v["seconds"]) * 4),
-                               0 if v.get("swoop") else min(SWOOP_GAP, since_swoop(seq) + 1))
+                               0 if v.get("swoop") else min(max(SWOOP_GAPS), since + 1))
                         if key not in nxt or nxt[key][0] < g:
                             nxt[key] = (g, t + v["seconds"], pm | (1 << i), dm2, seq + ((i, v),))
             beam = sorted(nxt.values(), key=lambda s: -s[0])[:ORDER_BEAM]
