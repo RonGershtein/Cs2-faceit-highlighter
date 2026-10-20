@@ -313,7 +313,7 @@ def resolve_encoder(force: bool = False) -> str:
     return _auto_encoder
 
 
-SWOOP_FOLLOW = 4.5    # seconds the camera follows behind and above the player before diving in
+SWOOP_FOLLOW = 3.0    # seconds the camera follows behind and above the player before diving in
 SWOOP_DIVE = 1.0      # seconds of the dive into his eyes
 SWOOP_MIN_FOLLOW = 1.5   # less room than this before the play (round start, the play before): no swoop
 SWOOP_LEAD = 2.0      # it lands this long before the play's first kill (where the cinematic play starts in first person)

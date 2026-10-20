@@ -901,8 +901,8 @@ def test_swoop_follows_the_player_then_dives_into_his_eyes():
     still = [dict(trail[0], y=200.0)] * len(trail)
     assert swoop_points(still, pre, step, 4.5)[0]["y"] == 200.0
     h = {"kills": [10000, 10300]}
-    assert plan_swoop(h, 0, 64) == {"from": 10000 - 128 - 352, "to": 10000 - 128, "follow": 4.5}
-    assert plan_swoop(h, 9600, 64)["follow"] == round((10000 - 128 - 64 - 9600) / 64, 3)   # the round started late: shorter
+    assert plan_swoop(h, 0, 64) == {"from": 10000 - 128 - 256, "to": 10000 - 128, "follow": 3.0}
+    assert plan_swoop(h, 9700, 64)["follow"] == round((10000 - 128 - 64 - 9700) / 64, 3)   # the round started late: shorter
     assert plan_swoop(h, 9750, 64) is None                                   # no room for even a short follow
     assert plan_swoop({"kills": []}, 0, 64) is None
 
