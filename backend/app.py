@@ -28,6 +28,10 @@ async def lifespan(app: FastAPI):
     cfgmod.load()
     db.conn()
     ingest.resume_unfinished()
+    from .launch import cleanup_replays   # CS2-folder copies of matches deleted while CS2 had them open
+    threading.Thread(target=cleanup_replays, daemon=True, name="cleanup").start()
+    from .record import recover_recordings   # clips CS2 recorded while the app was not watching
+    threading.Thread(target=recover_recordings, daemon=True, name="recover").start()
     t = threading.Thread(target=ingest.watch_loop, args=(_stop,), daemon=True, name="watch")
     t.start()
     yield
@@ -332,7 +336,10 @@ def record_start(demo_id: str, body: RecordIn):
 @app.get("/api/demos/{demo_id}/videos")
 def list_videos(demo_id: str):
     _demo_or_404(demo_id)
-    return _rec().videos_index(demo_id) if rec else {"videos": [], "long": []}
+    if not rec:
+        return {"videos": [], "long": []}
+    _rec().recover_recordings([demo_id])
+    return _rec().videos_index(demo_id)
 
 
 @app.post("/api/demos/{demo_id}/videos/export")
@@ -394,6 +401,8 @@ def delete_saved_clip(demo_id: str, name: str):
         raise HTTPException(400, "bad name")
     try:
         return _rec().delete_saved(demo_id, name)
+    except _rec().FileBusy as e:
+        raise HTTPException(409, str(e))
     except RuntimeError as e:
         raise HTTPException(404, str(e))
 
@@ -505,6 +514,7 @@ class MultiSquadIn(BaseModel):
     min_kills: int = 3
     title: str = ""
     cinematic: bool = True         # False: the recorded clips joined as they are, no song
+    music: str = ""                # one track for every match; "" = a fresh random track per match
 
 
 @app.post("/api/squad/multi/preview")
@@ -517,7 +527,7 @@ def multi_squad_preview(body: MultiSquadIn):
 def multi_squad(body: MultiSquadIn):
     """One squad montage of several matches (records what is missing first); poll /api/squad/status."""
     try:
-        return _rec().start_multi_squad(body.demo_ids, max(2, min(5, body.min_kills)), body.title, body.cinematic)
+        return _rec().start_multi_squad(body.demo_ids, max(2, min(5, body.min_kills)), body.title, body.cinematic, body.music)
     except RuntimeError as e:
         raise HTTPException(409, str(e))
 
@@ -527,6 +537,7 @@ def squad_preview(demo_id: str, min_kills: int = 3):
     """The squad's highlights in this match that would go into the montage."""
     _demo_or_404(demo_id)
     r = _rec()
+    r.recover_recordings([demo_id])
     have = {v["highlight_id"]: v for v in r.videos_index(demo_id).get("videos", [])}
     hs = r.squad_highlights(db.get_highlights(demo_id), r.load_squad(), min_kills)
     return {"highlights": [{"id": h["id"], "description": h["description"], "player_name": h.get("player_name"),
@@ -605,7 +616,10 @@ def delete_long_video(demo_id: str, name: str):
     _demo_or_404(demo_id)
     if "/" in name or "\\" in name or ".." in name or not name.startswith("long_"):
         raise HTTPException(400, "bad name")
-    _rec().delete_long_video(demo_id, name)
+    try:
+        _rec().delete_long_video(demo_id, name)
+    except _rec().FileBusy as e:
+        raise HTTPException(409, str(e))
     return {"ok": True}
 
 

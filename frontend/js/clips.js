@@ -93,7 +93,7 @@
       const extra = c.kind === 'clip' && clips.some(x => x.kind === 'cinematic' && x.demo_id === c.demo_id && x.highlight_id === c.highlight_id)
         ? '\n\nIts cinematic version is deleted too.' : '';
       if (!confirm(`Delete "${c.description}" (${KIND[c.kind] || c.kind})?${extra}\n\nCopies already in your Downloads folder stay.`)) return;
-      try { await API.deleteClip(c.demo_id, c.file); picked = picked.filter(k => byKey(k) && k !== key(c)); await load(); renderTray(); }
+      try { await API.releaseVideo(c.file); await API.deleteClip(c.demo_id, c.file); picked = picked.filter(k => byKey(k) && k !== key(c)); await load(); renderTray(); }
       catch (err) { alert(err.message); }
       return;
     }
@@ -196,7 +196,7 @@
     const btn = $('tray-del'); btn.disabled = true; btn.textContent = 'deleting…';
     const failed = [];
     // originals first would take their cinematic versions with them; a "no such clip" afterwards is fine
-    for (const c of items) { try { await API.deleteClip(c.demo_id, c.file); } catch (err) { if (!/no such clip/i.test(err.message)) failed.push(`${c.description}: ${err.message}`); } }
+    for (const c of items) { try { await API.releaseVideo(c.file); await API.deleteClip(c.demo_id, c.file); } catch (err) { if (!/no such clip/i.test(err.message)) failed.push(`${c.description}: ${err.message}`); } }
     picked = []; await load(); renderTray();
     if (failed.length) alert('Some videos could not be deleted:\n' + failed.join('\n'));
   };
@@ -295,7 +295,7 @@
         wasRunning = montageRunning = true;
         const step = { starting: 'starting', recording: 'recording the missing plays in CS2', cinematic: 'making the plays cinematic', joining: 'joining' }[s.stage] || s.stage;
         const pct = Math.round(100 * (s.progress || 0));
-        el.innerHTML = `${jobName(s)} (${s.total} plays): <b>${pct}%</b> · ${esc(step)}${s.detail ? ` · ${esc(s.detail)}` : ''}${fmtEta(s.eta)} <button class="small ghost" id="montage-cancel">${ic('stop')} Stop</button>
+        el.innerHTML = `${jobName(s)} (${s.total} plays): <b>${pct}%</b> · ${esc(step)}${s.detail ? ` · ${esc(s.detail)}` : ''}${fmtEta(s.eta)}${s.missing ? ` · <span style="color:var(--danger)">${esc(s.missing)}</span>` : ''} <button class="small ghost" id="montage-cancel">${ic('stop')} Stop</button>
           <span class="progress live"><div style="width:${Math.max(2, pct)}%"></div></span>`;
         $('montage-cancel').onclick = async () => { await API.squadCancel().catch(() => {}); };
         return;
@@ -305,7 +305,8 @@
       if (!wasRunning) { el.innerHTML = ''; return; }   // finished before this page was opened: the grid shows it
       const r = s.result || {};
       el.innerHTML = `${jobName(s)} ready: <b>${esc(r.description || '')}</b>${r.seconds ? ` (${fmtLen(r.seconds)})` : ''} <button class="small primary" id="montage-watch">${ic('play')} Watch</button>`
-        + (r.exported && !String(r.exported).startsWith('export failed') ? ` <span class="muted">saved to ${esc(r.exported)}</span>` : '');
+        + (r.exported && !String(r.exported).startsWith('export failed') ? ` <span class="muted">saved to ${esc(r.exported)}</span>` : '')
+        + (r.warning ? `<div style="margin-top:6px;color:var(--danger)">${esc(r.warning)}. Open those matches and record them, then make the montage again.</div>` : '');
       showJoined(); await load();
       const made = clips.find(c => c.kind === 'montage' && c.file === r.file);
       $('montage-watch').onclick = () => openVideo(made || { ...r, demo_id: 'montages' });

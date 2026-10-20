@@ -192,6 +192,7 @@ def hlae_take_root(cs2: Path, demo_id: str) -> Path:
 def start(demo_id: str, highlight_ids: list[int], opts: dict | None = None) -> dict:
     global _job
     opts = opts or {}
+    recover_recordings([demo_id])   # before this recording clears the raw folder
     with _lock:
         if _job and _job["status"] in ("preparing", "recording", "encoding"):
             raise RuntimeError("a recording job is already running")
@@ -219,26 +220,47 @@ def _set(**kw) -> None:
 
 
 def hud_cvars(mode: str) -> list[str]:
-    """What the recording shows of CS2's HUD. "health_ammo": the spectated player's health, armour and ammo
-    plus the kill feed; radar, name tags over players and the target id are hidden. "killfeed": the kill feed
-    only. Pure function; unit-tested."""
-    if mode == "killfeed":
+    """What the recording shows of CS2's HUD. "killfeed" (the default): a clean picture with only the kill feed.
+    "health_ammo": the full HUD with health, armour and ammo; radar, name tags and the target id are hidden, but
+    CS2 keeps the players bar at the top. Pure function; unit-tested."""
+    if mode != "health_ammo":
         return ["cl_draw_only_deathnotices 1"]
     return ["cl_draw_only_deathnotices 0", "cl_drawhud_force_radar -1", "cl_drawhud_force_teamid_overhead -1",
             "hud_showtargetid 0", "cl_drawhud_force_deathnotices 1"]
 
 
-def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, tickrate: int,
-              demo_id_for_cfg: str = "demo") -> tuple[str, list[dict]]:
-    """Return (cfg text, sequences). Pure function; unit-tested."""
-    fps = int(cfg.get("record_fps", 60))
+def encoder_args(cfg: dict) -> str:
+    """The video encoder HLAE's FFmpeg records with. "x264" (the default) on the CPU; "amf" on the AMD graphics
+    card's own encoder chip, which leaves the CPU to the game, at a quantizer a little finer than the x264 crf so
+    the quality holds. Pure function; unit-tested."""
     crf = int(cfg.get("record_crf", 20))
+    if str(cfg.get("record_encoder", "x264")).lower() == "amf":
+        qp = max(10, crf - 2)
+        return f"-c:v h264_amf -quality quality -rc cqp -qp_i {qp} -qp_p {qp} -pix_fmt yuv420p"
+    return f"-c:v libx264 -preset veryfast -crf {crf} -pix_fmt yuv420p"
+
+
+PREROLL_TIMESCALE = 4   # record_fast_preroll: how fast the unrecorded 2 s before each highlight play
+
+
+def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, tickrate: int,
+              demo_id_for_cfg: str = "demo", part: int = 1, next_cfg: str | None = None, playdemo: str | None = None,
+              demoui: bool = True) -> tuple[str, list[dict]]:
+    """Return (cfg text, sequences). Pure function; unit-tested.
+    One CS2 session can record several demos: part N > 1 is exec'd by the previous demo's cfg once its last
+    highlight is recorded; it clears the schedule, schedules its own highlights and loads its demo (`playdemo`,
+    HLAE forgets the old demo's ticks on level load). next_cfg: exec that instead of quitting at the end.
+    demoui: toggle the demo playback panel off at this demo's first highlight."""
+    fps = int(cfg.get("record_fps", 60))
+    enc = encoder_args(cfg)
+    fast_preroll = bool(cfg.get("record_fast_preroll", False))
+    tag = "" if part == 1 else str(part)          # part 1 keeps the plain names (hl_s1, p1)
     lines = [
-        f'echo "[cs2watcher] {CFG_NAME} loaded"',
+        f'echo "[cs2watcher] {CFG_NAME}{"_" + tag if tag else ""} loaded"',
         "sv_cheats 1", "volume 1", "cl_hud_telemetry_frametime_show 0", "cl_hud_telemetry_net_misdelivery_show 0",
         "cl_hud_telemetry_ping_show 0", "cl_hud_telemetry_serverrecvmargin_graph_show 0",
         "cl_trueview_show_status 0", "r_show_build_info 0", "cl_demo_predict 0",
-        *hud_cvars(str(cfg.get("record_hud", "health_ammo"))),
+        *hud_cvars(str(cfg.get("record_hud", "killfeed"))),
         "mirv_deathmsg lifetime 5", "spec_show_xray 0", "mp_display_kill_assists 1",
         "mirv_streams record screen enabled 1", "mirv_streams record startMovieWav 1",
         f"mirv_streams record fps {fps}",
@@ -264,23 +286,29 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
         spec = (f"spec_mode 1; spec_player_by_accountid {acc}; spec_player {token}" if acc > 0
                 else f"spec_mode 1; spec_player {token}")
         name = f"{i:02d}_{_safe(h['type'])}_r{h['round']}_{_safe(player, 16)}"
-        preset = f"p{i}"
+        preset = f"p{tag}_{i}" if tag else f"p{i}"
+        sa, pa = f"hl{tag}_s{i}", f"hl{tag}_p{i}"
         lines += [
-            f'mirv_streams settings add ffmpeg {preset} "-c:v libx264 -preset veryfast -crf {crf} -pix_fmt yuv420p '
+            f'mirv_streams settings add ffmpeg {preset} "{enc} '
             f'{{QUOTE}}{_fwd(folder)}\\\\video.mp4{{QUOTE}}"',
-            f'alias hl_s{i} "mirv_streams record name {rel}; mirv_streams record screen settings {preset}; '
+            f'alias {sa} "mirv_streams record name {rel}; mirv_streams record screen settings {preset}; '
             f'{spec}; echo [cs2watcher] seq {i} ready"',
-            f'alias hl_p{i} "{spec}"',
+            f'alias {pa} "{spec}"',
             f"mirv_cmd addAtTick {jump_from} demo_gototick {setup - 1}",
-            f"mirv_cmd addAtTick {setup} hl_s{i}",
+            f"mirv_cmd addAtTick {setup} {sa}",
             # the seek can swallow the first spectator switch (CS2 is still rebuilding entities): repeat it
-            f"mirv_cmd addAtTick {setup + tickrate // 2} hl_p{i}",
-            f"mirv_cmd addAtTick {max(setup + 1, start - 8)} hl_p{i}",
+            f"mirv_cmd addAtTick {setup + tickrate // 2} {pa}",
+            f"mirv_cmd addAtTick {max(setup + 1, start - 8)} {pa}",
         ]
-        if i == 1:
+        if i == 1 and demoui:
             # the demo playback panel is open while the demo plays; `demoui` toggles it, so close it once, on a
             # demo tick (straight from the cfg it would fire before the demo has loaded). From PR #1 by slipknot94.
             lines.append(f"mirv_cmd addAtTick {setup} demoui")
+        if fast_preroll:
+            # the 2 s before the highlight are not recorded: play them faster, back to normal well before the
+            # last spectator switch and the recording start
+            lines += [f"mirv_cmd addAtTick {setup + 1} demo_timescale {PREROLL_TIMESCALE}",
+                      f"mirv_cmd addAtTick {max(setup + 2, start - 8 - max(16, tickrate // 4))} demo_timescale 1"]
         lines += [
             f"mirv_cmd addAtTick {start} mirv_streams record start",
             f"mirv_cmd addAtTick {end} mirv_streams record end",
@@ -289,10 +317,34 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
                      "type": h["type"], "round": h["round"], "player": player, "description": h["description"],
                      "player_steamid": str(h["player"])})
         prev_end = end
-    if cfg.get("record_close_game", True):
+    if next_cfg:
+        lines.append(f"mirv_cmd addAtTick {prev_end + 2 * tickrate} exec {next_cfg}")   # as long as the quit: HLAE finishes the file
+    elif cfg.get("record_close_game", True):
         lines.append(f"mirv_cmd addAtTick {prev_end + 2 * tickrate} quit")
     lines.append('echo "[cs2watcher] commands scheduled"')
+    if playdemo:
+        lines.append(f'playdemo "{playdemo}"')
     return "\r\n".join(lines) + "\r\n", seqs
+
+
+def cfg_ticks(cfg_text: str) -> list[int]:
+    """The demo ticks a cfg schedules commands at. Pure function."""
+    return [int(ln.split()[2]) for ln in cfg_text.splitlines() if ln.startswith("mirv_cmd addAtTick ")]
+
+
+def handover_tick(cfg_text: str) -> int | None:
+    """The tick at which a cfg hands over to the next demo's cfg (None when it quits). Pure function."""
+    for ln in cfg_text.splitlines():
+        if ln.startswith("mirv_cmd addAtTick ") and " exec " in ln:
+            return int(ln.split()[2])
+    return None
+
+
+def can_chain(handover: int, next_ticks: list[int], tickrate: int) -> bool:
+    """Whether the next demo's commands can be scheduled at `handover` in the current demo: none of them may lie
+    in the few ticks the current demo still plays before the next one loads (they would fire in the wrong demo).
+    Pure function; unit-tested."""
+    return not any(handover - 2 <= t <= handover + 4 * tickrate for t in next_ticks)
 
 
 def find_wavs(folder: Path) -> list[Path]:
@@ -330,31 +382,43 @@ def encode_outputs(seqs: list[dict], out_dir: Path, tickrate: int, progress=None
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs = []
     for i, s in enumerate(seqs):
-        video = Path(s["folder"]) / "video.mp4"
-        if not video.exists():
+        o = encode_one(s, out_dir, tickrate)
+        if o is None:
             continue
-        wavs = find_wavs(Path(s["folder"]))
-        if not wavs and s.get("take_dir"):
-            wavs = find_wavs(Path(s["take_dir"]))
-        out = out_dir / f"{s['name']}.mp4"
-        args = [str(FFMPEG_EXE), "-y", "-i", str(video)]
-        if wavs:
-            args += ["-i", str(wavs[-1]), "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-map", "0:v:0",
-                     "-map", "1:a:0", "-shortest"]
-        else:
-            args += ["-c:v", "copy"]
-        args += ["-movflags", "+faststart", str(out)]
-        r = subprocess.run(args, capture_output=True, text=True)
-        if r.returncode != 0 or not out.exists():
-            shutil.copyfile(video, out)
-        outputs.append({"highlight_id": s["highlight_id"], "file": out.name, "type": s["type"], "round": s["round"],
-                        "player": s["player"], "player_steamid": s["player_steamid"],
-                        "description": s["description"], "start_tick": s["start"], "end_tick": s["end"],
-                        "size": out.stat().st_size, "seconds": round((s["end"] - s["start"]) / tickrate, 1),
-                        "audio": bool(wavs)})
+        outputs.append(o)
         if progress:
             progress((i + 1) / len(seqs), outputs)
     return outputs
+
+
+def encode_one(s: dict, out_dir: Path, tickrate: int) -> dict | None:
+    """Mux one recorded sequence into its clip; its videos.json entry, or None when nothing was recorded."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    video = Path(s["folder"]) / "video.mp4"
+    if not video.exists():
+        return None
+    wavs = find_wavs(Path(s["folder"]))
+    if not wavs and s.get("take_dir"):
+        wavs = find_wavs(Path(s["take_dir"]))
+    out = out_dir / f"{s['name']}.mp4"
+    args = [str(FFMPEG_EXE), "-y", "-i", str(video)]
+    if wavs:
+        args += ["-i", str(wavs[-1]), "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-map", "0:v:0",
+                 "-map", "1:a:0", "-shortest"]
+    else:
+        args += ["-c:v", "copy"]
+    args += ["-movflags", "+faststart", str(out)]
+    r = subprocess.run(args, capture_output=True, text=True)
+    if r.returncode != 0 or not out.exists():
+        shutil.copyfile(video, out)
+    return {**planned_entry(s, tickrate), "size": out.stat().st_size, "audio": bool(wavs)}
+
+
+def planned_entry(s: dict, tickrate: int) -> dict:
+    """The videos.json entry a sequence will get once recorded (without "size" and "audio"). Pure function."""
+    return {"highlight_id": s["highlight_id"], "file": f"{s['name']}.mp4", "type": s["type"], "round": s["round"],
+            "player": s["player"], "player_steamid": s["player_steamid"], "description": s["description"],
+            "start_tick": s["start"], "end_tick": s["end"], "seconds": round((s["end"] - s["start"]) / tickrate, 1)}
 
 
 def long_video_name(n: int, cinematic: bool, when: float | None = None) -> str:
@@ -461,11 +525,28 @@ def compile_long_video(demo_id: str, highlight_ids: list[int] | None, cinematic:
     return entry
 
 
+class FileBusy(RuntimeError):
+    """A video could not be deleted because Windows still has it open (a player is showing it)."""
+
+
+def remove_video_file(p: Path, tries: int = 6, wait: float = 0.5) -> None:
+    """Delete a video file. On Windows a file that is still being streamed to a player cannot be deleted, so
+    retry for a few seconds (the page releases its players first) before giving up with FileBusy."""
+    for i in range(tries):
+        try:
+            p.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if i == tries - 1:
+                raise FileBusy(f"{p.name} is still open in a video player. Close the player (or wait a moment) and delete it again.")
+            time.sleep(wait)
+
+
 def delete_long_video(demo_id: str, name: str) -> None:
     out_dir = VIDEOS_DIR / demo_id
     index = videos_index(demo_id)
+    remove_video_file(out_dir / name)
     index["long"] = [e for e in index.get("long", []) if e["file"] != name]
-    (out_dir / name).unlink(missing_ok=True)
     (out_dir / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
 
 
@@ -481,17 +562,20 @@ def delete_clips(demo_id: str, highlight_ids: list[int], downloads: bool = False
     if not gone:
         raise RuntimeError("none of the selected highlights has a recorded clip")
     names = [n for v in gone for n in (v.get("file"), v.get("cine")) if n]
-    removed = 0
+    removed, busy = 0, set()
     folders = [out_dir] + ([export_folder_for(demo_id)] if downloads else [])
     for folder in folders:
         for n in names:
             f = folder / n
             if f.exists():
                 try:
-                    f.unlink()
+                    remove_video_file(f, tries=3)
                     removed += 1
-                except OSError:
-                    pass
+                except (FileBusy, OSError):
+                    busy.add(n)
+    # a clip that is still open in a player stays listed, so deleting it again later works
+    gone = [v for v in gone if not ({v.get("file"), v.get("cine")} & busy)]
+    want = {v["highlight_id"] for v in gone}
     index["videos"] = [v for v in index.get("videos", []) if v["highlight_id"] not in want]
     (out_dir / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
     return {"deleted": [v["highlight_id"] for v in gone], "files": removed}
@@ -665,7 +749,7 @@ def delete_saved(demo_id: str, name: str) -> dict:
         ms = montages_index()
         if not any(m["file"] == name for m in ms):
             raise RuntimeError("no such clip")
-        (MONTAGE_DIR / name).unlink(missing_ok=True)
+        remove_video_file(MONTAGE_DIR / name)
         _write_montages([m for m in ms if m["file"] != name])
         return {"ok": True, "files": [name]}
     out_dir = VIDEOS_DIR / demo_id
@@ -686,7 +770,7 @@ def delete_saved(demo_id: str, name: str) -> dict:
     if not names:
         raise RuntimeError("no such clip")
     for n in names:
-        (out_dir / n).unlink(missing_ok=True)
+        remove_video_file(out_dir / n)   # before the index changes: a busy file stays listed, so it can be retried
     (out_dir / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
     return {"ok": True, "files": names}
 
@@ -783,91 +867,343 @@ def _clip_has_audio(c: dict) -> bool:
     return True
 
 
+def plan_sessions(parts: list[dict], cfg: dict) -> list[list[dict]]:
+    """Group the demos to record into CS2 sessions: one session records demo after demo (each demo's cfg execs
+    the next one's, which loads it with `playdemo`), and a new session starts only where a demo's commands would
+    collide with the handover (can_chain). Each part gets "cfg_name" and "cfg_text". Pure function; unit-tested."""
+    sessions: list[list[dict]] = []
+    for p in parts:
+        cur = sessions[-1] if sessions else None
+        if cur:
+            prev = cur[-1]
+            text, _ = build_cfg(p["hs"], p["raw_dir"], p["names"], cfg, p["tickrate"], p["demo_id"], part=len(cur) + 1,
+                                playdemo=p["dem_name"], demoui=cfg.get("record_demoui_each_demo", True))
+            handover = prev["last_end"] + 2 * prev["tickrate"]
+            if can_chain(handover, cfg_ticks(text), p["tickrate"]):
+                cur.append(p)
+                continue
+        sessions.append([p])
+    for sess in sessions:
+        for j, p in enumerate(sess):
+            p["cfg_name"] = CFG_NAME if j == 0 else f"{CFG_NAME}_{j + 1}"
+            nxt = f"{CFG_NAME}_{j + 2}" if j + 1 < len(sess) else None
+            p["cfg_text"], p["seqs"] = build_cfg(p["hs"], p["raw_dir"], p["names"], cfg, p["tickrate"], p["demo_id"],
+                                                 part=j + 1, next_cfg=nxt, playdemo=p["dem_name"] if j else None,
+                                                 demoui=j == 0 or cfg.get("record_demoui_each_demo", True))
+    return sessions
+
+
+def _keep_session_log(csgo_dir: Path, sess: list[dict], si: int) -> None:
+    """Copy CS2's console log of a recording session (it is overwritten by the next launch) and note which demo
+    recorded how many clips, into data/videos/<demo>/record_log.txt of every demo of the session."""
+    try:
+        log = (csgo_dir / "console.log").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        log = "(no console.log)"
+    lines = [f"session {si + 1} · {time.strftime('%Y-%m-%d %H:%M:%S')}"]
+    for p in sess:
+        got = sum(1 for sq in p["seqs"] if (Path(sq["folder"]) / "video.mp4").exists())
+        lines.append(f"  {p['cfg_name']}: {p['demo_id']} ({p['dem_name']}) recorded {got} of {len(p['seqs'])}")
+    text = "\n".join(lines) + "\n\n---- configs ----\n" + "\n\n".join(f"# {p['cfg_name']}\n{p['cfg_text']}" for p in sess) \
+        + "\n\n---- CS2 console.log ----\n" + log
+    for p in sess:
+        try:
+            p["out_dir"].mkdir(parents=True, exist_ok=True)
+            (p["out_dir"] / "record_log.txt").write_text(text, encoding="utf-8")
+        except OSError:
+            pass
+
+
+def start_session(parts: list[tuple[str, list[int]]], opts: dict | None = None) -> dict:
+    """Record the highlights of several demos in as few CS2 launches as possible (usually one)."""
+    global _job
+    opts = opts or {}
+    recover_recordings([d for d, _ in parts])   # before this recording clears the raw folders
+    with _lock:
+        if _job and _job["status"] in ("preparing", "recording", "encoding"):
+            raise RuntimeError("a recording job is already running")
+        ts = tools_status()
+        if not ts["ready"]:
+            missing = [k for k in ("windows", "hlae", "ffmpeg", "cs2") if not ts[k]]
+            raise RuntimeError("recording not available: missing " + ", ".join(missing))
+        if cs2_running():
+            raise RuntimeError("CS2 is running; close it first")
+        todo = []
+        for demo_id, ids in parts:
+            hs = sorted((h for h in db.get_highlights(demo_id) if h["id"] in set(ids)), key=lambda h: h["start_tick"])
+            if hs:
+                todo.append((demo_id, hs))
+        if not todo:
+            raise RuntimeError("no highlights selected")
+        _cancel.clear()
+        total = sum(len(hs) for _, hs in todo)
+        _job = {"demo_id": todo[0][0], "demo_ids": [d for d, _ in todo], "status": "preparing", "progress": 0.0,
+                "stage": "preparing", "current": 0, "total": total, "started": time.time(), "error": None, "outputs": [],
+                "hint": "", "highlight_ids": [h["id"] for _, hs in todo for h in hs], "part_i": 0, "parts": len(todo)}
+        threading.Thread(target=_run_session, args=(todo, opts), daemon=True, name="record").start()
+        return dict(_job)
+
+
 def _run(demo_id: str, hs: list[dict], opts: dict) -> None:
+    _run_session([(demo_id, hs)], opts)
+
+
+def _run_session(todo: list[tuple[str, list[dict]]], opts: dict) -> None:
     cfg = load_config()
-    raw_dir = None
+    parts: list[dict] = []
     try:
         cs2 = find_cs2_path()
         csgo_dir = cs2 / "game" / "csgo"
-        meta = json.loads((DATA_DIR / "parsed" / demo_id / "meta.json").read_text(encoding="utf-8"))
-        names = {p["steamid"]: p["name"] for p in meta["players"]}
-        tickrate = int(meta.get("tickrate", 64))
-
-        _set(stage="preparing demo")
-        dem = ensure_dem(demo_id, csgo_dir / f"replay_{demo_id[:8]}.dem")
-
-        out_dir = VIDEOS_DIR / demo_id
-        out_dir.mkdir(parents=True, exist_ok=True)
-        raw_dir = raw_dir_for(demo_id)
-        shutil.rmtree(raw_dir, ignore_errors=True)
-        cfg_text, seqs = build_cfg(hs, raw_dir, names, cfg, tickrate, demo_id)
-        take_root = hlae_take_root(cs2, demo_id)
-        shutil.rmtree(take_root, ignore_errors=True)
-        for s in seqs:
-            Path(s["folder"]).mkdir(parents=True, exist_ok=True)
-            s["take_dir"] = take_root / f"seq{s['n']}"
         (csgo_dir / "cfg").mkdir(exist_ok=True)
-        (csgo_dir / "cfg" / f"{CFG_NAME}.cfg").write_text(cfg_text, encoding="utf-8")
-        (out_dir / "last_record.cfg").write_text(cfg_text, encoding="utf-8")
-        register_ffmpeg()
-
-        _set(stage="launching CS2 under HLAE", status="recording",
-             hint="CS2 is starting. If nothing records within a minute, open the console and type: exec " + CFG_NAME)
-        try:
-            (csgo_dir / "console.log").unlink(missing_ok=True)
-        except OSError:
-            pass
-        launch_game(dem, cfg)
-        time.sleep(5)
-
-        # ---- monitor: wait for the game to record every sequence and quit ------------------
-        expected = sum((s["end"] - s["start"]) / tickrate for s in seqs)
-        timeout = 240 + expected * 6 + 25 * len(seqs)
-        seen_running = False
-        t0 = time.time()
-        while True:
-            if _cancel.is_set():
-                raise RuntimeError("cancelled")
-            running = cs2_running()
-            seen_running = seen_running or running
-            done = [s for s in seqs if (Path(s["folder"]) / "video.mp4").exists()]
-            cur = len(done)
-            _set(current=cur, progress=0.05 + 0.75 * cur / max(1, len(seqs)),
-                 stage=f"recording highlight {min(cur + 1, len(seqs))} of {len(seqs)}" if running else "waiting for CS2")
-            if seen_running and not running:
-                break
-            if time.time() - t0 > timeout:
-                if not done:
-                    raise RuntimeError("timed out: CS2 did not record anything. Close CS2 and try again, or type "
-                                       f"'exec {CFG_NAME}' in the CS2 console if the game sat idle.")
-                break
-            time.sleep(2)
-        time.sleep(2)
-
-        _set(status="encoding", stage="muxing audio", raw_files=_tree(raw_dir) + (_tree(take_root) if take_root.exists() else []),
-             console=_console_tail(csgo_dir))
-        outputs = encode_outputs(seqs, out_dir, tickrate,
-                                 progress=lambda f, outs: _set(progress=0.8 + 0.15 * f, outputs=outs))
-        if not outputs:
-            raise RuntimeError("no video files were produced")
-        write_index(demo_id, outputs)
-        _set(stage="copying to Downloads")
-        try:
-            exported = str(export_clips(demo_id, outputs, cfg))
-        except Exception as e:  # noqa: BLE001
-            exported = f"export failed: {e}"
-        _set(exported=exported)
-        if all(o.get("audio") for o in outputs):
+        for k, (demo_id, hs) in enumerate(todo):
+            _set(stage=f"preparing demo {k + 1} of {len(todo)}" if len(todo) > 1 else "preparing demo")
+            meta = json.loads((DATA_DIR / "parsed" / demo_id / "meta.json").read_text(encoding="utf-8"))
+            dem = ensure_dem(demo_id, csgo_dir / f"replay_{demo_id[:8]}.dem")
+            raw_dir = raw_dir_for(demo_id)
             shutil.rmtree(raw_dir, ignore_errors=True)
+            take_root = hlae_take_root(cs2, demo_id)
             shutil.rmtree(take_root, ignore_errors=True)
-        else:
-            (out_dir / "raw_files.txt").write_text("\n".join(_tree(raw_dir, 500)), encoding="utf-8")
-            (out_dir / "console_tail.txt").write_text("\n".join(_console_tail(csgo_dir, 2000)), encoding="utf-8")
-        _set(status="done", stage="done", progress=1.0, outputs=outputs,
-             warning=None if all(o.get("audio") for o in outputs) else "no game audio was found for some clips; raw files kept in " + str(raw_dir))
+            p = {"demo_id": demo_id, "hs": hs, "dem": dem, "dem_name": dem.name, "raw_dir": raw_dir, "take_root": take_root,
+                 "names": {pl["steamid"]: pl["name"] for pl in meta["players"]}, "tickrate": int(meta.get("tickrate", 64)),
+                 "out_dir": VIDEOS_DIR / demo_id}
+            _, seqs = build_cfg(hs, raw_dir, p["names"], cfg, p["tickrate"], demo_id)
+            p["last_end"] = seqs[-1]["end"]
+            parts.append(p)
+        sessions = plan_sessions(parts, cfg)
+        # what will be recorded, before it is: a montage can plan (and start rendering) on it right away
+        _set(planned=[(p["demo_id"], planned_entry(sq, p["tickrate"])) for p in parts for sq in p["seqs"]])
+        register_ffmpeg()
+        done_before = 0
+        timing: list[dict] = []
+        for si, sess in enumerate(sessions):
+            for p in sess:
+                p["out_dir"].mkdir(parents=True, exist_ok=True)
+                for sq in p["seqs"]:
+                    Path(sq["folder"]).mkdir(parents=True, exist_ok=True)
+                    sq["take_dir"] = p["take_root"] / f"seq{sq['n']}"
+                write_planned(p)
+                (csgo_dir / "cfg" / f"{p['cfg_name']}.cfg").write_text(p["cfg_text"], encoding="utf-8")
+                (p["out_dir"] / "last_record.cfg").write_text(p["cfg_text"], encoding="utf-8")
+            launches = f" (CS2 launch {si + 1} of {len(sessions)})" if len(sessions) > 1 else ""
+            _set(stage="launching CS2 under HLAE" + launches, status="recording",
+                 hint="CS2 is starting. If nothing records within a minute, open the console and type: exec " + CFG_NAME)
+            try:
+                (csgo_dir / "console.log").unlink(missing_ok=True)
+            except OSError:
+                pass
+            t_launch = time.time()
+            launch_game(sess[0]["dem"], cfg)
+            time.sleep(5)
+            # ---- monitor: wait for the game to record every sequence of this session and quit ---------------
+            seqs = [(p, sq) for p in sess for sq in p["seqs"]]
+            expected = sum((sq["end"] - sq["start"]) / p["tickrate"] for p, sq in seqs)
+            timeout = 240 + expected * 6 + 25 * len(seqs) + 90 * (len(sess) - 1)   # each extra demo also has to load
+            seen_running = False
+            gone = 0   # "not running" readings in a row
+            t0 = time.time()
+            while True:
+                if _cancel.is_set():
+                    raise RuntimeError("cancelled")
+                running, seen_running, gone = game_state(cs2_running(), seen_running, gone)
+                _mux_finished(seqs, game_gone=seen_running and not running, timing=timing)
+                done = [1 for p, sq in seqs if (Path(sq["folder"]) / "video.mp4").exists()]
+                cur = done_before + len(done)
+                part_i = next((i for i, p in enumerate(parts) if any(not (Path(sq["folder"]) / "video.mp4").exists() for sq in p["seqs"])), len(parts) - 1)
+                which = f" (demo {part_i + 1} of {len(parts)})" if len(parts) > 1 else ""
+                _set(current=cur, part_i=part_i, progress=0.05 + 0.75 * cur / max(1, _job["total"]),
+                     stage=f"recording highlight {min(cur + 1, _job['total'])} of {_job['total']}{which}" if running else "waiting for CS2")
+                if seen_running and not running:
+                    break
+                if time.time() - t0 > timeout:
+                    if not done:
+                        raise RuntimeError("timed out: CS2 did not record anything. Close CS2 and try again, or type "
+                                           f"'exec {CFG_NAME}' in the CS2 console if the game sat idle.")
+                    break
+                time.sleep(1)
+            done_before += sum(1 for p, sq in seqs if (Path(sq["folder"]) / "video.mp4").exists())
+            time.sleep(2)
+            _mux_finished(seqs, game_gone=True, timing=timing)
+            _log_timing(sess, timing, t_launch)
+            # keep what CS2 did in this session: a demo that records nothing can be explained afterwards
+            _keep_session_log(csgo_dir, sess, si)
+
+        # ---- encode, demo by demo ----------------------------------------------------------------------------
+        all_outputs, warnings, exported = [], [], ""
+        for k, p in enumerate(parts):
+            _set(status="encoding", stage="muxing audio" + (f" (demo {k + 1} of {len(parts)})" if len(parts) > 1 else ""),
+                 raw_files=_tree(p["raw_dir"]) + (_tree(p["take_root"]) if p["take_root"].exists() else []),
+                 console=_console_tail(csgo_dir))
+            # clips are muxed while the game records the next one; only what is left is done here
+            outputs = []
+            for j, sq in enumerate(p["seqs"]):
+                o = sq["output"] if "output" in sq else encode_one(sq, p["out_dir"], p["tickrate"])
+                if o:
+                    outputs.append(o)
+                _set(progress=0.8 + 0.15 * (k + (j + 1) / len(p["seqs"])) / len(parts), outputs=all_outputs + outputs)
+            if not outputs:
+                warnings.append(f"no video was produced for demo {k + 1}")
+                continue
+            write_index(p["demo_id"], outputs)
+            _set(stage="copying to Downloads")
+            try:
+                exported = str(export_clips(p["demo_id"], outputs, cfg))
+            except Exception as e:  # noqa: BLE001
+                exported = f"export failed: {e}"
+            if all(o.get("audio") for o in outputs):
+                shutil.rmtree(p["raw_dir"], ignore_errors=True)
+                shutil.rmtree(p["take_root"], ignore_errors=True)
+            else:
+                (p["out_dir"] / "raw_files.txt").write_text("\n".join(_tree(p["raw_dir"], 500)), encoding="utf-8")
+                (p["out_dir"] / "console_tail.txt").write_text("\n".join(_console_tail(csgo_dir, 2000)), encoding="utf-8")
+                warnings.append("no game audio was found for some clips; raw files kept in " + str(p["raw_dir"]))
+            all_outputs += outputs
+        if not all_outputs:
+            raise RuntimeError("no video files were produced")
+        _set(exported=exported)
+        _set(status="done", stage="done", progress=1.0, outputs=all_outputs, warning="; ".join(warnings) or None)
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
         _set(status="error", stage="error", error=str(e))
+
+
+
+GAME_GONE_CHECKS = 5   # consecutive "CS2 is not running" checks (about a second apart) before a session ends
+
+
+def game_state(running_now: bool, seen: bool, gone: int) -> tuple[bool, bool, int]:
+    """(running, seen running, "not running" checks in a row) after one check. One failed check is not the game
+    quitting: tasklist can fail or time out while CS2 loads a demo with the CPU busy, so a game that was seen
+    counts as gone only after GAME_GONE_CHECKS "not running" readings in a row. Pure function; unit-tested."""
+    gone = 0 if running_now else gone + 1
+    running = running_now or (seen and gone < GAME_GONE_CHECKS)
+    return running, seen or running, gone
+
+
+PLANNED_NAME = "planned.json"   # in a demo's raw folder: what CS2 was told to record there (recover_recordings)
+_recover_lock = threading.Lock()
+
+
+def write_planned(p: dict) -> None:
+    """Note next to the raw recordings what they are, so recover_recordings can still make clips of them when
+    the app stops watching before CS2 is done (the app closed, or the game seemed gone while it still ran)."""
+    seqs = [{**sq, "folder": str(sq["folder"]), "take_dir": str(sq.get("take_dir") or "")}
+            for sq in p["seqs"]]
+    data = {"demo_id": p["demo_id"], "tickrate": p["tickrate"], "out_dir": str(p["out_dir"]),
+            "take_root": str(p["take_root"]), "seqs": seqs}
+    try:
+        (Path(p["raw_dir"]) / PLANNED_NAME).write_text(json.dumps(data, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def recover_recordings(demo_ids: list[str] | None = None) -> int:
+    """Make clips of recordings CS2 finished that never became clips: a raw folder still holding planned.json
+    and video files that are not in the match's videos.json. Only while nothing records and CS2 is closed (a
+    file of a running game may be incomplete). demo_ids: the matches to look at (None = every match with
+    clips). Returns how many clips were made."""
+    if _job and _job.get("status") in ("preparing", "recording", "encoding"):
+        return 0
+    if demo_ids is None:
+        demo_ids = [d.name for d in VIDEOS_DIR.iterdir() if d.is_dir()] if VIDEOS_DIR.is_dir() else []
+    todo = [(d, raw_dir_for(d) / PLANNED_NAME) for d in demo_ids if d != MONTAGE_ID]
+    todo = [(d, pf) for d, pf in todo if pf.is_file()]
+    # a recovery already running (the app's start) is waited for, so whoever asks sees the clips it makes
+    if not todo or not _recover_lock.acquire(timeout=300):
+        return 0
+    made = 0
+    try:
+        if cs2_running():
+            return 0
+        for demo_id, pf in todo:
+            try:
+                pl = json.loads(pf.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            tr = int(pl.get("tickrate") or 64)
+            have = {(v.get("highlight_id"), v.get("file")) for v in videos_index(demo_id).get("videos", [])}
+            outs, audio = [], True
+            for sq in pl.get("seqs", []):
+                if (sq["highlight_id"], f"{sq['name']}.mp4") in have:
+                    continue
+                o = encode_one(sq, Path(pl.get("out_dir") or VIDEOS_DIR / demo_id), tr)
+                if o:
+                    outs.append(o)
+                    audio = audio and o["audio"]
+            if outs:
+                write_index(demo_id, outs)
+                try:
+                    export_clips(demo_id, outs)
+                except Exception:  # noqa: BLE001
+                    pass
+                print(f"[record] recovered {len(outs)} clip(s) of {demo_id} that CS2 recorded unwatched", flush=True)
+            made += len(outs)
+            pf.unlink(missing_ok=True)
+            if outs and audio:   # as after a normal recording; without audio the raw files stay for a look
+                shutil.rmtree(raw_dir_for(demo_id), ignore_errors=True)
+                if pl.get("take_root"):
+                    shutil.rmtree(pl["take_root"], ignore_errors=True)
+    finally:
+        _recover_lock.release()
+    return made
+
+
+def _mux_finished(seqs: list[tuple[dict, dict]], game_gone: bool, timing: list[dict]) -> None:
+    """Mux every sequence HLAE has finished: the next one has started (or the game is gone) and its video file stopped
+    growing. Each clip goes into videos.json right away, so a montage can render it while CS2 records the rest.
+    Notes when each sequence appeared and last grew (the recording speed, in `timing`)."""
+    now = time.time()
+    for p, sq in seqs:
+        v = Path(sq["folder"]) / "video.mp4"
+        if not v.exists():
+            continue
+        sq.setdefault("seen", now)
+        try:
+            size = v.stat().st_size
+        except OSError:
+            continue
+        if size != sq.get("size"):
+            sq["size"], sq["grew"] = size, now
+    for j, (p, sq) in enumerate(seqs):
+        if "seen" not in sq or "output" in sq:
+            continue
+        nxt_started = j + 1 < len(seqs) and "seen" in seqs[j + 1][1]
+        if not (nxt_started or game_gone) or now - sq["grew"] < 0.9:
+            continue
+        o = encode_one(sq, p["out_dir"], p["tickrate"])
+        sq["output"] = o
+        secs = (sq["end"] - sq["start"]) / p["tickrate"]
+        wall = max(0.1, sq["grew"] - sq["seen"])
+        timing.append({"demo_id": p["demo_id"], "n": sq["n"], "file": f"{sq['name']}.mp4", "seconds": round(secs, 1),
+                       "wall": round(wall, 1), "speed": round(secs / wall, 2)})
+        if o:
+            write_index(p["demo_id"], [o])
+            try:
+                export_clips(p["demo_id"], [o])
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _log_timing(sess: list[dict], timing: list[dict], t_launch: float) -> None:
+    """Write how fast this CS2 session recorded (record_timing.json next to each demo's clips) and keep the totals
+    in the job: "speed" is seconds of game recorded per second of waiting, launch and demo loading included."""
+    ids = {p["demo_id"] for p in sess}
+    rows = [t for t in timing if t["demo_id"] in ids]
+    total = time.time() - t_launch
+    recorded = sum(t["seconds"] for t in rows)
+    summary = {"launched": t_launch, "wall": round(total, 1), "recorded": round(recorded, 1),
+               "speed": round(recorded / total, 2) if total > 0 else None,
+               "recording_speed": round(recorded / max(0.1, sum(t["wall"] for t in rows)), 2) if rows else None,
+               "encoder": str(load_config().get("record_encoder", "x264")),
+               "fast_preroll": bool(load_config().get("record_fast_preroll", False))}
+    print(f"[record] session: {summary['recorded']} s of game in {summary['wall']} s "
+          f"(x{summary['speed']} overall, x{summary['recording_speed']} while recording)", flush=True)
+    for p in sess:
+        try:
+            (p["out_dir"] / "record_timing.json").write_text(
+                json.dumps({**summary, "clips": [t for t in rows if t["demo_id"] == p["demo_id"]]}, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+    _set(timing={**summary, "clips": rows})
 
 
 # ---- cinematic post-processing job (slow-motion kills + music) ------------------------------
@@ -1179,7 +1515,8 @@ def squad_progress(st: dict, rec_progress: float = 0.0) -> float:
         return round(rec * (int(st.get("rec_i") or 0) + max(0.0, min(1.0, rec_progress))) / n, 3)
     if stage == "cinematic":
         n = max(1, int(st.get("total") or 1))
-        done = (int(st.get("piece_i") or 0) + max(0.0, min(1.0, float(st.get("piece_frac") or 0)))) / n
+        # piece_frac is the sum over the plays rendering at once
+        done = min(float(n), int(st.get("piece_i") or 0) + max(0.0, float(st.get("piece_frac") or 0))) / n
         return round(rec + (1 - rec) * 0.88 * done, 3)
     if stage == "joining":
         return round(rec + (1 - rec) * (0.97 if st.get("piece") == "laying the song" else 0.9), 3)
@@ -1192,8 +1529,9 @@ def squad_status() -> dict | None:
     st = dict(_squad_job)
     if st["status"] == "running":
         if st["stage"] == "recording" and _job:
-            st["detail"] = (f"match {int(st.get('rec_i') or 0) + 1}/{st['rec_n']} ({st.get('rec_match', '')}) · " if (st.get("rec_n") or 0) > 1 else "") \
-                + f"{_job.get('stage', '')} {round(100 * float(_job.get('progress') or 0))}%"
+            st["detail"] = f"{_job.get('stage', '')} {round(100 * float(_job.get('progress') or 0))}%"
+            if st.get("prerendered"):
+                st["detail"] += f" · {st['prerendered']} play{'s' if st['prerendered'] != 1 else ''} already rendered"
         elif st["stage"] in ("cinematic", "joining") and st.get("piece"):
             st["detail"] = st["piece"]
         st["progress"] = squad_progress(st, float((_job or {}).get("progress") or 0))
@@ -1214,6 +1552,7 @@ def start_squad_reel(demo_id: str, min_kills: int = 3, cinematic: bool = True, o
     global _squad_job
     if _squad_job and _squad_job.get("status") == "running":
         raise RuntimeError("a montage is already being made")
+    recover_recordings([demo_id])
     if highlight_ids is not None:
         want = set(highlight_ids)
         hs = sorted((h for h in db.get_highlights(demo_id) if h["id"] in want), key=lambda h: h["start_tick"])
@@ -1241,16 +1580,25 @@ def start_squad_reel(demo_id: str, min_kills: int = 3, cinematic: bool = True, o
             have = {v["highlight_id"] for v in videos_index(demo_id).get("videos", [])}
             need = [i for i in ids if i not in have]
             _squad_job["needs_recording"] = bool(need)
+            ov = overrides
             if need:
                 _squad_job["stage"] = "recording"
                 start(demo_id, need)
+                if cinematic:
+                    ov = _pin_song(overrides)
+
+                    def predict(planned: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
+                        by_id = {v["highlight_id"]: v for v in videos_index(demo_id).get("videos", [])}
+                        by_id.update({v["highlight_id"]: v for d, v in planned if d == demo_id})
+                        return [(demo_id, v) for v in sorted((by_id[i] for i in ids if i in by_id), key=lambda v: v["start_tick"])]
+                    pre_render_while_recording(predict, ov, load_team()["intro"])
                 wait(lambda: (_job or {}).get("status") in ("preparing", "recording", "encoding"))
                 if (_job or {}).get("status") != "done":
                     raise RuntimeError("recording did not finish: " + str((_job or {}).get("error") or (_job or {}).get("status")))
             if cinematic:
                 _squad_job.update({"stage": "cinematic", "piece_i": 0, "piece_frac": 0.0, "render_started": time.time()})
                 _squad_job["render_from"] = squad_progress(_squad_job)
-                _squad_job.update({"status": "done", "stage": "done", "result": _squad_cinematic(demo_id, ids, overrides)})
+                _squad_job.update({"status": "done", "stage": "done", "result": _squad_cinematic(demo_id, ids, ov)})
                 return
             _squad_job["stage"] = "joining"
             recorded = [i for i in ids if i in {v["highlight_id"] for v in videos_index(demo_id).get("videos", [])}]
@@ -1276,6 +1624,78 @@ def start_squad_reel(demo_id: str, min_kills: int = 3, cinematic: bool = True, o
 
     threading.Thread(target=run, daemon=True, name="squad").start()
     return {**_squad_job, "highlights": [{"id": h["id"], "description": h["description"]} for h in hs]}
+
+
+def pre_render_while_recording(predict, overrides: dict | None, intro: bool) -> threading.Thread | None:
+    """While CS2 records a montage's missing clips, render the montage's pieces that can already be made (clips
+    recorded earlier, and each new clip once it is muxed) into the piece cache, below normal priority so the game
+    keeps the CPU it needs. The montage itself runs afterwards as always and finds those pieces made.
+    predict(planned) -> the montage's plays [(demo_id, video entry)] as they will be once recorded, planned being
+    the recording job's [(demo_id, planned entry)]; overrides and intro exactly as the montage will be made with
+    (the same song pinned in cine_music), so the plan and every piece come out the same."""
+    from . import cinematic as cine
+    cfg = load_config()
+    if not cfg.get("render_while_recording", True) or cine.options(cfg, overrides).get("cine_voice"):
+        return None
+
+    def recording() -> bool:
+        return (_job or {}).get("status") in ("preparing", "recording", "encoding") and (_squad_job or {}).get("status") == "running"
+
+    def run() -> None:
+        try:
+            while recording() and not (_job or {}).get("planned"):
+                time.sleep(1)
+            if not recording():
+                return
+            plays = predict(_job["planned"])
+            if not plays:
+                return
+            per_play = plan_montage(plays, overrides, intro)["per_play"]
+            ffprobe = FFMPEG_DIR / "bin" / "ffprobe.exe"
+            nxt, lock = [0], threading.Lock()
+
+            def worker() -> None:
+                while True:
+                    with lock:
+                        i = nxt[0]
+                        nxt[0] += 1
+                    if i >= len(plays):
+                        return
+                    d, v = plays[i]
+                    cur = None
+                    while recording():
+                        cur = next((x for x in videos_index(d).get("videos", []) if x.get("file") == v["file"]
+                                    and x.get("highlight_id") == v["highlight_id"]), None)
+                        if cur and (VIDEOS_DIR / d / cur["file"]).exists():
+                            break
+                        cur = None
+                        time.sleep(1)
+                    if cur is None:
+                        return   # the recording is over: the montage makes the rest itself
+                    pp = per_play[i]
+                    cine.cinematic_for_video(d, cur, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides, montage_piece=True,
+                                             slow=pp.get("slow", True), lead=pp.get("lead"), low_priority=True)
+                    with lock:
+                        _squad_job["prerendered"] = int(_squad_job.get("prerendered") or 0) + 1
+            n = max(1, min(2, int(cfg.get("render_parallel", 3) or 1)))
+            ts = [threading.Thread(target=worker, daemon=True, name=f"prerender{k}") for k in range(n)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()   # only a head start is lost: the montage renders whatever is missing
+
+    t = threading.Thread(target=run, daemon=True, name="prerender")
+    t.start()
+    return t
+
+
+def _pin_song(overrides: dict | None) -> dict | None:
+    """overrides with the montage's song chosen now (cine_music), so planning it twice gives the same plan."""
+    from . import cinematic as cine
+    song = cine.pick_music(cine.options(load_config(), overrides))
+    return {**(overrides or {}), "cine_music": song.name} if song else overrides
 
 
 def montage_timeline(infos: list[dict]) -> tuple[float, float | None, list[tuple[float, float]]]:
@@ -1307,6 +1727,112 @@ def _join(files: list[Path], infos: list[dict], out: Path, list_file: Path) -> N
         raise RuntimeError("joining the videos failed: " + r.stderr[-400:])
 
 
+def _music_bed(cine, ffprobe: Path, first: Path, offset: float, total: float, work_dir: Path, stamp: str):
+    """(one long track made of `first` and the songs that follow it, their names) when the montage is longer than
+    `first` from `offset`; (None, []) when the song alone is long enough or there is nothing to follow it."""
+    first_len = cine.probe_video(ffprobe, first)["duration"]
+    if not first_len or first_len - offset >= total:
+        return None, []
+    others = [t for t in cine.music_files() if t.name != first.name]
+    if not others:
+        return None, []   # one song only: it loops
+    picked: list[Path] = []
+    lens: list[float] = []
+    while len(picked) < len(others) and cine.bed_tracks_needed(first_len, offset, total, lens) == len(lens) \
+            and max(0.0, first_len - offset) + sum(max(0.0, x - 3.0) for x in lens) < total:
+        nxt = cine.pick_music({"cine_music": ""}, exclude={first.name, *(p.name for p in picked)})
+        if nxt is None:
+            break
+        picked.append(nxt)
+        lens.append(cine.probe_video(ffprobe, nxt)["duration"])
+    bed = work_dir / f"music_bed_{stamp}.m4a"
+    r = subprocess.run(cine.music_bed_args(FFMPEG_EXE, first, offset, picked, bed), capture_output=True, text=True)
+    if r.returncode != 0 or not bed.exists():
+        bed.unlink(missing_ok=True)
+        return None, []
+    return bed, [p.name for p in picked]
+
+
+DROP_TOLERANCE = 0.3   # seconds between a slow-motion kill and the drop it lands on
+
+
+def plan_drop_slowmo(variants: list[list[dict]], start: float, drops: list[float], first_hit_to_drop,
+                     tol: float = DROP_TOLERANCE) -> tuple[list[dict], float]:
+    """Which plays of a long montage get slow motion so it lands on the song's drops. variants[i]: the ways play i
+    can be rendered, [{"slow", "lead", "seconds", "hit"}] with the default (slow, its normal lead) first and a
+    normal-speed one among them. The first play is always slow (its kill takes the song's main drop:
+    first_hit_to_drop(hit, est_total) gives the offset into the song). Every later play is slow only when one of
+    its slow variants puts its kill within `tol` of a drop not used yet; otherwise it runs at normal speed.
+    start: where the first play begins (after the intro). Returns (the chosen variant per play, song offset).
+    Pure function; unit-tested."""
+    if not variants:
+        return [], 0.0
+    first = variants[0][0]
+    hit0 = start + first["hit"]
+    normal = [next(v for v in vs if not v["slow"]) for vs in variants]
+    est_total = start + first["seconds"] + sum(v["seconds"] for v in normal[1:])
+    offset = max(0.0, first_hit_to_drop(hit0, est_total))
+    targets = sorted(d - offset for d in drops if d - offset > hit0 + 1.0)   # drops in montage time, after the first
+    chosen, used, t = [first], set(), start + first["seconds"]
+    for i in range(1, len(variants)):
+        best = None
+        for v in variants[i]:
+            if not v["slow"] or v["hit"] is None:
+                continue
+            for j, d in enumerate(targets):
+                err = abs(t + v["hit"] - d)
+                if j not in used and err <= tol and (best is None or err < best[0]):
+                    best = (err, j, v)
+        if best:
+            used.add(best[1])
+            chosen.append(best[2])
+        else:
+            chosen.append(normal[i])
+        t += chosen[-1]["seconds"]
+    return chosen, offset
+
+
+def plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: bool) -> dict:
+    """How every play of a montage is rendered: {"song": the song a drop plan was made on (None without one),
+    "offset": where that song starts, "per_play": [{"slow", "lead"}], "note": what the plan did}. A long montage
+    gets slow motion only on the plays whose kill lands on one of the song's drops. Uses the clips' recorded length
+    ("seconds"), not the files, so the same plan can be made before the clips are recorded (pre_render_while_recording).
+    Picks a song when none is set (pass cine_music in overrides for the same plan twice)."""
+    from . import cinematic as cine
+    ffprobe = FFMPEG_DIR / "bin" / "ffprobe.exe"
+    plan = {"song": None, "offset": None, "per_play": [{} for _ in plays], "note": None}
+    cfg0 = load_config()
+    opts0 = cine.options(cfg0, overrides)
+    if not (cfg0.get("cine_drop_slowmo", True) and len(plays) >= int(cfg0.get("cine_drop_min_plays", 6))
+            and opts0.get("cine_music_sync") and float(opts0.get("cine_music_volume", 0.7)) > 0 and not opts0.get("cine_voice")):
+        return plan
+    song = cine.pick_music(opts0)
+    if not song:
+        return plan
+    variants = []
+    for demo_id, v in plays:
+        kills = cine.video_kills(demo_id, v)
+        dur = float(v.get("seconds") or 0) or cine.probe_video(ffprobe, VIDEOS_DIR / demo_id / v["file"])["duration"]
+        base_lead = float(opts0.get("cine_trim_lead", 2.0))
+        vs = [{"slow": True, "lead": None, **cine.clip_timing(kills, dur, opts0)},
+              {"slow": False, "lead": None, **cine.clip_timing(kills, dur, {**opts0, "_no_slow": True})}]
+        if kills:   # the same play with a little more or less footage before its first kill
+            for k in range(3, 17):
+                lead = k * 0.25
+                if abs(lead - base_lead) > 0.01 and kills[0] - lead >= 0:
+                    vs.append({"slow": True, "lead": lead, **cine.clip_timing(kills, dur, {**opts0, "_lead": lead})})
+        if vs[0]["hit"] is None:   # a play without a kill inside the clip cannot carry a drop
+            vs = [dict(vs[1])] + vs[1:]
+        variants.append(vs)
+    curve = cine.loudness_curve(FFMPEG_EXE, song)
+    drops = cine.find_drops(curve)
+    start = cine.INTRO_SECONDS if intro else 0.0
+    picked, offset = plan_drop_slowmo(variants, start, drops, lambda hit, total: cine.find_drop(curve, 0.5, hit, total) - hit)
+    plan.update({"song": song, "offset": offset, "per_play": [{"slow": c["slow"], "lead": c["lead"]} for c in picked],
+                 "note": f"{sum(1 for c in picked if c['slow'])} of {len(plays)} plays in slow motion, on the drops"})
+    return plan
+
+
 def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, work_dir: Path, out: Path,
                          base: int = 0, last: bool = True, intro: dict | None = None) -> dict:
     """Every play (demo_id, its videos.json entry) rendered cinematic without music, joined in the given order,
@@ -1317,25 +1843,66 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
     from . import cinematic as cine
     ffprobe = FFMPEG_DIR / "bin" / "ffprobe.exe"
     pieces: list[Path] = []
+    cached: set[Path] = set()     # pieces that live in the piece cache: never deleted here
     infos: list[dict] = []
     stamp = time.strftime("%Y%m%d_%H%M%S")
     joined = work_dir / f"montage_joined_{stamp}.mp4"
+    made_files: list[Path] = []   # every piece rendered so far, whatever the order, so a failure still cleans up
     try:
-        for i, (demo_id, v) in enumerate(plays):
+        _squad_job["piece"] = "planning the montage"
+        mp = plan_montage(plays, overrides, intro is not None)
+        plan_song, plan_offset, per_play = mp["song"], mp["offset"], mp["per_play"]
+        if mp["note"]:
+            _squad_job["drops"] = mp["note"]
+        # several plays render at once: one FFmpeg filter chain keeps only a core or two busy
+        workers = max(1, min(int(load_config().get("render_parallel", 3) or 1), len(plays)))
+        lock = threading.Lock()
+        fracs: dict[int, float] = {}
+        done = [0]
+        n = int(_squad_job.get("total") or len(plays))
+
+        def publish(i: int, stage: str, frac: float | None) -> None:
+            if workers == 1:
+                _squad_job["piece"] = f"play {base + i + 1}/{n} · {stage}" + (f" {round(100 * frac)}%" if frac is not None else "")
+            else:
+                busy = len(fracs)
+                _squad_job["piece"] = f"{done[0]} of {len(plays)} plays done" + (f" · {busy} rendering at once" if busy else "")
+            _squad_job["piece_i"] = base + done[0]
+            _squad_job["piece_frac"] = sum(fracs.values())
+
+        def render(i: int) -> dict:
             if _squad_job.get("status") != "running":
                 raise RuntimeError("cancelled")
+            demo_id, v = plays[i]
 
-            def prog(stage: str, frac: float | None, i=i) -> None:
-                n = int(_squad_job.get("total") or len(plays))
-                _squad_job["piece"] = f"play {base + i + 1}/{n} · {stage}" + (f" {round(100 * frac)}%" if frac is not None else "")
-                _squad_job["piece_i"] = base + i
-                if frac is not None:
-                    _squad_job["piece_frac"] = frac
+            def prog(stage: str, frac: float | None) -> None:
+                with lock:
+                    fracs[i] = frac if frac is not None else fracs.get(i, 0.0)
+                    publish(i, stage, frac)
+            pp = per_play[i]
             nv = cine.cinematic_for_video(demo_id, v, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides, progress=prog,
-                                          montage_piece=True)
-            pieces.append(VIDEOS_DIR / demo_id / nv["cine"])
-            _squad_job.update({"piece_i": base + i + 1, "piece_frac": 0.0})
+                                          montage_piece=True, slow=pp.get("slow", True), lead=pp.get("lead"))
+            with lock:
+                if not nv.get("cine_path"):   # a cached piece stays in the cache
+                    made_files.append(VIDEOS_DIR / demo_id / nv["cine"])
+                fracs.pop(i, None)
+                done[0] += 1
+                publish(i, "done", None)
+            return nv
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="piece") as ex:
+            futs = [ex.submit(render, i) for i in range(len(plays))]
+            try:
+                results = [f.result() for f in futs]   # in play order
+            except BaseException:
+                for f in futs:
+                    f.cancel()
+                raise
+        for (demo_id, _), nv in zip(plays, results):
+            pieces.append(Path(nv["cine_path"]) if nv.get("cine_path") else VIDEOS_DIR / demo_id / nv["cine"])
             infos.append(nv["cine_info"])
+        cached = {p_ for p_, nv in zip(pieces, results) if nv.get("cine_path")}
         if intro and pieces:
             _squad_job["piece"] = "making the intro"
             card = work_dir / f"montage_intro_{stamp}.mp4"
@@ -1352,24 +1919,38 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
         total, hit, duck = montage_timeline(infos)
         _join(pieces, infos, joined, work_dir / f"montage_list_{stamp}.txt")
         opts = cine.options(load_config(), overrides)
-        music = cine.pick_music(opts)
-        song = None
+        music = plan_song or cine.pick_music(opts)   # drop-planned montages keep the song they were planned on
+        song, songs = None, []
         if music and float(opts.get("cine_music_volume", 0.7)) > 0:
             if last:
                 _squad_job["piece"] = "laying the song"
-            offset = cine.music_offset(FFMPEG_EXE, music, hit, total) if (opts.get("cine_music_sync") and hit is not None) else 0.0
-            r = subprocess.run(cine.montage_music_args(FFMPEG_EXE, joined, music, out, total, offset,
-                                                       float(opts["cine_music_volume"]), duck), capture_output=True, text=True)
+            if plan_offset is not None:
+                offset = plan_offset
+            else:
+                offset = cine.music_offset(FFMPEG_EXE, music, hit, total) if (opts.get("cine_music_sync") and hit is not None) else 0.0
+            # longer than the song: the songs not heard for the longest time follow it, crossfading, instead of a loop
+            bed, songs = _music_bed(cine, ffprobe, music, offset, total, work_dir, stamp)
+            src, off = (bed, 0.0) if bed else (music, offset)
+            try:
+                r = subprocess.run(cine.montage_music_args(FFMPEG_EXE, joined, src, out, total, off,
+                                                           float(opts["cine_music_volume"]), duck), capture_output=True, text=True)
+            finally:
+                if bed:
+                    bed.unlink(missing_ok=True)
             if r.returncode != 0 or not out.exists():
                 raise RuntimeError("adding the song failed: " + r.stderr[-400:])
             song = music.name
         else:
             joined.replace(out)
-        return {"seconds": round(total, 1), "music": song}
+        return {"seconds": round(total, 1), "music": song, "songs": [song] + songs if song else []}
     finally:
-        for p_ in pieces:
+        for p_ in {*pieces, *made_files} - cached:
             p_.unlink(missing_ok=True)
         joined.unlink(missing_ok=True)
+        try:
+            cine.prune_piece_cache(int(float(load_config().get("render_cache_gb", 20)) * 1024 ** 3))
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _squad_cinematic(demo_id: str, ids: list[int], overrides: dict | None) -> dict:
@@ -1515,6 +2096,7 @@ def _recap_matches() -> list[dict]:
 
 def recap_preview(date_from: str, date_to: str, min_kills: int = 3, best_of: int | None = None) -> dict:
     """What a recap would hold, plus the squad plays of those matches that are not recorded yet."""
+    recover_recordings()
     members = load_squad()
     matches = _recap_matches()
     plays = recap_plays(matches, members, date_from, date_to, min_kills, best_of)
@@ -1591,35 +2173,17 @@ def start_recap(date_from: str, date_to: str, min_kills: int = 3, best_of: int |
     return dict(_squad_job)
 
 
-def _render_match_groups(groups: list[list[tuple[str, dict]]], out: Path, stamp: str, intro: dict | None) -> dict:
-    """Several matches in one video: each match's plays rendered as a song montage with its own track (the one not
-    heard for the longest time, so no repeat while there are tracks left), the intro first, the matches in order.
-    Returns {"seconds", "music": [song per match]}."""
+def _render_match_groups(groups: list[list[tuple[str, dict]]], out: Path, stamp: str, intro: dict | None,
+                         music: str = "") -> dict:
+    """Several matches in one video with ONE soundtrack over the whole of it: every play rendered cinematic, the
+    matches oldest first, the intro before the first play, then the chosen song (`music`, or a song not heard
+    lately) from its drop on the first slow-motion kill; when the video is longer than the song, the next
+    fresh songs follow it with a crossfade. Returns {"seconds", "music": [the songs, in order]}."""
     from . import cinematic as cine
     MONTAGE_DIR.mkdir(parents=True, exist_ok=True)
-    parts: list[Path] = []
-    infos: list[dict] = []
-    songs: list[str] = []
-    done = 0
-    try:
-        for gi, g in enumerate(groups):
-            part = MONTAGE_DIR / f"part{gi + 1}_{stamp}.mp4"   # no song chosen: each match gets the freshest track
-            made = _render_song_montage(g, cine.options(overrides={"cine_music": ""}), MONTAGE_DIR, part,
-                                        base=done, last=gi == len(groups) - 1, intro=intro if gi == 0 else None)
-            parts.append(part)
-            infos.append({"seconds": made["seconds"]})
-            if made["music"]:
-                songs.append(made["music"])
-            done += len(g)
-        if len(parts) == 1:
-            parts[0].replace(out)
-        else:
-            _squad_job.update({"stage": "joining", "piece": "joining the matches"})
-            _join(parts, infos, out, MONTAGE_DIR / f"list_{stamp}.txt")
-        return {"seconds": round(sum(i["seconds"] for i in infos), 1), "music": songs}
-    finally:
-        for p_ in parts:
-            p_.unlink(missing_ok=True)
+    plays = [x for g in groups for x in g]
+    made = _render_song_montage(plays, cine.options(overrides={"cine_music": music or ""}), MONTAGE_DIR, out, intro=intro)
+    return {"seconds": made["seconds"], "music": made.get("songs") or ([made["music"]] if made.get("music") else [])}
 
 
 def intro_dates(days: list[str]) -> str:
@@ -1700,6 +2264,7 @@ def _join_as_recorded(plays: list[tuple[str, dict]], out: Path, stamp: str, intr
 
 def multi_squad_plan(demo_ids: list[str], min_kills: int = 3) -> list[dict]:
     """Per selected match, oldest first: its squad plays (min_kills+) and which of them still need recording."""
+    recover_recordings(demo_ids)
     members = load_squad()
     plan = []
     for d in demo_ids:
@@ -1715,9 +2280,10 @@ def multi_squad_plan(demo_ids: list[str], min_kills: int = 3) -> list[dict]:
     return sorted(plan, key=lambda m: str(m.get("date") or ""))
 
 
-def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", cinematic: bool = True) -> dict:
+def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", cinematic: bool = True,
+                      music: str = "") -> dict:
     """The squad montage of several matches as one video (background job, squad_status() with demo_id "montages"):
-    record what is missing match by match in CS2, then every match's plays cinematic with one song per match
+    record what is missing match by match in CS2, then every play cinematic with one soundtrack over the whole video
     (cinematic=False: the recorded clips as they are, no song), the intro first, the matches joined oldest first,
     saved with the montages."""
     global _squad_job
@@ -1732,22 +2298,37 @@ def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", 
     total = sum(len(m["ids"]) for m in plan)
     _squad_job = {"demo_id": MONTAGE_ID, "status": "running", "stage": "starting", "total": total, "error": None,
                   "result": None, "started": time.time(), "cinematic": cinematic, "label": "Squad montage", "picked": True,
-                  "needs_recording": bool(to_record), "rec_i": 0, "rec_n": len(to_record), "matches": len(plan)}
+                  "needs_recording": bool(to_record), "rec_i": 0, "rec_n": 1, "matches": len(plan)}
 
     def run() -> None:
         try:
-            for ri, m in enumerate(to_record):
-                if _squad_job.get("status") != "running":
-                    raise RuntimeError("cancelled")
-                _squad_job.update({"stage": "recording", "rec_i": ri, "rec_match": f"{m.get('map') or 'match'} {str(m.get('date') or '')[:10]}"})
-                start(m["demo_id"], m["need"])
+            song = music
+            if to_record:   # every missing play of every match in one CS2 session (it loads demo after demo)
+                _squad_job.update({"stage": "recording", "rec_i": 0, "rec_n": 1})
+                start_session([(m["demo_id"], m["need"]) for m in to_record])
+                if cinematic:
+                    from . import cinematic as cine
+                    song = song or (_pin_song(None) or {}).get("cine_music", "")
+
+                    def predict(planned: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
+                        out = []
+                        for m in plan:
+                            by_id = {v["highlight_id"]: v for v in videos_index(m["demo_id"]).get("videos", [])}
+                            by_id.update({v["highlight_id"]: v for d, v in planned if d == m["demo_id"]})
+                            vids = sorted((by_id[i] for i in m["ids"] if i in by_id), key=lambda v: v["start_tick"])
+                            out += [(m["demo_id"], v) for v in vids]
+                        return out
+                    pre_render_while_recording(predict, cine.options(overrides={"cine_music": song or ""}), load_team()["intro"])
                 while (_job or {}).get("status") in ("preparing", "recording", "encoding"):
                     if _squad_job.get("status") != "running":
                         raise RuntimeError("cancelled")
                     time.sleep(2)
                 if (_job or {}).get("status") != "done":
-                    raise RuntimeError(f"recording {_squad_job['rec_match']} did not finish: "
-                                       + str((_job or {}).get("error") or (_job or {}).get("status")))
+                    raise RuntimeError("recording did not finish: " + str((_job or {}).get("error") or (_job or {}).get("status")))
+            have_now = {(m["demo_id"], v["highlight_id"]) for m in plan for v in videos_index(m["demo_id"]).get("videos", [])}
+            missing = [(m, i) for m in plan for i in m["ids"] if (m["demo_id"], i) not in have_now]
+            if missing:
+                _squad_job["missing"] = f"{len(missing)} play{'s' if len(missing) > 1 else ''} could not be recorded and {'were' if len(missing) > 1 else 'was'} left out"
             groups = []
             for m in plan:
                 vids = sorted((v for v in videos_index(m["demo_id"]).get("videos", []) if v["highlight_id"] in set(m["ids"])),
@@ -1764,13 +2345,16 @@ def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", 
             out = MONTAGE_DIR / f"squad_{len(groups)}matches_{stamp}.mp4"
             dates = {m["demo_id"]: m.get("date") for m in plan}
             intro = squad_intro("Squad montage", plays, dates)
-            made = _render_match_groups(groups, out, stamp, intro) if cinematic else _join_as_recorded(plays, out, stamp, intro)
+            made = _render_match_groups(groups, out, stamp, intro, song) if cinematic else _join_as_recorded(plays, out, stamp, intro)
             maps = sorted({m.get("map") or "" for m in plan if any(g[0][0] == m["demo_id"] for g in groups)} - {""})
             when = intro_dates([dates.get(g[0][0]) or "" for g in groups])
             entry = {"file": out.name, "seconds": made["seconds"], "maps": maps, "cinematic": cinematic, "music": made["music"],
                      "description": title.strip()[:80] or f"Squad montage · {len(plays)} plays from {len(groups)} match{'es' if len(groups) > 1 else ''} · {when}",
                      "clips": [{"demo_id": d, "file": v["file"], "description": v.get("description")} for d, v in plays],
                      "created": time.time()}
+            if missing:
+                entry["warning"] = _squad_job["missing"] + ": " + ", ".join(
+                    f"{m.get('map') or 'match'} {str(m.get('date') or '')[:10]}" for m in {id(m): m for m, _ in missing}.values())
             _save_montage(out, entry)
             _squad_job.update({"status": "done", "stage": "done", "result": {**entry, "demo_id": MONTAGE_ID}})
         except Exception as e:  # noqa: BLE001

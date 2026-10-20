@@ -1,5 +1,7 @@
 # CS2 FACEIT Highlighter
 
+Created by **[Ron Gershtein](https://github.com/RonGershtein)**.
+
 Drop a FACEIT (or Valve MM) CS2 demo into a local web app and get:
 
 - a **2D top-down replay** in the browser (players, view cones, HP, smokes, molotovs, grenades, bomb, kill lines)
@@ -7,16 +9,20 @@ Drop a FACEIT (or Valve MM) CS2 demo into a local web app and get:
 - per-match **stats** (K/D/A, ADR, HS%, KAST, rating) and a library of all your matches
 - **Open in CS2** at any highlight, or watch the whole demo in the game
 - **MP4 recording** of selected highlights (CS2 + HLAE + FFmpeg, first-person, with game audio), a **long video** from any clips you pick,
-  and a **cinematic** version: slow motion on the kills, dead time fast-forwarded or cut, your own music started at its drop,
-  zoom punch and flash on kills, title card ("TRIPLE KILL", "ACE", "1v3 CLUTCH"), kill counter and voice lines
+  and a **cinematic** version: slow motion on the kills, dead time fast-forwarded (long waits warped through and cut), your own music
+  started at its drop, zoom punch and flash on kills, title card ("TRIPLE KILL", "ACE", "1v3 CLUTCH"), kill counter, caster voice lines
+  and a **player card** with your friend's photo
+- **Squad montages**: pick any matches and get your squad's 3K+ plays in one cinematic video with one song, recorded in a single CS2
+  session; and a **monthly / yearly recap** of everything you recorded
 
 Everything runs on your PC. Nothing is uploaded anywhere.
 
-![library](docs/library.png)
+![library: your latest montage, stats and matches](docs/library.png)
+![squad montage of several matches](docs/squad-montage.png)
+![a cinematic clip with the player card](docs/cinematic-frame.png)
 ![viewer](docs/viewer.png)
-![cinematic dialog](docs/cinematic.png)
 ![cinematic options](docs/cinematic-options.png)
-![cinematic clip](docs/cinematic-frame.png)
+![squad tab](docs/squad.png)
 
 ## Requirements
 
@@ -85,6 +91,22 @@ All kills of a player in one round count as one play (two kills, then two more h
 cinematic pace fast-forwards the quiet part in between. A cinematic job keeps running when you open another match,
 and jobs started meanwhile wait in a queue.
 
+**Several matches at once:** in the library, **Select matches**, click the matches (or **Select all**), then
+**Squad montage** → **Create squad montage** (or **New squad montage** at the top). The squad's
+plays of all of them become one video, oldest match first, with the intro card (team name, dates, stats) and one song
+(the next songs crossfade in when the video is longer). Plays that are not recorded yet are recorded first in one CS2
+session that loads demo after demo. While CS2 records, the plays already recorded are rendered in the background at low
+priority, so when the game closes most of the montage is done. Rendered plays are kept (see `render_cache_gb`), so a
+second montage or a recap with the same plays only joins them.
+
+**Recap:** the **Recap** button makes one video of every recorded squad play in a month, a year or any date range.
+
+**Squad tab:** the friends whose plays count, their Steam64 IDs and their photos for the player card. Upload a photo
+there; it is cropped to a round avatar in the videos.
+
+If the app is closed (or loses track of the game) while CS2 is still recording, nothing is lost: the next time it
+starts, or opens that match, it turns what CS2 recorded into clips by itself.
+
 ### Highlights tab
 Every video you made, from every match: original clips, cinematic versions, long videos and montages, newest first.
 They stay here after you delete the match (the map, date and score are saved with the clips). Filter by kind or map,
@@ -120,11 +142,14 @@ CS2 runs with `-insecure` while recording, which only disables VAC for that sess
 
 ### Cinematic clips
 Click **✨ Cinematic**. The dialog has every option, remembers them, and processes either all clips without a cinematic version or the
-highlights you ticked (those are remade). Takes ~15-30 s per clip
+highlights you ticked (those are remade). Takes ~10-20 s per clip
 (much longer with "smooth frames").
 
 - **Pace:** dead time between kills (walking, waiting) is fast-forwarded at 6x by default, or cut out, with normal speed from
   2 s before each kill. Nothing is re-recorded; the clip's kill ticks from the demo decide where the action is.
+- **Skip long waits** (on by default): a wait that would still drag on fast-forwarded (a 100 s rotation is 17 s at 6x)
+  keeps only a warp into it and out of it, speeding up to 16x, with a quick white flash where the middle is cut. A 113 s
+  clutch becomes a 16 s clip instead of 30 s.
 - **Slow motion** on the final kill or every kill, with a speed ramp in and out.
 - **Effects:** zoom punch and flash on each kill, vignette and colour grade, fade in/out.
 - **Text:** a title card for the first seconds (TRIPLE KILL / ACE / 1v3 CLUTCH, then "3K · map · round") and a kill counter.
@@ -152,6 +177,12 @@ highlights you ticked (those are remade). Takes ~15-30 s per clip
 | `record_width` / `record_height` / `record_fps` | 1920 / 1080 / 60 | recording resolution and frame rate |
 | `record_crf` | 20 | x264 quality, lower = better and bigger |
 | `record_close_game` | true | quit CS2 after the last clip |
+| `record_hud` | killfeed | `killfeed`: a clean picture with the kill feed only; `health_ammo`: CS2's HUD with health and ammo |
+| `record_encoder` | x264 | `amf` records with an AMD graphics card's encoder instead of the CPU (try it if recording is slow) |
+| `record_fast_preroll` | false | play the unrecorded 2 s before each highlight at 4x |
+| `render_parallel` | 3 | montage plays rendered at the same time |
+| `render_while_recording` | true | render the plays already recorded while CS2 records the rest |
+| `render_cache_gb` | 20 | rendered montage plays kept for the next montage or recap (oldest go first) |
 | `cine_*` | | every option of the Cinematic dialog (slow motion, pace, effects, text, music, voice); the dialog writes them |
 
 Restart the app after editing the file by hand.
@@ -162,6 +193,10 @@ Restart the app after editing the file by hand.
 - **"Open in CS2" opens the game at round one**: that is expected, type `exec hl` in the console to jump.
 - **Recording: CS2 opens and sits in the menu / nothing recorded**: close the FACEIT client, make sure CS2 was fully closed before starting, then try again. If the demo plays but nothing happens, open the console and type `exec cs2watcher_rec`.
 - **Recording: no audio in the clip**: update to the latest version of this repo (fixed) and re-record.
+- **Recording is slow**: every match folder in `data/videos/` gets a `record_timing.json` with how fast each clip recorded
+  (`speed` 1.4 = 1.4 s of game per second). If your CPU is maxed out while recording and you have an AMD card, try
+  `record_encoder = "amf"`.
+- **CS2 kept recording after the app said it was done**: restart the app; it makes clips of whatever CS2 recorded meanwhile.
 - **A demo stays at "parsing"**: look at the console window for the error; remove the match and drop it again.
 - **Python not found**: answer `Y` when `start.bat` offers to install it, or install Python 3.11/3.12 from python.org with "Add to PATH" ticked, then run `start.bat` again.
 - **"This folder is on a network path"**: the repo lives in WSL or on a share. Clone or copy it to a Windows folder such as `C:\cs2-highlighter` and start it from there.

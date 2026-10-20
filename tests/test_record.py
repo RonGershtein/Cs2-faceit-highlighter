@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from backend.record import build_cfg, raw_dir_for
+from backend.record import build_cfg, encoder_args, planned_entry, raw_dir_for
 
 
 def hl(i, start, end, player="76561198000000001", typ="multikill", rnd=3):
@@ -366,11 +366,11 @@ def test_build_cfg_hides_demo_ui_once_before_recording():
     assert f"mirv_cmd addAtTick {setup} hl_s1" in lines                       # with the first highlight's setup
 
 
-def test_build_cfg_hud_shows_health_and_ammo_by_default():
+def test_build_cfg_hud_is_the_kill_feed_only_by_default():
     text, _ = build_cfg([hl(0, 5000, 5600)], Path("C:/x/raw"), {}, {}, 64)
-    assert "cl_draw_only_deathnotices 0" in text and "cl_drawhud_force_radar -1" in text
-    text, _ = build_cfg([hl(0, 5000, 5600)], Path("C:/x/raw"), {}, {"record_hud": "killfeed"}, 64)
     assert "cl_draw_only_deathnotices 1" in text and "cl_drawhud_force_radar" not in text
+    text, _ = build_cfg([hl(0, 5000, 5600)], Path("C:/x/raw"), {}, {"record_hud": "health_ammo"}, 64)
+    assert "cl_draw_only_deathnotices 0" in text and "cl_drawhud_force_radar -1" in text
 
 
 def test_squad_players_names_and_photos(tmp_path, monkeypatch):
@@ -394,3 +394,280 @@ def test_squad_players_names_and_photos(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(RuntimeError):
         rec.save_player_photo("1", "a", b"x", ".gif")
+
+
+def test_match_groups_get_one_soundtrack_over_the_whole_video(tmp_path, monkeypatch):
+    import backend.record as rec
+    monkeypatch.setattr(rec, "MONTAGE_DIR", tmp_path)
+    seen = []
+
+    def fake(plays, overrides, work_dir, out, base=0, last=True, intro=None):
+        seen.append(([v["file"] for _, v in plays], overrides["cine_music"], intro is not None))
+        return {"seconds": 20.0, "music": "Granite.mp3", "songs": ["Granite.mp3", "Blood Sugar.mp3"]}
+    monkeypatch.setattr(rec, "_render_song_montage", fake)
+    groups = [[("d1", {"file": "a.mp4"})], [("d2", {"file": "b.mp4"}), ("d2", {"file": "c.mp4"})]]
+    made = rec._render_match_groups(groups, tmp_path / "o.mp4", "s", {"team": "x"}, "Granite.mp3")
+    assert seen == [(["a.mp4", "b.mp4", "c.mp4"], "Granite.mp3", True)]      # all matches in one render, one song
+    assert made["music"] == ["Granite.mp3", "Blood Sugar.mp3"]
+
+
+def test_music_bed_follows_a_short_song_with_the_next_ones():
+    from backend.cinematic import bed_tracks_needed, music_bed_args
+    assert bed_tracks_needed(200, 30, 120, [180, 180]) == 0                     # 170 s of song left for 120 s
+    assert bed_tracks_needed(200, 30, 300, [180, 180]) == 1                     # 170 + 177 covers 300
+    assert bed_tracks_needed(100, 0, 600, [180, 180]) == 2                      # runs out: all of them
+    args = music_bed_args(Path("ff"), Path("a.mp3"), 12.5, [Path("b.mp3"), Path("c.mp3")], Path("bed.m4a"))
+    g = args[args.index("-filter_complex") + 1]
+    assert args[:6] == ["ff", "-y", "-ss", "12.500", "-i", "a.mp3"]
+    assert g == "[0:a][1:a]acrossfade=d=3:c1=tri:c2=tri[x1];[x1][2:a]acrossfade=d=3:c1=tri:c2=tri[x2]" and args[args.index("-map") + 1] == "[x2]"
+
+
+def test_build_cfg_chains_to_the_next_demo_instead_of_quitting():
+    hs = [hl(0, 5000, 5600)]
+    text, _ = build_cfg(hs, Path("C:/x/raw"), {}, {}, 64, "d1", next_cfg="cs2watcher_rec_2")
+    lines = text.splitlines()
+    assert "mirv_cmd addAtTick 5728 exec cs2watcher_rec_2" in lines and not any(ln.endswith(" quit") for ln in lines)
+    text2, _ = build_cfg([hl(1, 9000, 9500)], Path("C:/x/raw2"), {}, {}, 64, "d2", part=2, playdemo="replay_d2.dem")
+    l2 = text2.splitlines()
+    assert l2[-1] == 'playdemo "replay_d2.dem"'                                # loads its demo after scheduling
+    assert l2.index("mirv_cmd clear") < l2.index('playdemo "replay_d2.dem"')    # the old demo's commands are gone
+    assert any(ln.startswith('alias hl2_s1 "') for ln in l2) and "mirv_cmd addAtTick 8872 hl2_s1" in l2
+    assert any("settings add ffmpeg p2_1 " in ln for ln in l2)                  # names do not collide with demo 1
+    assert l2[-2:-1] == ['echo "[cs2watcher] commands scheduled"'] and any(ln.endswith(" quit") for ln in l2)
+
+
+def test_plan_sessions_chains_demos_and_splits_on_a_collision():
+    from backend.record import plan_sessions, can_chain
+    part = lambda d, hs: {"demo_id": d, "hs": hs, "raw_dir": Path(f"C:/r/{d}"), "names": {}, "tickrate": 64,
+                          "dem_name": f"replay_{d}.dem", "last_end": max(h["end_tick"] for h in hs)}
+    a, b, c = part("a", [hl(0, 5000, 5600)]), part("b", [hl(1, 9000, 9500)]), part("c", [hl(2, 400, 900)])
+    sess = plan_sessions([a, b], {})
+    assert [[p["demo_id"] for p in s] for s in sess] == [["a", "b"]]
+    assert a["cfg_name"] == "cs2watcher_rec" and b["cfg_name"] == "cs2watcher_rec_2"
+    assert "exec cs2watcher_rec_2" in a["cfg_text"] and 'playdemo "replay_b.dem"' in b["cfg_text"]
+    assert can_chain(5728, [100, 8872], 64) and not can_chain(5728, [5750], 64)
+    late = part("late", [hl(3, 5800, 6200)])        # its setup tick lands right after demo a's handover
+    assert [[p["demo_id"] for p in s] for s in plan_sessions([a, late, c], {})] == [["a"], ["late", "c"]]
+
+
+def test_deleting_a_video_that_is_still_open(tmp_path, monkeypatch):
+    import json
+    import pytest
+    import backend.record as rec
+    monkeypatch.setattr(rec, "MONTAGE_DIR", tmp_path)
+    (tmp_path / "m.mp4").write_bytes(b"x")
+    (tmp_path / "montages.json").write_text(json.dumps({"montages": [{"file": "m.mp4"}]}))
+    real_unlink, calls = Path.unlink, []
+
+    def busy_twice(self, missing_ok=False):
+        calls.append(self.name)
+        if len(calls) <= 2:
+            raise PermissionError(32, "in use")
+        return real_unlink(self, missing_ok=missing_ok)
+    monkeypatch.setattr(Path, "unlink", busy_twice)
+    assert rec.delete_saved("montages", "m.mp4")["ok"] and not (tmp_path / "m.mp4").exists()   # retried until free
+    (tmp_path / "n.mp4").write_bytes(b"x")
+    (tmp_path / "montages.json").write_text(json.dumps({"montages": [{"file": "n.mp4"}]}))
+    monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: (_ for _ in ()).throw(PermissionError(32, "in use")))
+    monkeypatch.setattr(rec.time, "sleep", lambda s: None)
+    with pytest.raises(rec.FileBusy):
+        rec.delete_saved("montages", "n.mp4")
+    assert rec.montages_index() == [{"file": "n.mp4"}]          # still listed, so it can be deleted again
+
+
+def test_cleanup_replays_only_while_cs2_is_closed(tmp_path, monkeypatch):
+    import backend.launch as la
+    csgo = tmp_path / "game" / "csgo"; csgo.mkdir(parents=True)
+    for n in ("replay_aaaa1111.dem", "replay_bbbb2222.dem", "other.dem"):
+        (csgo / n).write_bytes(b"x")
+    monkeypatch.setattr(la, "find_cs2_path", lambda: tmp_path)
+    monkeypatch.setattr(la, "cs2_running", lambda: True)
+    assert la.cleanup_replays() == 0 and len(list(csgo.iterdir())) == 3          # CS2 open: nothing touched
+    monkeypatch.setattr(la, "cs2_running", lambda: False)
+    assert la.cleanup_replays(keep={"replay_bbbb2222.dem"}) == 1                # a match no longer in the app
+    assert sorted(p.name for p in csgo.iterdir()) == ["other.dem", "replay_bbbb2222.dem"]
+    import backend.db as db
+    monkeypatch.setattr(db, "list_demos", lambda: [{"id": "bbbb2222cccc"}])
+    assert la.cleanup_replays() == 0                                             # by default: the library's matches stay
+
+
+def test_song_montage_renders_plays_in_parallel_and_keeps_their_order(tmp_path, monkeypatch):
+    import threading, time as _t
+    import backend.cinematic as cine
+    import backend.record as rec
+    monkeypatch.setattr(rec, "VIDEOS_DIR", tmp_path)
+    monkeypatch.setattr(rec, "load_config", lambda: {"render_parallel": 3})
+    monkeypatch.setattr(rec, "_squad_job", {"status": "running", "total": 5})
+    (tmp_path / "d").mkdir()
+    live, peak, lock = [0], [0], threading.Lock()
+
+    def fake(demo_id, v, ffmpeg, ffprobe, vdir, overrides=None, progress=None, montage_piece=False, **kw):
+        with lock:
+            live[0] += 1; peak[0] = max(peak[0], live[0])
+        progress("encoding", 0.5)
+        _t.sleep(0.15 if v["file"] == "0.mp4" else 0.05)          # the first play is the slowest
+        (tmp_path / "d" / f"m{v['file']}").write_bytes(b"x")
+        with lock:
+            live[0] -= 1
+        return {**v, "cine": f"m{v['file']}", "cine_info": {"seconds": 1.0, "name": v["file"]}}
+    monkeypatch.setattr(cine, "cinematic_for_video", fake)
+    order = []
+    monkeypatch.setattr(rec, "_join", lambda files, infos, out, lst: (order.extend(i["name"] for i in infos), out.write_bytes(b"j")))
+    monkeypatch.setattr(cine, "pick_music", lambda opts, exclude=None: None)
+    plays = [("d", {"file": f"{i}.mp4"}) for i in range(5)]
+    rec._render_song_montage(plays, None, tmp_path, tmp_path / "out.mp4")
+    assert peak[0] == 3                                                    # three at once
+    assert order == [f"{i}.mp4" for i in range(5)]                          # joined in play order anyway
+    assert not list((tmp_path / "d").glob("m*.mp4"))                        # the pieces are cleaned up
+
+
+def test_plan_drop_slowmo_puts_slow_motion_only_on_the_drops():
+    from backend.record import plan_drop_slowmo
+    # every play: 10 s at normal speed, 14 s in slow motion with its kill at 6 s (lead 2 s); other leads move it
+    def play():
+        vs = [{"slow": True, "lead": None, "seconds": 14.0, "hit": 6.0}, {"slow": False, "lead": None, "seconds": 10.0, "hit": None}]
+        vs += [{"slow": True, "lead": l, "seconds": 14.0 + (l - 2.0), "hit": 6.0 + (l - 2.0)} for l in (1.0, 1.5, 2.5, 3.0, 3.5)]
+        return vs
+    drops = [40.0, 63.5, 99.0]             # song time
+    chosen, offset = plan_drop_slowmo([play() for _ in range(6)], 3.5, drops, lambda hit, total: 40.0 - hit)
+    assert offset == 40.0 - 9.5             # the first play's kill (3.5 s intro + 6 s) takes the main drop
+    assert chosen[0]["slow"] and chosen[0]["lead"] is None
+    # montage time of the drops: 63.5 -> 33.0, 99 -> 68.5. Play 2 starts at 17.5: normal. Play 3 starts at 27.5:
+    # its kill at 27.5 + 6 = 33.5 is half a second late, the lead 1.5 variant puts it on 33.0; play 6 (at 61.0)
+    # reaches 68.5 only with the longest lead
+    assert [c["slow"] for c in chosen] == [True, False, True, False, False, True]
+    assert chosen[2]["lead"] == 1.5 and chosen[5]["lead"] == 3.5
+    t = 3.5 + sum(c["seconds"] for c in chosen[:5])
+    assert abs(t + chosen[5]["hit"] - 68.5) <= 0.3            # the last drop lands on play 6's kill
+
+
+def test_find_drops_and_clip_timing():
+    from backend.cinematic import find_drops, clip_timing
+    curve = [0.1] * 40 + [1.0] * 20 + [0.1] * 30 + [1.0] * 20 + [0.2] * 10   # rises at 20 s and 45 s (0.5 s steps)
+    drops = find_drops(curve, min_gap=10.0)
+    assert len(drops) == 2 and abs(drops[0] - 20.0) <= 1.0 and abs(drops[1] - 45.0) <= 1.0
+    opts = {"cine_slow": 0.5, "cine_kills": "all", "cine_trim": "off", "cine_ramp": False}
+    slow, normal = clip_timing([5.0], 10.0, opts), clip_timing([5.0], 10.0, {**opts, "_no_slow": True})
+    assert normal == {"seconds": 10.0, "hit": None} and slow["seconds"] > 10.0 and slow["hit"] > 5.0
+    moved = clip_timing([5.0], 10.0, {**opts, "_lead": 2.0})                 # start 3 s in: the kill comes 3 s sooner
+    assert abs(moved["hit"] - (slow["hit"] - 3.0)) < 1e-6
+
+
+def test_session_log_says_which_demo_recorded_what(tmp_path):
+    from backend.record import _keep_session_log
+    csgo = tmp_path / "csgo"; csgo.mkdir()
+    (csgo / "console.log").write_text("Recording to seq1\n")
+    seq_ok, seq_missing = tmp_path / "a" / "seq1", tmp_path / "b" / "seq1"
+    seq_ok.mkdir(parents=True); seq_missing.mkdir(parents=True); (seq_ok / "video.mp4").write_bytes(b"x")
+    sess = [{"cfg_name": "cs2watcher_rec", "demo_id": "a", "dem_name": "replay_a.dem", "seqs": [{"folder": seq_ok}],
+             "cfg_text": "quit", "out_dir": tmp_path / "out_a"},
+            {"cfg_name": "cs2watcher_rec_2", "demo_id": "b", "dem_name": "replay_b.dem", "seqs": [{"folder": seq_missing}],
+             "cfg_text": "quit", "out_dir": tmp_path / "out_b"}]
+    _keep_session_log(csgo, sess, 0)
+    text = (tmp_path / "out_b" / "record_log.txt").read_text()
+    assert "cs2watcher_rec: a (replay_a.dem) recorded 1 of 1" in text and "cs2watcher_rec_2: b (replay_b.dem) recorded 0 of 1" in text
+    assert "Recording to seq1" in text
+
+
+def test_encoder_args_x264_by_default_and_amd_on_request():
+    assert encoder_args({"record_crf": 20}) == "-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p"
+    amf = encoder_args({"record_crf": 20, "record_encoder": "amf"})
+    assert amf.startswith("-c:v h264_amf") and "-qp_i 18 -qp_p 18" in amf
+    text, _ = build_cfg([hl(0, 5000, 5600)], Path("C:/x/raw"), {}, {"record_encoder": "amf"}, 64)
+    assert '"-c:v h264_amf' in text and "libx264" not in text
+
+
+def test_build_cfg_fast_preroll_is_back_to_normal_before_recording():
+    plain, _ = build_cfg([hl(0, 5000, 5600)], Path("C:/x/raw"), {}, {}, 64)
+    assert "demo_timescale" not in plain
+    text, _ = build_cfg([hl(0, 5000, 5600)], Path("C:/x/raw"), {}, {"record_fast_preroll": True}, 64)
+    ticks = {ln.split(" ", 3)[3]: int(ln.split()[2]) for ln in text.splitlines() if ln.startswith("mirv_cmd addAtTick")}
+    assert ticks["demo_timescale 4"] == 4873                       # just after the seek (setup 4872)
+    assert ticks["demo_timescale 1"] == 4976 < 4992                # normal speed before the last spectator switch
+    assert ticks["mirv_streams record start"] == 5000
+
+
+def test_planned_entry_is_what_the_mux_writes():
+    _, seqs = build_cfg([hl(7, 5000, 5640)], Path("C:/x/raw"), {"76561198000000001": "Some One"}, {}, 64)
+    e = planned_entry(seqs[0], 64)
+    assert e["file"] == "01_multikill_r3_Some_One.mp4" and e["highlight_id"] == 7
+    assert e["start_tick"] == 5000 and e["end_tick"] == 5640 and e["seconds"] == 10.0
+
+
+def test_mux_finished_waits_for_the_next_clip_and_a_still_file(tmp_path, monkeypatch):
+    import backend.record as r
+    now = [100.0]
+    monkeypatch.setattr(r.time, "time", lambda: now[0])
+    muxed, indexed = [], []
+    monkeypatch.setattr(r, "encode_one", lambda sq, out_dir, tr: muxed.append(sq["n"]) or {"file": f"{sq['n']}.mp4", "highlight_id": sq["n"]})
+    monkeypatch.setattr(r, "write_index", lambda d, outs: indexed.extend(outs))
+    monkeypatch.setattr(r, "export_clips", lambda d, outs: None)
+    p = {"demo_id": "d1", "out_dir": tmp_path / "out", "tickrate": 64}
+    sqs = [{"n": n, "name": f"c{n}", "folder": tmp_path / f"seq{n}", "start": 0, "end": 640} for n in (1, 2)]
+    seqs = [(p, sq) for sq in sqs]
+    timing = []
+    for sq in sqs:
+        sq["folder"].mkdir()
+    (sqs[0]["folder"] / "video.mp4").write_bytes(b"x" * 10)
+    r._mux_finished(seqs, game_gone=False, timing=timing)
+    now[0] = 108.0
+    (sqs[0]["folder"] / "video.mp4").write_bytes(b"x" * 20)       # still growing, the next one not started
+    r._mux_finished(seqs, game_gone=False, timing=timing)
+    assert muxed == []
+    now[0] = 109.0
+    (sqs[1]["folder"] / "video.mp4").write_bytes(b"x")            # the next one started: the first is finished
+    r._mux_finished(seqs, game_gone=False, timing=timing)
+    assert muxed == [1] and indexed[0]["file"] == "1.mp4"
+    assert timing[0]["seconds"] == 10.0 and timing[0]["wall"] == 8.0 and timing[0]["speed"] == 1.25
+    r._mux_finished(seqs, game_gone=False, timing=timing)
+    assert muxed == [1]                                           # the last one waits for the game to quit
+    now[0] = 111.0
+    r._mux_finished(seqs, game_gone=True, timing=timing)
+    assert muxed == [1, 2] and len(timing) == 2
+
+
+def test_game_state_ignores_a_failed_check_while_the_game_runs():
+    from backend.record import GAME_GONE_CHECKS, game_state
+    running, seen, gone = game_state(False, False, 0)
+    assert (running, seen) == (False, False)                      # still starting: not seen yet
+    running, seen, gone = game_state(True, seen, gone)
+    assert running and seen and gone == 0
+    for _ in range(GAME_GONE_CHECKS - 1):                         # a few failed checks (tasklist timing out)
+        running, seen, gone = game_state(False, seen, gone)
+        assert running
+    running, seen, gone = game_state(True, seen, gone)            # the game was there all along
+    assert running and gone == 0
+    for _ in range(GAME_GONE_CHECKS):
+        running, seen, gone = game_state(False, seen, gone)
+    assert not running and seen                                   # really gone: the session ends
+
+
+def test_recover_recordings_makes_clips_cs2_recorded_unwatched(tmp_path, monkeypatch):
+    import json
+    import backend.record as r
+    vids = tmp_path / "videos"
+    monkeypatch.setattr(r, "VIDEOS_DIR", vids)
+    monkeypatch.setattr(r, "raw_dir_for", lambda d: vids / d / "raw")
+    monkeypatch.setattr(r, "_job", None)
+    monkeypatch.setattr(r, "export_clips", lambda d, outs: None)
+    monkeypatch.setattr(r, "match_info", lambda d: None)
+    monkeypatch.setattr(r, "export_folder_for", lambda d, cfg=None: tmp_path / "exp")
+    running = [True]
+    monkeypatch.setattr(r, "cs2_running", lambda: running[0])
+    monkeypatch.setattr(r, "encode_one", lambda sq, out_dir, tr: {**r.planned_entry(sq, tr), "size": 1, "audio": True}
+                        if (Path(sq["folder"]) / "video.mp4").exists() else None)
+    raw = vids / "d1" / "raw"
+    _, seqs = build_cfg([hl(1, 5000, 5640), hl(2, 9000, 9640)], raw, {}, {}, 64)
+    p = {"demo_id": "d1", "tickrate": 64, "out_dir": vids / "d1", "take_root": tmp_path / "takes", "raw_dir": raw,
+         "seqs": seqs}
+    for sq in seqs:
+        Path(sq["folder"]).mkdir(parents=True)
+    (Path(seqs[0]["folder"]) / "video.mp4").write_bytes(b"v")      # CS2 got to the first highlight only
+    r.write_planned(p)
+    assert r.recover_recordings(["d1"]) == 0 and (raw / "planned.json").exists()   # the game still runs
+    running[0] = False
+    assert r.recover_recordings() == 1
+    idx = json.loads((vids / "d1" / "videos.json").read_text())
+    assert [v["highlight_id"] for v in idx["videos"]] == [1]
+    assert not raw.exists()                                          # cleaned up like after a normal recording
+    assert r.recover_recordings() == 0                               # nothing left to do

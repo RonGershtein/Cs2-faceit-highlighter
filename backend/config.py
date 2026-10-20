@@ -29,7 +29,16 @@ DEFAULTS: dict = {
     "record_fps": 60,
     "record_crf": 20,          # x264 quality (lower = better/bigger)
     "record_close_game": True, # quit CS2 when the last highlight is recorded
-    "record_hud": "health_ammo",  # "health_ammo": health, armour, ammo + kill feed (no radar / name tags); "killfeed": kill feed only
+    "render_parallel": 3,      # montage plays rendered at the same time (FFmpeg uses only a core or two per play)
+    "render_cache_gb": 20,     # finished montage pieces kept for the next montage/recap (least recently used go first)
+    "render_while_recording": True,  # a montage starts rendering the plays already recorded while CS2 records the rest
+    "record_encoder": "x264",  # "x264" (CPU) or "amf" (the AMD graphics card's encoder) for recording in CS2
+    "record_fast_preroll": False,  # play the unrecorded 2 s before each highlight at 4x (a little faster recording)
+    "cine_drop_slowmo": True,  # long montages: slow motion only on the plays whose kill lands on a drop of the song
+    "cine_drop_min_plays": 6,  # from how many plays on
+    "record_demoui_each_demo": True,  # several demos in one CS2 session: close the demo panel again after each playdemo
+    "record_hud": "killfeed",  # "killfeed": a clean picture with the kill feed only; "health_ammo": CS2's full HUD
+                               # (health and ammo, but also the players bar at the top: CS2 cannot hide only that)
     "export_folder": "",       # where finished clips are copied; empty -> <Downloads>/cs2-watcher/<map>_<date>_<id>
     "cine_slow": 0.35,         # slow-motion speed around kills (0.35 = 35 % speed)
     "cine_kills": "last",      # which kills get slow motion: "last" (the final kill of the clip) or "all"
@@ -41,6 +50,7 @@ DEFAULTS: dict = {
     "cine_trim": "fast",       # dead time between kills: "off" (keep), "cut" (drop it) or "fast" (fast-forward it)
     "cine_trim_lead": 2.0,     # seconds of normal speed kept before each kill when trimming
     "cine_fast": 6.0,          # fast-forward speed for dead time (cine_trim = "fast")
+    "cine_skip_waits": True,   # a long wait is not fast-forwarded in full: a warp in and out of it, the middle cut
     "cine_ramp": True,         # ease in and out of slow motion instead of a hard cut
     "cine_impact": True,       # zoom punch + flash on each kill
     "cine_look": True,         # vignette + colour grade

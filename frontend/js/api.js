@@ -62,6 +62,12 @@ const API = (() => {
     deleteVoice: (slot, name) => json(`/api/voice/${encodeURIComponent(slot)}/${name.split('/').map(encodeURIComponent).join('/')}`, { method: 'DELETE' }),
     uploadVoice(slot, file, sub) { const fd = new FormData(); fd.append('file', file, file.name); fd.append('sub', sub || ''); return fetch(`/api/voice/${encodeURIComponent(slot)}`, { method: 'POST', body: fd }).then(r => r.ok ? r.json() : r.json().then(j => { throw new Error(j.detail || 'upload failed'); })); },
     voiceUrl: (slot, name) => `/api/voice/${encodeURIComponent(slot)}/${name.split('/').map(encodeURIComponent).join('/')}`,
+    // Windows cannot delete a file a player still streams: stop every <video> showing it before deleting
+    releaseVideo(name) {
+      const enc = encodeURIComponent(name); let n = 0;
+      document.querySelectorAll('video').forEach(v => { const src = v.getAttribute('src') || ''; if (src.includes(enc) || src.includes(name)) { v.pause(); v.removeAttribute('src'); v.load(); n++; } });
+      return new Promise(res => setTimeout(res, n ? 400 : 0));
+    },
     videoUrl: (id, name) => `/api/demos/${id}/videos/${encodeURIComponent(name)}`,
     getConfig: () => json('/api/config'),
     pickFolder: (start, title) => post('/api/pick-folder', { start, title }),

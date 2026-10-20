@@ -439,6 +439,24 @@ button.primary .rec-dot { background: var(--accent-ink); }
 .squad-list { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 4px; font-size: var(--fs-s); color: var(--text-2); max-height: 200px; overflow-y: auto; }
 .squad-list .badge { margin-left: 6px; }
 
+/* site footer: a designed close; the name returns at full width, cut by the bottom edge */
+.site-foot { position: relative; overflow: hidden; margin-top: 72px; padding: 56px var(--margin) 0; background: var(--bg-2);
+  clip-path: polygon(calc(var(--cut) * 2) 0, 100% 0, 100% 100%, 0 100%, 0 calc(var(--cut) * 2)); }
+.foot-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr); gap: 48px; align-items: start; max-width: 1480px; margin: 0 auto; }
+.foot-brand { display: flex; gap: 16px; align-items: flex-start; }
+.foot-brand .logo { width: 44px; height: 44px; flex: none; clip-path: var(--chamfer-s); background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; font-size: var(--fs-b); }
+.foot-name { font-size: var(--fs-l); font-weight: 600; }
+.foot-tag { color: var(--text-2); max-width: 36ch; margin-top: 4px; }
+.foot-links { display: grid; gap: 10px; justify-items: start; }
+.foot-links a, .foot-made a { color: var(--text); font-weight: 500; }
+.foot-links a { position: relative; }
+.foot-links a::after { content: ""; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; background: var(--accent); transform: scaleX(0); transform-origin: left; transition: transform 200ms var(--ease-out); }
+@media (hover: hover) and (pointer: fine) { .foot-links a:hover { text-decoration: none; } .foot-links a:hover::after { transform: scaleX(1); } }
+.foot-made { color: var(--muted); line-height: 1.6; }
+.foot-made a { font-size: var(--fs-l); font-weight: 600; color: var(--accent); }
+.foot-legal { display: flex; justify-content: space-between; gap: 24px; max-width: 1480px; margin: 48px auto 0; color: var(--muted); font-size: var(--fs-s); }
+.foot-word { margin: 18px calc(var(--margin) * -1) 0; text-align: center; font-weight: 700; font-size: 15.5vw; line-height: .78; letter-spacing: -.045em; color: var(--bg-4); white-space: nowrap; user-select: none; transform: translateY(14%); }
+.topbar .made-by { font-size: var(--fs-s); color: var(--muted); white-space: nowrap; }
 /* ---------- motion preferences: keep the content, drop the travel ---------- */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

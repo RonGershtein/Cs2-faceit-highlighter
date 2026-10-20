@@ -52,6 +52,105 @@ def test_fill_gaps_fast_forwards_dead_time():
     assert sum(b - a for a, b, _ in segs) == pytest.approx(14.0)
 
 
+def test_skip_waits_keeps_a_warp_on_each_side_of_a_long_wait():
+    segs = [(0.0, 2.0, 1.0), (2.0, 102.0, 6.0), (102.0, 105.0, 1.0)]
+    out = c.skip_waits(segs, 6.0)
+    assert out[0] == (0.0, 2.0, 1.0) and out[-1] == (102.0, 105.0, 1.0)
+    speeds = [s for _, _, s in out[1:-1]]
+    assert speeds[0] == 6.0 and speeds[2] == c.WAIT_BURST and speeds[3] == c.WAIT_BURST and speeds[-1] == 6.0
+    assert speeds[1] == pytest.approx((6.0 * c.WAIT_BURST) ** 0.5)
+    assert out[1][0] == 2.0 and out[-2][1] == pytest.approx(102.0)            # the warps touch the action
+    gaps = [(a, b2) for (_, b, _), (a, b2, _) in zip(out, out[1:]) if a > b + 0.01]
+    assert len(gaps) == 1                                                     # one cut, in the middle of the wait
+    waited = sum((b - a) / s for a, b, s in out[1:-1])
+    assert waited == pytest.approx(2 * sum(c.WAIT_STEPS_OUT))                 # 100 s / 6 = 16.7 s -> 2.2 s
+
+
+def test_skip_waits_leaves_short_waits_and_trims_the_edges_of_the_clip():
+    short = [(0.0, 2.0, 1.0), (2.0, 14.0, 6.0), (14.0, 16.0, 1.0)]            # 2 s fast-forwarded: kept in full
+    assert c.skip_waits(short, 6.0) == short
+    lead = [(0.0, 60.0, 6.0), (60.0, 63.0, 1.0)]
+    out = c.skip_waits(lead, 6.0)
+    assert out[0][0] > 0 and out[-2][1] == pytest.approx(60.0) and out[-1] == (60.0, 63.0, 1.0)   # warp into the action
+    tail = [(0.0, 3.0, 1.0), (3.0, 60.0, 6.0)]
+    out = c.skip_waits(tail, 6.0)
+    assert out[1][0] == 3.0 and out[-1][1] < 60.0 and out[-1][2] == c.WAIT_BURST                  # warp out, then the end
+    assert c.skip_waits([(5.0, 1.0, 1.0)], 6.0) == [(5.0, 1.0, 1.0)]
+    assert c.skip_waits([(1.0, 3.0, 2.0)], 6.0) == [(1.0, 3.0, 2.0)]          # not a fast-forward
+
+
+def test_plan_clip_skips_waits_only_when_asked():
+    opts = c.options({}, {"cine_trim": "fast", "cine_fast": 6.0})
+    _, _, keep, _, plan = c.plan_clip([5.0, 110.0], 113.0, opts)
+    on = c.total_duration(plan(keep))
+    _, _, keep, _, plan = c.plan_clip([5.0, 110.0], 113.0, {**opts, "cine_skip_waits": False})
+    off = c.total_duration(plan(keep))
+    assert off - on > 12          # the 100 s wait: 16.7 s fast-forwarded vs a 2.2 s warp
+
+
+def test_build_filter_flashes_over_a_cut():
+    segs = [(0.0, 2.0, 1.0), (2.0, 5.0, 16.0), (90.0, 95.6, 16.0), (95.6, 98.0, 1.0)]
+    g = c.build_filter(segs, fps=60, width=1280, height=720, smooth=False, kills=[], impact=False, look=False, fade=False,
+                       has_music=False, game_vol=1, music_vol=1, texts=[])
+    v1, v2 = g.split("[v1]")[0].split(";")[-1], g.split("[v2]")[0].split(";")[-1]
+    assert "fade=t=out" in v1 and "color=white" in v1 and "fade=t=in" not in v1
+    assert "fade=t=in:st=0" in v2 and "color=white" in v2 and "fade=t=out" not in v2
+    assert g.count("color=white") == 2 and g.count("afade=t=out") == 1 and g.count("afade=t=in") == 1
+
+
+def test_piece_cache_makes_once_and_waits_for_a_piece_being_made(tmp_path, monkeypatch):
+    import threading
+    monkeypatch.setattr(c, "PIECE_CACHE", tmp_path)
+    calls = []
+    started, release = threading.Event(), threading.Event()
+
+    def make(out):
+        calls.append(out)
+        started.set()
+        release.wait(5)
+        out.write_bytes(b"x" * 10)
+        return {"seconds": 1.0}
+    res = []
+    t1 = threading.Thread(target=lambda: res.append(c.cached_piece("k1", make)))
+    t1.start()
+    started.wait(5)
+    t2 = threading.Thread(target=lambda: res.append(c.cached_piece("k1", make)))
+    t2.start()
+    release.set()
+    t1.join(5)
+    t2.join(5)
+    assert len(calls) == 1 and sorted(r[2] for r in res) == [False, True]
+    assert all(r[0] == tmp_path / "k1.mp4" and r[1] == {"seconds": 1.0} for r in res)
+    assert not (tmp_path / "k1.part.mp4").exists()
+
+
+def test_piece_cache_failure_leaves_nothing_and_prune_drops_the_oldest(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(c, "PIECE_CACHE", tmp_path)
+
+    def boom(out):
+        out.write_bytes(b"half")
+        raise RuntimeError("ffmpeg failed")
+    with pytest.raises(RuntimeError):
+        c.cached_piece("bad", boom)
+    assert list(tmp_path.iterdir()) == []
+    for i, name in enumerate(("old", "mid", "new")):
+        (tmp_path / f"{name}.mp4").write_bytes(b"x" * 100)
+        (tmp_path / f"{name}.json").write_text("{}")
+        os.utime(tmp_path / f"{name}.mp4", (1000 + i, 1000 + i))
+    assert c.prune_piece_cache(250) == 1
+    assert sorted(p.name for p in tmp_path.glob("*.mp4")) == ["mid.mp4", "new.mp4"] and not (tmp_path / "old.json").exists()
+
+
+def test_piece_key_follows_the_recording(tmp_path):
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"a")
+    k1 = c.piece_key(src, {"kills": [1.0]})
+    assert k1 == c.piece_key(src, {"kills": [1.0]}) and k1 != c.piece_key(src, {"kills": [2.0]})
+    src.write_bytes(b"ab")    # re-recorded
+    assert c.piece_key(src, {"kills": [1.0]}) != k1
+
+
 def test_out_time_maps_through_cuts_and_speeds():
     segs = [(0.0, 2.0, 1.0), (4.0, 5.0, 0.5), (5.0, 7.0, 4.0)]
     assert c.out_time(segs, 1.0) == 1.0
@@ -102,7 +201,9 @@ def test_build_filter_structure(tmp_path):
     assert "vignette" in g and "fade=t=in" in g and g.count("drawtext=") == 4
     assert "[2:a]adelay=300:all=1" in g and "[3:a]adelay=2500:all=1" in g
     assert "amix=inputs=4" in g and g.rstrip().endswith("[aout]")
-    assert ",fps=60[vc]" in g
+    # a fast-forward drops the frames it does not show inside its own segment, before the join and the look
+    assert "setpts=PTS/6.0000,fps=60[v0]" in g and ",fps=60[vc]" in g
+    assert "vignette=angle=PI/4.6:dither=0" in g
     assert len(files) == 4 and all(p.exists() for p in files)
     assert files[0].read_text(encoding="utf-8") == "ACE"
 

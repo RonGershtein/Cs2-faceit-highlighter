@@ -10,12 +10,14 @@ Works on the MP4s produced by record.py; nothing is re-recorded. One FFmpeg filt
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import random
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -33,9 +35,9 @@ CARD_BG = "0x2a2f3a"                   # blank avatar colour
 
 # cine_* keys of config.toml that the UI can change per job (see options())
 OPTION_KEYS = ("cine_slow", "cine_kills", "cine_smooth", "cine_game_volume", "cine_music_volume", "cine_music",
-               "cine_music_sync", "cine_trim", "cine_trim_lead", "cine_fast", "cine_ramp", "cine_impact", "cine_look",
-               "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice", "cine_voice_volume",
-               "cine_voice_pick")
+               "cine_music_sync", "cine_trim", "cine_trim_lead", "cine_fast", "cine_skip_waits", "cine_ramp",
+               "cine_impact", "cine_look", "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice",
+               "cine_voice_volume", "cine_voice_pick")
 TRIM_MODES = ("off", "cut", "fast")   # dead time between kills: keep / drop / fast-forward
 
 Seg = tuple[float, float, float]   # (start, end, speed) in source seconds; speed 1.0 = normal, 0.35 = slow motion
@@ -46,6 +48,12 @@ SLOW_PRE, SLOW_POST = 0.7, 0.5   # slow-motion window around a kill
 TRIM_TAIL = 2.5         # seconds kept after a kill when trimming
 TRIM_MIN_CUT = 1.5      # dead time shorter than this is not worth cutting
 TITLE_SECONDS = 3.2
+# skipping long waits (cine_skip_waits): a fast-forward longer than WAIT_MAX_OUT seconds keeps only its edges, each
+# a warp that speeds up from cine_fast to WAIT_BURST (seconds of output per step), and its middle is cut
+WAIT_MAX_OUT = 2.6
+WAIT_BURST = 16.0
+WAIT_STEPS_OUT = (0.5, 0.25, 0.35)   # at cine_fast, between the two, at WAIT_BURST
+CUT_FLASH_OUT, CUT_FLASH_IN, CUT_AUDIO_FADE = 0.1, 0.22, 0.06
 
 
 def music_files() -> list[Path]:
@@ -213,6 +221,42 @@ def fill_gaps(segs: list[Seg], duration: float, speed: float) -> list[Seg]:
     return out
 
 
+def skip_waits(segs: list[Seg], fast: float, burst: float = WAIT_BURST, max_out: float = WAIT_MAX_OUT) -> list[Seg]:
+    """Cut the middle out of every fast-forward (a segment at speed `fast`) that would last more than `max_out`
+    seconds: its edges stay as a warp, speeding up from `fast` to `burst` towards the cut and slowing back down
+    after it (build_filter flashes over the cut). A wait at the start of the clip keeps only the warp into the
+    action, one at the end only the warp out of it. Pure function; unit-tested."""
+    speeds = (fast, math.sqrt(fast * burst), burst)
+    side = sum(o * sp for o, sp in zip(WAIT_STEPS_OUT, speeds))   # source seconds one warp uses
+
+    def warp_out(a: float) -> list[Seg]:   # from `a` on, speeding up
+        out, t = [], a
+        for o, sp in zip(WAIT_STEPS_OUT, speeds):
+            out.append((t, t + o * sp, sp))
+            t += o * sp
+        return out
+
+    def warp_in(b: float) -> list[Seg]:    # up to `b`, slowing down
+        out, t = [], b
+        for o, sp in zip(WAIT_STEPS_OUT, speeds):
+            out.insert(0, (t - o * sp, t, sp))
+            t -= o * sp
+        return out
+    out: list[Seg] = []
+    for i, (a, b, s) in enumerate(segs):
+        first, last = i == 0, i == len(segs) - 1
+        need = side * (1 if first or last else 2) + 2.0   # leave at least 2 s worth cutting
+        if abs(s - fast) > 1e-6 or (b - a) / s <= max_out or b - a < need or (first and last):
+            out.append((a, b, s))
+        elif first:
+            out += warp_in(b)
+        elif last:
+            out += warp_out(a)
+        else:
+            out += warp_out(a) + warp_in(b)
+    return out
+
+
 def total_duration(segs: list[Seg]) -> float:
     return sum((b - a) / s for a, b, s in segs)
 
@@ -262,6 +306,29 @@ def find_drop(curve: list[float], win: float = 0.5, hit_time: float = 0.0, clip_
         cands = list(range(len(curve)))
     best = max(cands, key=score)
     return best * win
+
+
+def find_drops(curve: list[float], win: float = 0.5, min_gap: float = 10.0, share: float = 0.25,
+               after: float = 6.0, before: float = 3.0) -> list[float]:
+    """Track times of the song's drops: the moments where the loudness rises most (the top `share` of all rises,
+    same measure as find_drop), at least `min_gap` seconds apart. Pure function; unit-tested."""
+    if len(curve) < 3:
+        return []
+    na, nb = max(1, int(round(after / win))), max(1, int(round(before / win)))
+
+    def score(i: int) -> float:
+        seg, prev = curve[i:i + na], curve[max(0, i - nb):i]
+        return (sum(seg) / len(seg)) - (sum(prev) / len(prev) if prev else 0.0)
+    scores = {i: score(i) for i in range(1, len(curve) - 1)}
+    ranked = sorted(scores, key=scores.get, reverse=True)
+    cutoff = scores[ranked[max(0, int(len(ranked) * share) - 1)]]
+    picked: list[int] = []
+    for i in ranked:
+        if scores[i] < cutoff or scores[i] <= 0:
+            break
+        if all(abs(i - j) * win >= min_gap for j in picked):
+            picked.append(i)
+    return sorted(i * win for i in picked)
 
 
 def music_offset(ffmpeg: Path, track: Path, hit_time: float, clip_len: float) -> float:
@@ -436,20 +503,34 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
     for i, (a, b, s) in enumerate(segs):
         v = f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS"
         au = f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS"
+        cut_before = i > 0 and a > segs[i - 1][1] + 0.01          # footage left out between the two segments
+        cut_after = i + 1 < len(segs) and segs[i + 1][0] > b + 0.01
         if impact:
             ks = [k - a for k in kills if a <= k < b]
             if ks:
                 v += "," + _impact(ks, fps).replace("s=WxH", f"s={width}x{height}")
         if abs(s - 1.0) > 1e-3:
             v += f",setpts=PTS/{s:.4f}"
+            if s > 1.0:
+                # a fast-forward keeps only the frames the output shows, right here: grading the others only to
+                # drop them at the end cost most of the render time
+                v += f",fps={fps:g}"
             if smooth and s < 1.0:
                 v += f",minterpolate=fps={fps:g}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
             au += "," + _atempo_chain(s)
             if s > 1.5:
                 au += ",volume=0.35"   # fast-forwarded game audio is a blur: keep it under the music and the voice lines
+        seg_len = (b - a) / s
+        if cut_after:     # a cut is a quick flash: out to white, back in from white, the sound dips with it
+            v += f",fade=t=out:st={max(0.0, seg_len - CUT_FLASH_OUT):.3f}:d={CUT_FLASH_OUT}:color=white"
+            au += f",afade=t=out:st={max(0.0, seg_len - CUT_AUDIO_FADE):.3f}:d={CUT_AUDIO_FADE}"
+        if cut_before:
+            v += f",fade=t=in:st=0:d={CUT_FLASH_IN}:color=white"
+            au += f",afade=t=in:st=0:d={CUT_AUDIO_FADE}"
         parts.append(v + f"[v{i}]")
         parts.append(au + f"[a{i}]")
         labels.append(f"[v{i}][a{i}]")
+    # (an fps filter straight after the concat instead made FFmpeg queue gigabytes of frames on some clips)
     if pad > 0:
         parts.append("".join(labels) + f"concat=n={len(segs)}:v=1:a=1[vcc][acc]")
         parts.append(f"[vcc]tpad=stop_mode=clone:stop_duration={pad:.3f}[vc0]")   # hold the last frame
@@ -458,7 +539,8 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
         parts.append("".join(labels) + f"concat=n={len(segs)}:v=1:a=1[vc0][ac0]")
     cur = "[vc0]"
     if look:
-        parts.append(f"{cur}eq=contrast=1.06:saturation=1.18:gamma=0.98,vignette=angle=PI/4.6[vl]")
+        # no dithering: it only adds ±1 level of noise per frame, which the encoder smooths away, at half the cost
+        parts.append(f"{cur}eq=contrast=1.06:saturation=1.18:gamma=0.98,vignette=angle=PI/4.6:dither=0[vl]")
         cur = "[vl]"
     if card:
         parts += _card_chain(card, fps)
@@ -623,13 +705,18 @@ def plan_voices(segs: list[Seg], kills: list[float], total: float, highlight: di
     return out
 
 
-def run_ffmpeg_with_progress(args: list[str], total_seconds: float, on_fraction) -> tuple[int, str]:
+BELOW_NORMAL_PRIORITY_CLASS = 0x00004000   # Windows process priority
+
+
+def run_ffmpeg_with_progress(args: list[str], total_seconds: float, on_fraction, low_priority: bool = False) -> tuple[int, str]:
     """Run an ffmpeg command, reporting the encoded position as a fraction of `total_seconds` through
-    `-progress pipe:1`. Returns (return code, stderr tail)."""
-    import threading
+    `-progress pipe:1`. Returns (return code, stderr tail). low_priority: below normal priority on Windows, so it
+    only takes the CPU time the game leaves."""
     cmd = list(args)
     cmd[1:1] = ["-v", "error", "-nostats", "-progress", "pipe:1"]     # right after the executable, before -y
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    flags = BELOW_NORMAL_PRIORITY_CLASS if low_priority and os.name == "nt" else 0
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                            creationflags=flags)
     _running_procs.add(proc)
     err_chunks: list[str] = []
 
@@ -671,11 +758,47 @@ def cancel_running_ffmpeg() -> int:
     return n
 
 
+def plan_clip(kill_times: list[float], duration: float, opts: dict):
+    """(kills, slow-motion kills, kept windows, trim mode, plan) of a clip: the timing make_cinematic renders, also
+    used by the montage planner to know in advance where each play's kills land. opts may carry "_no_slow" (this
+    play runs without slow motion) and "_lead" (seconds kept before the first kill: shifts its kills in time).
+    plan(keep) gives the (start, end, speed) segments. Pure function; unit-tested."""
+    slow = float(opts["cine_slow"])
+    kills = sorted(k for k in kill_times if 0 <= k <= duration)
+    slow_kills = [] if opts.get("_no_slow") else (kills[-1:] if opts["cine_kills"] == "last" else kills)
+    mode = opts.get("cine_trim", "off")
+    lead = opts.get("_lead")
+    if mode in ("cut", "fast"):
+        keep = keep_windows(kills, duration, lead=float(lead if lead is not None else opts.get("cine_trim_lead", 2.0)))
+    elif lead is not None and kills:
+        keep = [(max(0.0, kills[0] - float(lead)), duration)]   # no trimming: only the start moves
+    else:
+        keep = [(0.0, duration)]
+
+    def plan(keep_windows_: list[tuple[float, float]]) -> list[Seg]:
+        sg = speed_segments(slow_kills, keep_windows_, slow, ramp=bool(opts.get("cine_ramp")))
+        if mode == "fast":
+            sg = fill_gaps(sg, duration, float(opts.get("cine_fast", 6.0)))
+            if opts.get("cine_skip_waits", True):
+                sg = skip_waits(sg, float(opts.get("cine_fast", 6.0)))
+        return sg or [(0.0, duration, 1.0)]
+    return kills, slow_kills, keep, mode, plan
+
+
+def clip_timing(kill_times: list[float], duration: float, opts: dict) -> dict:
+    """{"seconds": output length, "hit": output time of the first slow-motion kill or None} of a clip rendered with
+    `opts` (no voice lines). Pure function; unit-tested."""
+    kills, slow_kills, keep, mode, plan = plan_clip(kill_times, duration, opts)
+    segs = plan(keep)
+    return {"seconds": total_duration(segs), "hit": out_time(segs, slow_kills[0]) if slow_kills else None}
+
+
 def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times: list[float], music: Path | None,
                    opts: dict, title: tuple[str, str] | None = None, fps_hint: float | None = None,
                    crf: int = 20, highlight: dict | None = None, card: dict | None = None,
-                   progress=None, music_later: bool = False) -> dict:
-    """music_later: a montage piece; no music now (one song goes over the joined montage), game audio already
+                   progress=None, music_later: bool = False, low_priority: bool = False) -> dict:
+    """low_priority: FFmpeg runs below normal priority (it renders while CS2 records and must not slow it down).
+    music_later: a montage piece; no music now (one song goes over the joined montage), game audio already
     at the music mix level. The result has "hits" (output seconds of the slow-motion kills) and "duck" (output
     windows of the voice lines) for laying that song.
     progress(stage: str, fraction: float | None) is called as the work advances (fraction only while encoding)."""
@@ -689,18 +812,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     info = probe_video(ffprobe, src)
     duration, width, height = info["duration"], info["width"], info["height"]
     fps = info["fps"] or fps_hint or 60.0
-    slow = float(opts["cine_slow"])
-    kills = sorted(k for k in kill_times if 0 <= k <= duration)
-    slow_kills = kills[-1:] if opts["cine_kills"] == "last" else kills
-    mode = opts.get("cine_trim", "off")
-    keep = keep_windows(kills, duration, lead=float(opts.get("cine_trim_lead", 2.0))) if mode in ("cut", "fast") \
-        else [(0.0, duration)]
-
-    def plan(keep_windows_: list[tuple[float, float]]) -> list[Seg]:
-        sg = speed_segments(slow_kills, keep_windows_, slow, ramp=bool(opts.get("cine_ramp")))
-        if mode == "fast":
-            sg = fill_gaps(sg, duration, float(opts.get("cine_fast", 6.0)))
-        return sg or [(0.0, duration, 1.0)]
+    kills, slow_kills, keep, mode, plan = plan_clip(kill_times, duration, opts)
     segs = plan(keep)
     pins = voice.parse_pins(opts.get("cine_voice_pick"))
     voices = plan_voices(segs, kills, total_duration(segs), highlight, pins=pins) if opts.get("cine_voice") else []
@@ -755,7 +867,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     t0 = time.time()
     report("encoding", 0.0)
     try:
-        code, err = run_ffmpeg_with_progress(args, total_out, lambda f: report("encoding", f))
+        code, err = run_ffmpeg_with_progress(args, total_out, lambda f: report("encoding", f), low_priority=low_priority)
     finally:
         for p in text_files:
             p.unlink(missing_ok=True)
@@ -768,6 +880,8 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         effects.append("card" + (" (photo)" if card.get("photo") else " (no photo yet)"))
     if mode != "off":
         effects.insert(0, mode)
+    if mode == "fast" and opts.get("cine_skip_waits", True) and any(segs[i][0] > segs[i - 1][1] + 0.01 for i in range(1, len(segs))):
+        effects.insert(1, "long waits skipped")
     if want_text and not font:
         effects.append("no font found: text overlays skipped")
     if voices:
@@ -780,6 +894,31 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
 
 
 # ---- one song over a whole montage ---------------------------------------------------------------------------
+
+def bed_tracks_needed(first_len: float, offset: float, total: float, next_lens: list[float], xfade: float = 3.0) -> int:
+    """How many of next_lens must follow the first song (played from `offset`) so the music lasts `total` seconds,
+    each one crossfading `xfade` seconds into the previous. 0 when the first song is long enough.
+    Pure function; unit-tested."""
+    have = max(0.0, first_len - offset)
+    n = 0
+    while have < total and n < len(next_lens):
+        have += max(0.0, next_lens[n] - xfade)
+        n += 1
+    return n
+
+
+def music_bed_args(ffmpeg: Path, first: Path, offset: float, others: list[Path], dst: Path, xfade: float = 3.0) -> list[str]:
+    """FFmpeg command joining the first song (from `offset`) and the songs after it into one track, each
+    crossfading into the next, so a long montage keeps one continuous soundtrack. Pure function; unit-tested."""
+    args = [str(ffmpeg), "-y"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + ["-i", str(first)]
+    for o in others:
+        args += ["-i", str(o)]
+    chain, prev = [], "[0:a]"
+    for i in range(1, len(others) + 1):
+        chain.append(f"{prev}[{i}:a]acrossfade=d={xfade:g}:c1=tri:c2=tri[x{i}]")
+        prev = f"[x{i}]"
+    return args + ["-filter_complex", ";".join(chain), "-map", prev, "-c:a", "aac", "-b:a", "256k", str(dst)]
+
 
 def montage_music_args(ffmpeg: Path, video: Path, music: Path, dst: Path, total: float, offset: float,
                        music_vol: float, duck: list[tuple[float, float]] | None = None) -> list[str]:
@@ -933,9 +1072,10 @@ def _note_used(name: str) -> None:
         pass
 
 
-def pick_music(opts: dict) -> Path | None:
-    """The chosen track, or (none chosen) a random one among those not heard for the longest time."""
-    tracks = music_files()
+def pick_music(opts: dict, exclude: set[str] | None = None) -> Path | None:
+    """The chosen track, or (none chosen) a random one among those not heard for the longest time; `exclude`
+    leaves tracks out (the ones already in this montage)."""
+    tracks = [t for t in music_files() if t.name not in (exclude or set())]
     if not tracks:
         return None
     want = str(opts.get("cine_music") or "")
@@ -951,16 +1091,30 @@ def pick_music(opts: dict) -> Path | None:
     return pick
 
 
+def video_kills(demo_id: str, video: dict) -> list[float]:
+    """Kill times (seconds from the clip start) of a recorded clip, from the match or from what the clip saved."""
+    ctx = clip_context(demo_id, video["highlight_id"], int(video["start_tick"]), video.get("end_tick"))
+    if ctx["highlight"] is None and video.get("ctx"):
+        ctx = video["ctx"]
+    return list(ctx["kills"])
+
+
 def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, videos_dir: Path,
                         smooth: bool | None = None, overrides: dict | None = None, progress=None,
-                        montage_piece: bool = False) -> dict:
+                        montage_piece: bool = False, slow: bool = True, lead: float | None = None,
+                        low_priority: bool = False) -> dict:
     """Create <name>_cine.mp4 next to the clip and return the updated video entry. montage_piece=True makes
     <name>_mtg.mp4 without music instead (the montage gets one song over everything); the entry is not meant to
-    be saved."""
+    be saved. A montage piece without voice lines comes from (or goes into) the piece cache: the entry then has
+    "cine_path" (the cached file, which the caller must not delete) and "cache_hit"."""
     cfg = load_config()
     opts = options(cfg, overrides)
     if smooth is not None:
         opts["cine_smooth"] = smooth
+    if not slow:
+        opts["_no_slow"] = True   # a montage play that does not land on a drop of the song
+    if lead is not None:
+        opts["_lead"] = lead      # shifts the play's kills so a kill lands on a drop
     src = videos_dir / demo_id / video["file"]
     dst = src.with_name(src.stem + ("_mtg.mp4" if montage_piece else "_cine.mp4"))
     ctx = clip_context(demo_id, video["highlight_id"], int(video["start_tick"]), video.get("end_tick"))
@@ -968,10 +1122,112 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         ctx = video["ctx"]
     card = player_card(ctx["highlight"]) if opts.get("cine_card") else None
     title = title_for(ctx["highlight"], ctx["map"], with_player=card is None) if ctx["highlight"] else None
-    info = make_cinematic(ffmpeg, ffprobe, src, dst, ctx["kills"], None if montage_piece else pick_music(opts), opts,
-                          title=title, fps_hint=float(cfg.get("record_fps", 60)), crf=int(cfg.get("record_crf", 20)),
-                          highlight=ctx["highlight"], card=card, progress=progress, music_later=montage_piece)
+    def make(out: Path) -> dict:
+        return make_cinematic(ffmpeg, ffprobe, src, out, ctx["kills"], None if montage_piece else pick_music(opts), opts,
+                              title=title, fps_hint=float(cfg.get("record_fps", 60)), crf=int(cfg.get("record_crf", 20)),
+                              highlight=ctx["highlight"], card=card, progress=progress, music_later=montage_piece,
+                              low_priority=low_priority)
     video = dict(video)
+    if montage_piece and not opts.get("cine_voice"):   # voice lines are picked at random: nothing to reuse
+        shape = {k: x for k, x in opts.items() if k not in PIECE_IGNORES}
+        key = piece_key(src, {"kills": ctx["kills"], "opts": shape, "title": title, "card": card,
+                              "photo": _mtime((card or {}).get("photo")), "font": str(find_font()),
+                              "fps": cfg.get("record_fps", 60), "crf": cfg.get("record_crf", 20)})
+        path, info, hit = cached_piece(key, make)
+        if hit and progress:
+            progress("done (already made)", 1.0)
+        video.update({"cine": path.name, "cine_path": str(path), "cine_info": info, "cache_hit": hit})
+        return video
     video["cine"] = dst.name
-    video["cine_info"] = info
+    video["cine_info"] = make(dst)
     return video
+
+
+# ---- piece cache: a montage piece made once is reused by every later montage with the same play and look ----
+
+PIECE_CACHE = DATA_DIR / "cache" / "pieces"
+# options a montage piece does not depend on (it has no music; the song goes over the whole montage afterwards)
+PIECE_IGNORES = ("cine_music", "cine_music_volume", "cine_music_sync", "cine_voice_pick", "cine_voice_volume")
+_inflight: dict[str, threading.Event] = {}   # pieces being made right now, so two jobs never make the same one
+_inflight_lock = threading.Lock()
+
+
+def _mtime(p) -> int | None:
+    try:
+        return Path(p).stat().st_mtime_ns if p else None
+    except OSError:
+        return None
+
+
+_code_sig: str | None = None
+
+
+def piece_key(src: Path, parts: dict) -> str:
+    """Cache key of a montage piece: the recording (name, size, time), everything that shapes the render, and this
+    module's code (a change to the effects makes every piece again)."""
+    global _code_sig
+    if _code_sig is None:
+        _code_sig = hashlib.sha1(Path(__file__).read_bytes()).hexdigest()
+    st = src.stat()
+    blob = json.dumps({"code": _code_sig, "src": src.name, "size": st.st_size, "mtime": st.st_mtime_ns, **parts},
+                      sort_keys=True, default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:24]
+
+
+def cached_piece(key: str, make) -> tuple[Path, dict, bool]:
+    """(file, make_cinematic info, True when it was already there) of the piece `key`; make(path) renders it when
+    it is not cached. While another thread is making the same piece, wait for it instead of making it twice."""
+    PIECE_CACHE.mkdir(parents=True, exist_ok=True)
+    out, meta = PIECE_CACHE / f"{key}.mp4", PIECE_CACHE / f"{key}.json"
+    while True:
+        with _inflight_lock:
+            if out.exists() and meta.exists():
+                try:
+                    info = json.loads(meta.read_text(encoding="utf-8"))
+                    os.utime(out)   # recently used: kept longest by prune_piece_cache
+                    return out, info, True
+                except (OSError, ValueError):
+                    pass
+            ev = _inflight.get(key)
+            if ev is None:
+                ev = _inflight[key] = threading.Event()
+                break
+        ev.wait()   # the other render finished (or failed: then this thread makes it)
+    tmp = PIECE_CACHE / f"{key}.part.mp4"
+    try:
+        info = make(tmp)
+        tmp.replace(out)
+        meta.write_text(json.dumps(info), encoding="utf-8")
+        return out, info, False
+    finally:
+        tmp.unlink(missing_ok=True)
+        with _inflight_lock:
+            _inflight.pop(key, None)
+        ev.set()
+
+
+def prune_piece_cache(max_bytes: int) -> int:
+    """Delete the least recently used pieces until the cache fits in max_bytes; returns how many went."""
+    if not PIECE_CACHE.is_dir():
+        return 0
+    files = []
+    for p in PIECE_CACHE.glob("*.mp4"):
+        if p.name.endswith(".part.mp4") or p.stem in _inflight:
+            continue
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        files.append((st.st_mtime, st.st_size, p))
+    total, gone = sum(f[1] for f in files), 0
+    for _, size, p in sorted(files):
+        if total <= max_bytes:
+            break
+        try:
+            p.unlink()
+            p.with_suffix(".json").unlink(missing_ok=True)
+            total -= size
+            gone += 1
+        except OSError:
+            pass
+    return gone

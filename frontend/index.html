@@ -101,6 +101,21 @@
     </div>
   </div>
 </main>
+<footer class="site-foot">
+  <div class="foot-row">
+    <div class="foot-brand"><span class="logo" aria-hidden="true">CS</span>
+      <div><div class="foot-name">CS2 Watcher</div><div class="foot-tag">Your squad's best plays from FACEIT demos, cut into cinematic montages.</div></div></div>
+    <nav class="foot-links" aria-label="Project">
+      <a href="https://github.com/RonGershtein/Cs2-faceit-highlighter" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/RonGershtein/Cs2-faceit-highlighter#readme" target="_blank" rel="noopener">Guide</a>
+      <a href="https://github.com/RonGershtein/Cs2-faceit-highlighter/issues/new" target="_blank" rel="noopener">Report a bug</a>
+    </nav>
+    <div class="foot-made">Designed and built by<br><a href="https://github.com/RonGershtein" target="_blank" rel="noopener">Ron Gershtein</a></div>
+  </div>
+  <div class="foot-legal"><span>© <span id="foot-year">2026</span> Ron Gershtein. All rights reserved.</span><span>Not affiliated with Valve or FACEIT.</span></div>
+  <div class="foot-word" aria-hidden="true">CS2 Watcher</div>
+</footer>
+<script>document.getElementById('foot-year').textContent = new Date().getFullYear();</script>
 
 <div class="tray" id="tray" hidden role="region" aria-label="Montage">
   <div class="tray-head"><b>Selected</b><span class="muted" id="tray-info"></span><span class="spacer"></span>
@@ -132,7 +147,8 @@
   <div class="field"><label for="multi-min">Plays</label><select id="multi-min"><option value="3">3 kills and more (3K, 4K, ace, 1v3+ clutch)</option><option value="4">4 kills and more</option><option value="5">aces only</option></select></div>
   <div class="field"><label>Matches</label><div id="multi-list" class="muted">…</div></div>
   <div class="field"><label>Style</label>
-    <label class="opt"><input type="radio" name="multi-style" id="multi-cine" checked> <span><b>Cinematic</b>: slow motion on the kills, effects, title and player cards, and <b>one song per match</b> (a song you have not heard lately). Uses your cinematic settings; change them in a match's Cinematic dialog.</span></label>
+    <label class="opt"><input type="radio" name="multi-style" id="multi-cine" checked> <span><b>Cinematic</b>: slow motion on the kills, effects, title and player cards, and <b>one song over the whole montage</b>, its drop on the first slow-motion kill. A long montage continues with the next song, crossfading. Uses your cinematic settings; change them in a match's Cinematic dialog.</span></label>
+    <div class="row" id="multi-song-row" style="gap:10px;margin:0 0 4px 27px;align-items:center"><span class="opt-text">Song</span><select id="multi-music" aria-label="Song"><option value="">Random (a song you have not heard lately)</option></select></div>
     <label class="opt"><input type="radio" name="multi-style" id="multi-plain"> <span><b>As recorded</b>: the clips joined as they are, with the game sound and no song</span></label></div>
   <div class="field"><label for="multi-team">Team name</label>
     <div class="row" style="gap:10px;flex-wrap:wrap"><input type="text" id="multi-team" maxlength="40" autocomplete="off" placeholder="Squad" style="flex:1;min-width:160px">
@@ -144,7 +160,7 @@
 
 <div class="modal" role="dialog" aria-modal="true" aria-labelledby="recap-title" id="recap-modal" style="display:none"><div class="modal-box">
   <div class="modal-head" id="recap-title"><svg class="i" aria-hidden="true"><use href="#i-calendar"/></svg> Recap <span class="spacer"></span><button class="small ghost" id="recap-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
-  <p class="muted" style="margin:0 0 12px">Every recorded squad play of the period in one video, oldest match first. Each play is made cinematic, and each match gets its own song.</p>
+  <p class="muted" style="margin:0 0 12px">Every recorded squad play of the period in one video, oldest match first. Each play is made cinematic, with one song over the whole recap.</p>
   <div class="field"><label for="recap-period">Period</label>
     <div class="row" style="gap:8px;flex-wrap:wrap"><select id="recap-period"><option value="month">This month</option><option value="lastmonth">Last month</option><option value="year">This year</option><option value="lastyear">Last year</option><option value="custom">Custom dates</option></select>
       <input type="date" id="recap-from" aria-label="From"><input type="date" id="recap-to" aria-label="To"></div></div>

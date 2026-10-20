@@ -88,6 +88,32 @@ def _wsl_to_win(p: Path) -> str:
     return f"{m.group(1).upper()}:\\" + m.group(2).replace("/", "\\") if m else str(p)
 
 
+def cleanup_replays(keep: set[str] | None = None) -> int:
+    """Delete the replay_<id8>.dem copies (unpacked into <CS2>/game/csgo/ for recording and "Open in CS2") of
+    matches that are no longer in the app: deleting a match removes its copy, but not while CS2 has it open, so
+    the app sweeps those leftovers at startup. Copies of matches still in the library are kept. `keep`: the
+    file names to keep (default: every match in the library). Only while CS2 is closed. Returns how many."""
+    try:
+        cs2 = find_cs2_path()
+        if not cs2 or cs2_running():
+            return 0
+        if keep is None:
+            from . import db
+            keep = {f"replay_{d['id'][:8]}.dem" for d in db.list_demos()}
+        n = 0
+        for p in (cs2 / "game" / "csgo").glob("replay_*.dem"):
+            if p.name in keep:
+                continue
+            try:
+                p.unlink()
+                n += 1
+            except OSError:
+                pass
+        return n
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def cs2_running() -> bool:
     try:
         if platform.system() == "Windows" or is_wsl():

@@ -73,9 +73,14 @@
     }).join('');
   }
 
-  async function refresh() {
-    try { demos = await API.listDemos(); renderStats(); renderMatches(); }
-    catch (e) { $('matches').innerHTML = `<div class="card empty">failed to load: ${esc(e.message)}</div>`; }
+  let shown = null;   // the match list as last drawn: the 4 s poll redraws only when something changed
+  async function refresh(force = false) {
+    try {
+      const list = await API.listDemos();
+      const key = JSON.stringify(list);
+      if (!force && key === shown) return;
+      shown = key; demos = list; renderStats(); renderMatches();
+    } catch (e) { shown = null; $('matches').innerHTML = `<div class="card empty">failed to load: ${esc(e.message)}</div>`; }
   }
   $('map-filter').addEventListener('change', renderMatches);
   $('matches').addEventListener('click', async (ev) => {
@@ -155,13 +160,27 @@
       const plays = ms.reduce((a, m) => a + m.ids.length, 0), need = ms.reduce((a, m) => a + m.need.length, 0);
       const toRec = ms.filter(m => m.need.length).length, nm = ms.filter(m => m.ids.length).length;
       $('multi-list').innerHTML = ms.map(m => `<div>${esc(m.map || 'match')} · ${esc(fmtDate(m.date).split(' · ')[0])} · ${m.ids.length ? `<b>${m.ids.length} play${m.ids.length > 1 ? 's' : ''}</b>${m.need.length ? ` <span class="badge">${m.need.length} to record</span>` : ''}` : 'no plays like that'}</div>`).join('')
-        + (plays ? `<div style="margin-top:6px"><b>${plays} play${plays > 1 ? 's' : ''} from ${nm} match${nm > 1 ? 'es' : ''}</b>${need ? ` · CS2 opens ${toRec} time${toRec > 1 ? 's' : ''} to record ${need} play${need > 1 ? 's' : ''} first (it closes itself after each match)` : ' · all recorded'}</div>` : '');
+        + (plays ? `<div style="margin-top:6px"><b>${plays} play${plays > 1 ? 's' : ''} from ${nm} match${nm > 1 ? 'es' : ''}</b>${need ? ` · CS2 opens once to record ${need} play${need > 1 ? 's' : ''}${toRec > 1 ? ` from ${toRec} matches (it loads one demo after the other)` : ''} first, and closes itself at the end` : ' · all recorded'}</div>` : '');
       $('multi-go').disabled = !plays;
       $('multi-name').placeholder = plays ? `Squad montage · ${plays} play${plays > 1 ? 's' : ''} from ${nm} match${nm > 1 ? 'es' : ''}` : 'Squad montage';
     } catch (e) { $('multi-list').textContent = e.message; $('multi-go').disabled = true; }
   }
+  async function loadMultiMusic() {
+    const sel = $('multi-music'), cur = sel.value;
+    try {
+      const m = await API.music();
+      sel.innerHTML = '<option value="">Random (a song you have not heard lately)</option>'
+        + m.files.map(f => `<option value="${esc(f)}">${esc(f.replace(/\.[^.]+$/, ''))}</option>`).join('');
+      sel.value = m.files.includes(cur) ? cur : '';
+      if (!m.files.length) sel.innerHTML = '<option value="">No music yet: add tracks in a match\'s Cinematic dialog</option>';
+    } catch (_) { /* keep the list */ }
+  }
+  const syncMultiStyle = () => { $('multi-song-row').style.display = $('multi-cine').checked ? '' : 'none'; };
+  $('multi-cine').addEventListener('change', syncMultiStyle);
+  $('multi-plain').addEventListener('change', syncMultiStyle);
   $('match-go').onclick = async () => {
     $('multi-msg').textContent = ''; $('multi-modal').style.display = '';
+    loadMultiMusic(); syncMultiStyle();
     try { const s = await API.squad(); $('multi-team').value = s.team || ''; $('multi-intro').checked = s.intro !== false; } catch (_) { /* defaults */ }
     multiPreview();
   };
@@ -172,7 +191,7 @@
     $('multi-go').disabled = true; $('multi-msg').textContent = 'starting…';
     try {
       await API.saveTeam($('multi-team').value, $('multi-intro').checked);
-      await API.multiSquad({ demo_ids: mpicked, min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked });
+      await API.multiSquad({ demo_ids: mpicked, min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked, music: $('multi-cine').checked ? $('multi-music').value : '' });
       $('multi-modal').style.display = 'none'; $('multi-msg').textContent = ''; $('multi-name').value = '';
       selecting = false; mpicked = []; renderMatches(); renderBar();
       window.startMontagePoll && window.startMontagePoll();
@@ -233,7 +252,7 @@
     try {
       config = { ...config, ...(await API.setConfig({ my_steamid: $('cfg-steamid').value.trim(), watch_folder: $('cfg-watch').value.trim(), cs2_path: $('cfg-cs2').value.trim(), export_folder: $('cfg-export').value.trim() })) };
       $('cfg-msg').textContent = 'saved'; setTimeout(() => { $('cfg-msg').textContent = ''; modal.style.display = 'none'; }, 700);
-      refresh();
+      refresh(true);   // "mine" stats depend on the config
     } catch (e) { $('cfg-msg').textContent = 'failed: ' + e.message; }
   };
   API.getConfig().then(c => { config = c; $('watch-status').textContent = c.watch_folder ? `watching ${c.watch_folder}` : ''; refresh(); }).catch(() => refresh());
