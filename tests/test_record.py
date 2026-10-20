@@ -875,25 +875,34 @@ def test_lineup_adds_up_each_players_kills():
     assert len(lineup_players(many)) == 8 and lineup_players(many)[0]["name"] == "p9"
 
 
-def test_swoop_lands_on_the_players_eyes():
-    from backend.record import campath_xml, plan_swoop, swoop_points
-    eye = {"x": 100.0, "y": 200.0, "z": 64.0, "pitch": 5.0, "yaw": 90.0}     # looking along +y
-    pts = swoop_points(eye, 1.8)
-    assert pts[-1] == {"t": 1.8, "x": 100.0, "y": 200.0, "z": 64.0, "pitch": 5.0, "yaw": 90.0}   # exactly his view
-    assert len(pts) >= 4 and [p["t"] for p in pts] == sorted(p["t"] for p in pts)   # HLAE runs a campath from 4 keys
-    assert pts[0]["t"] == 0.0 and pts[0]["y"] < 200.0 - 100 and pts[0]["z"] > 64.0 + 100 and pts[0]["pitch"] > 20  # behind, above
+def test_swoop_follows_the_player_then_dives_into_his_eyes():
+    from backend.record import SWOOP_DIVE, campath_xml, plan_swoop, swoop_points, swoop_times
+    ts = swoop_times(4.5)
+    assert ts[0] == 0.0 and ts[-1] == 4.5 + SWOOP_DIVE and len(ts) >= 4 and ts == sorted(ts)
+    # he walks along +y looking along +y (yaw 90), 100 units over the follow
+    track = [{"x": 100.0, "y": 200.0 + min(t, 4.5) / 4.5 * 100, "z": 64.0, "pitch": 5.0, "yaw": 90.0} for t in ts]
+    pts = swoop_points(track, 4.5)
+    assert pts[-1] == {"t": 5.5, "x": 100.0, "y": 300.0, "z": 64.0, "pitch": 5.0, "yaw": 90.0}   # exactly his view
+    follow = [p for p in pts if p["t"] <= 4.5]
+    assert all(p["z"] == 64.0 + 75 and abs(p["y"] - (200.0 + p["t"] / 4.5 * 100 - 130)) < 0.01 for p in follow)  # behind, above, with him
     xml = campath_xml(pts)
     assert xml.startswith('<?xml version="1.0"?><campath><points><p t="0.0"') and 'ry="5.0" rz="90.0"' in xml
+    # a flick of his view does not whip the follow cam around
+    flick = [dict(e, yaw=(90.0 if i != 3 else 200.0)) for i, e in enumerate(track)]
+    assert abs(swoop_points(flick, 4.5)[3]["yaw"] - 90.0) < 40
     h = {"kills": [10000, 10300]}
-    assert plan_swoop(h, 9000, 64) == {"from": 9756, "to": 9872}               # 1.8 s = 115.2 ticks before landing
-    assert plan_swoop(h, 9800, 64) is None                                   # no room inside the recording
-    assert plan_swoop(h, 10000 - 256, 64) == {"from": 9756, "to": 9872}       # a clip starting 4 s before the kill fits
+    assert plan_swoop(h, 0, 64) == {"from": 10000 - 128 - 352, "to": 10000 - 128, "follow": 4.5}
+    assert plan_swoop(h, 9600, 64)["follow"] == round((10000 - 128 - 64 - 9600) / 64, 3)   # the round started late: shorter
+    assert plan_swoop(h, 9750, 64) is None                                   # no room for even a short follow
     assert plan_swoop({"kills": []}, 0, 64) is None
 
 
 def test_build_cfg_schedules_the_swoop():
     sw = {0: {"from": 4700, "to": 4872, "xml": "C:/x/raw/swoop_0.xml"}}
     text, seqs = build_cfg([hl(0, 4600, 5600)], Path("C:/x/raw"), {}, {"record_swoop_spec": "spec_mode 5"}, 64, swoops=sw)
+    # the follow cam starting before the play makes the recording start there
+    early, eseqs = build_cfg([hl(0, 4800, 5600)], Path("C:/x/raw"), {}, {}, 64, swoops=sw)
+    assert eseqs[0]["start"] == 4692 and "mirv_cmd addAtTick 4692 mirv_streams record start" in early
     assert "mirv_cmd addAtTick 4700 exec cs2watcher_rec_sw_1" in text and "mirv_cmd addAtTick 4872 hl_swe1" in text
     sc = seqs[0]["swoop_cfg"]
     assert sc["name"] == "cs2watcher_rec_sw_1"
@@ -902,8 +911,9 @@ def test_build_cfg_schedules_the_swoop():
     assert "mirv_campath load" not in text
     assert 'alias hl_swe1 "mirv_campath enabled 0; cl_drawhud 1; spec_mode 1;' in text
     assert seqs[0]["swoop"] == {"from": 1.562, "to": 4.25}
-    text2, seqs2 = build_cfg([hl(0, 4800, 5600)], Path("C:/x/raw"), {}, {}, 64, swoops=sw)   # starts too late: no swoop
-    assert "mirv_campath" not in text2 and "swoop" not in seqs2[0]
+    # right after the play before (it has to keep a second's gap): no room, no swoop
+    text2, seqs2 = build_cfg([hl(1, 3000, 4690), hl(0, 4800, 5600)], Path("C:/x/raw"), {}, {}, 64, swoops=sw)
+    assert "swoop_cfg" not in seqs2[1] and "swoop" not in seqs2[1]
 
 
 def test_montage_spaces_the_swoops_out():
@@ -920,3 +930,4 @@ def test_montage_spaces_the_swoops_out():
     pos = [k for k, f in enumerate(flags) if f]
     assert len(pos) >= 2                                                    # some plays swoop...
     assert all(b - a > SWOOP_GAP for a, b in zip(pos, pos[1:]))             # ...never two close together
+    assert all(b - a <= 6 for a, b in zip(pos, pos[1:]))                    # one, then 3-5 without, then the next

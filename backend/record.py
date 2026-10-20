@@ -313,26 +313,55 @@ def resolve_encoder(force: bool = False) -> str:
     return _auto_encoder
 
 
-SWOOP_SECONDS = 1.8   # the third-person swoop into the player's eyes
+SWOOP_FOLLOW = 4.5    # seconds the camera follows behind and above the player before diving in
+SWOOP_DIVE = 1.0      # seconds of the dive into his eyes
+SWOOP_MIN_FOLLOW = 1.5   # less room than this before the play (round start, the play before): no swoop
 SWOOP_LEAD = 2.0      # it lands this long before the play's first kill (where the cinematic play starts in first person)
+SWOOP_STEP = 0.5      # seconds between follow-cam keyframes
 
 
-def swoop_points(eye: dict, seconds: float = SWOOP_SECONDS) -> list[dict]:
-    """Camera keyframes {"t", "x", "y", "z", "pitch", "yaw"} of a swoop that starts behind and above the player,
-    looking down at him, and curves in to land exactly on his eyes and his view. Pure function; unit-tested."""
+def swoop_times(follow: float, dive: float = SWOOP_DIVE) -> list[float]:
+    """Keyframe times (seconds from the swoop's start): every SWOOP_STEP while following, then three through the
+    dive, the last one at the landing. Pure function; unit-tested."""
+    n = max(1, int(round(follow / SWOOP_STEP)))
+    ts = [round(follow * i / n, 3) for i in range(n + 1)]
+    return ts + [round(follow + dive * f, 3) for f in (0.4, 0.75, 1.0)]
+
+
+def _unwrap(angles: list[float]) -> list[float]:
+    out = []
+    for a in angles:
+        if out:
+            while a - out[-1] > 180:
+                a -= 360
+            while a - out[-1] < -180:
+                a += 360
+        out.append(a)
+    return out
+
+
+def swoop_points(track: list[dict], follow: float, dive: float = SWOOP_DIVE) -> list[dict]:
+    """Camera keyframes {"t", "x", "y", "z", "pitch", "yaw"} of the swoop: a follow cam behind and above the
+    player (his eyes at each of swoop_times in `track`), its heading his view smoothed so it does not whip with
+    every flick, then a dive that lands exactly on his eyes and his view. Pure function; unit-tested."""
     import math
-    yaw = math.radians(eye["yaw"])
-    fx, fy = math.cos(yaw), math.sin(yaw)
-
-    def at(back: float, up: float, t: float, pitch: float) -> dict:
-        return {"t": round(t, 3), "x": round(eye["x"] - fx * back, 2), "y": round(eye["y"] - fy * back, 2),
-                "z": round(eye["z"] + up, 2), "pitch": round(pitch, 2), "yaw": round(eye["yaw"], 2)}
-    # five keys: HLAE only runs a campath with at least four, and more make the curve smoother
-    return [at(150.0, 110.0, 0.0, 34.0),
-            at(115.0, 80.0, seconds * 0.3, 30.0 + 0.1 * eye["pitch"]),
-            at(70.0, 45.0, seconds * 0.55, 20.0 + 0.4 * eye["pitch"]),
-            at(25.0, 14.0, seconds * 0.8, 8.0 + 0.8 * eye["pitch"]),
-            at(0.0, 0.0, seconds, eye["pitch"])]
+    times = swoop_times(follow, dive)
+    track = (track + [track[-1]] * len(times))[:len(times)]
+    land = track[-1]
+    yaws = _unwrap([e["yaw"] for e in track])
+    smooth = [sum(yaws[max(0, i - 2):i + 3]) / len(yaws[max(0, i - 2):i + 3]) for i in range(len(yaws))]
+    back0, up0, pitch0 = 130.0, 75.0, 27.0
+    out = []
+    for t, e, y_s, y in zip(times, track, smooth, yaws):
+        f = 0.0 if t <= follow else min(1.0, (t - follow) / dive)
+        ease = f * f * (3 - 2 * f)
+        back, up = back0 * (1 - ease), up0 * (1 - ease)
+        pitch = pitch0 + (land["pitch"] - pitch0) * ease
+        yaw = y_s + (yaws[-1] - y_s) * ease if f < 1 else yaws[-1]
+        r = math.radians(yaw)
+        out.append({"t": t, "x": round(e["x"] - math.cos(r) * back, 2), "y": round(e["y"] - math.sin(r) * back, 2),
+                    "z": round(e["z"] + up, 2), "pitch": round(pitch, 2), "yaw": round(yaw, 2)})
+    return out
 
 
 def campath_xml(points: list[dict], fov: float = 90.0) -> str:
@@ -343,41 +372,51 @@ def campath_xml(points: list[dict], fov: float = 90.0) -> str:
     return f'<?xml version="1.0"?><campath><points>{rows}</points></campath>'
 
 
-def prepare_swoops(hs: list[dict], dem: Path, raw_dir: Path, tickrate: int) -> dict:
+def prepare_swoops(hs: list[dict], dem: Path, raw_dir: Path, tickrate: int, rounds: list[dict] | None = None) -> dict:
     """{highlight id: {"from", "to", "xml"}}: for every play with room for it, the swoop's ticks and its campath file
     (written to raw_dir), landing on the player's eyes as the demo has them. Every play gets one; the montage
     decides which ones are shown. {} when the demo cannot be read (the recording goes on without swoops)."""
-    plans = {h["id"]: (plan_swoop(h, int(h["start_tick"]), tickrate), str(h["player"])) for h in hs}
+    freeze_end = {int(r.get("num") or 0): int(r.get("freeze_end") or r.get("start") or 0) for r in rounds or []}
+    plans = {h["id"]: (plan_swoop(h, freeze_end.get(int(h.get("round") or 0), int(h["start_tick"])), tickrate),
+                       str(h["player"])) for h in hs}
     plans = {k: v for k, v in plans.items() if v[0]}
     if not plans:
         return {}
+
+    def key_ticks(pl: dict) -> list[int]:
+        return [int(round(pl["from"] + t * tickrate)) for t in swoop_times(pl["follow"])]
     try:
         from .parser import eye_views
-        eyes = eye_views(dem, [(pl["to"], sid) for pl, sid in plans.values()])
+        eyes = eye_views(dem, [(t, sid) for pl, sid in plans.values() for t in key_ticks(pl)])
     except Exception:  # noqa: BLE001
         traceback.print_exc()
         return {}
     raw_dir.mkdir(parents=True, exist_ok=True)
     out = {}
     for hid, (pl, sid) in plans.items():
-        eye = eyes.get((pl["to"], sid))
-        if not eye:
+        track = [eyes.get((t, sid)) for t in key_ticks(pl)]
+        if not track[-1]:
             continue
+        track = [e or track[-1] for e in track]   # a tick the demo lacks: the landing position
         xml = raw_dir / f"swoop_{hid}.xml"
-        xml.write_text(campath_xml(swoop_points(eye, (pl["to"] - pl["from"]) / tickrate)), encoding="utf-8")
+        xml.write_text(campath_xml(swoop_points(track, pl["follow"])), encoding="utf-8")
         out[hid] = {**pl, "xml": str(xml)}
     return out
 
 
-def plan_swoop(h: dict, start: int, tickrate: int) -> dict | None:
-    """{"from", "to"} ticks of a play's swoop: it lands SWOOP_LEAD before the first kill and must lie inside the
-    recording (from `start`). None when there is no room. Pure function; unit-tested."""
+def plan_swoop(h: dict, earliest: int, tickrate: int) -> dict | None:
+    """{"from", "to", "follow"} of a play's swoop: it lands SWOOP_LEAD before the first kill after SWOOP_FOLLOW s of
+    follow cam and SWOOP_DIVE s of dive, starting no earlier than `earliest` (the end of the round's freeze time):
+    the follow gets shorter there, and below SWOOP_MIN_FOLLOW there is no swoop. The recording is started early
+    enough for it (build_cfg). Pure function; unit-tested."""
     kills = sorted(h.get("kills") or [])
     if not kills:
         return None
     to = int(kills[0] - SWOOP_LEAD * tickrate)
-    frm = int(to - SWOOP_SECONDS * tickrate)
-    return {"from": frm, "to": to} if frm >= start + 4 else None
+    follow = min(SWOOP_FOLLOW, (to - SWOOP_DIVE * tickrate - earliest) / tickrate)
+    if follow < SWOOP_MIN_FOLLOW:
+        return None
+    return {"from": int(round(to - (follow + SWOOP_DIVE) * tickrate)), "to": to, "follow": round(follow, 3)}
 
 
 PREROLL_TIMESCALE = 4   # record_fast_preroll: how fast the unrecorded 2 s before each highlight play
@@ -412,6 +451,9 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
     prev_end = 0
     for i, h in enumerate(hs, 1):
         start, end = int(h["start_tick"]), int(h["end_tick"])
+        sw = (swoops or {}).get(h["id"])
+        if sw and sw["from"] - 8 < start:   # the follow cam starts before the play: record from there
+            start = sw["from"] - 8
         if start < prev_end + tickrate:
             start = prev_end + tickrate
         end = max(end, start + tickrate)
@@ -451,7 +493,6 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
             # last spectator switch and the recording start
             lines += [f"mirv_cmd addAtTick {setup + 1} demo_timescale {PREROLL_TIMESCALE}",
                       f"mirv_cmd addAtTick {max(setup + 2, start - 8 - max(16, tickrate // 4))} demo_timescale 1"]
-        sw = (swoops or {}).get(h["id"])
         swoop = None
         swoop_cfg = None
         if sw and sw["from"] >= start + 4 and sw["to"] < end:
@@ -1164,7 +1205,7 @@ def _run_session(todo: list[tuple[str, list[dict]]], opts: dict) -> None:
                  "out_dir": VIDEOS_DIR / demo_id}
             if cfg.get("record_swoop", True):
                 _set(stage="planning the third-person shots")
-                p["swoops"] = prepare_swoops(hs, dem, raw_dir, p["tickrate"])
+                p["swoops"] = prepare_swoops(hs, dem, raw_dir, p["tickrate"], meta.get("rounds"))
             _, seqs = build_cfg(hs, raw_dir, p["names"], cfg, p["tickrate"], demo_id, swoops=p.get("swoops"))
             p["last_end"] = seqs[-1]["end"]
             parts.append(p)
@@ -2189,7 +2230,8 @@ def bed_pieces(songs: list[tuple[object, list[tuple[float, float]]]], offset: fl
 
 
 ORDER_BEAM = 120          # states kept per step by plan_song_order
-SWOOP_GAP = 3             # plays without a third-person swoop between two that have one
+SWOOP_GAP = 3             # at least this many plays without a third-person swoop between two that have one
+SWOOP_GAPS = (3, 4, 5)    # the gap each play asks for, picked at random
 SWOOP_BONUS = 0.5         # how much the order search wants a swoop where one is allowed
 ORDER_OPENERS = 4         # strongest plays tried as the opener
 
@@ -2239,6 +2281,8 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
     import random as _random
     rnd = _random.Random(len(variants) * 7919 + round(sum(vs[0]["seconds"] for vs in variants) * 10))
     swoop_bonus = [SWOOP_BONUS * (0.6 + 0.8 * rnd.random()) for _ in variants]
+    # each play wants its own gap since the last swoop, 3 to 5 plays: "one has it, then 3-5 don't", never a pattern
+    swoop_gap = [rnd.choice(SWOOP_GAPS) for _ in variants]
     players = players or [""] * n
     openers = sorted((i for i in range(n) if variants[i][0]["slow"] and variants[i][0].get("hit") is not None),
                      key=lambda i: -scores[i])[:ORDER_OPENERS] or [0]
@@ -2273,7 +2317,7 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
                         continue
                     pen = 0.05 if players[i] and players[i] == prev_player else 0.0
                     fin = 0.6 * scores[i] if last_step else 0.0
-                    may_swoop = since_swoop(seq) >= SWOOP_GAP     # at least SWOOP_GAP plays without one in between
+                    may_swoop = since_swoop(seq) >= swoop_gap[i]  # 3-5 plays without one in between
                     cands = [(gain - pen + fin, dm, snap_to_beat(normal[i], t, beats))]
                     if may_swoop and swoop_normal[i]:
                         cands.append((gain - pen + fin + swoop_bonus[i], dm, snap_to_beat(swoop_normal[i], t, beats)))
