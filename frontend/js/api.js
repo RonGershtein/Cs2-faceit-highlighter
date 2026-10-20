@@ -36,7 +36,7 @@ const API = (() => {
     deleteClips: (id, highlight_ids, downloads) => post(`/api/demos/${id}/videos/delete`, { highlight_ids, downloads }),
     longVideo: (id, highlight_ids, cinematic) => post(`/api/demos/${id}/videos/long`, { highlight_ids, cinematic }),
     deleteLongVideo: (id, name) => json(`/api/demos/${id}/videos/long/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-    cinematic: (id, highlight_ids, settings) => post(`/api/demos/${id}/videos/cinematic`, { highlight_ids, settings }),
+    cinematic: (id, highlight_ids, settings, reel = false) => post(`/api/demos/${id}/videos/cinematic`, { highlight_ids, settings, reel }),
     cineSettings: () => get('/api/cinematic/settings'),
     squad: () => json('/api/squad'),
     saveSquad: (members) => json('/api/squad', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ members }) }),

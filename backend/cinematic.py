@@ -786,13 +786,15 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
                  texts: list[dict], voices: list[float] | None = None, voice_vol: float = 1.0,
                  card: dict | None = None, pad: float = 0.0, duck: list[tuple[float, float]] | None = None,
                  music_later: bool = False, lut: Path | None = None, edge_in: str | None = None,
-                 edge_out: str | None = None) -> str:
+                 edge_out: str | None = None, reframe: str | None = None) -> str:
     """texts: [{"file": Path, "size": int, "x": str, "y": str, "alpha": str|None, "enable": str|None, "font": Path}]
     voices: output-time offsets of the extra audio inputs that follow the clip (and the music, when there is one).
     card: {"idx": input index of the photo or None, "d": avatar px, "x", "y", "initial": Path|None, "font": Path}
     for the circular player card, which stays on screen for the whole clip.
     music_later: no music input, but the game audio is already turned down to game_vol because one song is laid
-    over a whole montage afterwards (montage_music)."""
+    over a whole montage afterwards (montage_music).
+    reframe: filters that turn the graded picture into another frame (a reel: the 9:16 middle, REEL_FILTER); the
+    card and the texts are then placed on that frame."""
     total = total_duration(segs) + pad
     parts, labels = [], []
     for i, (a, b, s) in enumerate(segs):
@@ -844,6 +846,9 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
         grade = f"lut3d=file={_fesc(lut)}:interp=trilinear" if lut else "eq=contrast=1.06:saturation=1.18:gamma=0.98"
         parts.append(f"{cur}{grade},vignette=angle=PI/4.6:dither=0[vl]")
         cur = "[vl]"
+    if reframe:
+        parts.append(f"{cur}{reframe}[vr]")
+        cur = "[vr]"
     if card:
         parts += _card_chain(card, fps)
         parts.append(f"{cur}[card]overlay=x={card['x']}:y={card['y']}:eof_action=pass[vcard]")
@@ -911,12 +916,16 @@ def _card_chain(card: dict, fps: float) -> list[str]:
 
 def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, title: tuple[str, str] | None,
                counter: bool, font: Path, tmp_base: Path, card: dict | None = None,
-               clutch: dict | None = None) -> tuple[list[dict], list[Path], dict | None]:
+               clutch: dict | None = None, unit: int | None = None, safe_top: int | None = None,
+               safe_bottom: int | None = None) -> tuple[list[dict], list[Path], dict | None]:
     """Describe the drawtext calls (title card, player card texts, kill counter) and the player card geometry.
     The texts are written to small files next to the output (drawtext's textfile= needs no escaping); the caller
     deletes them after the encode. card: {"name", "photo"} -> returned spec has d/x/y/initial/idx(None).
     clutch: {"n", "round", "score": (ours, theirs) | None} puts the odds at the top left: 1vN counting down with the
-    clutcher's kills (gone once all are down), the round and score under it."""
+    clutcher's kills (gone once all are down), the round and score under it.
+    unit: the height the sizes scale with (default the frame's; a 1080x1920 reel uses 1080, so the text is the size
+    of a 1080p video's on a phone); safe_top/safe_bottom: room kept clear at the top and bottom (a reel's app
+    puts its buttons and caption there)."""
     texts: list[dict] = []
     files: list[Path] = []
     card_spec: dict | None = None
@@ -927,24 +936,28 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
         files.append(p)
         return p
     h = height
+    u = unit or height
     env = (f"if(lt(t,0.3),t/0.3,if(lt(t,{TITLE_SECONDS - 0.5:.2f}),1,"
            f"if(lt(t,{TITLE_SECONDS:.2f}),({TITLE_SECONDS:.2f}-t)/0.5,0)))")
     en = f"between(t,0,{TITLE_SECONDS:.2f})"
-    x0, bottom = int(h * 0.06), int(h * 0.11)        # left margin; bottom margin clears the demo playback bar
+    x0, bottom = int(u * 0.06), int(u * 0.11)        # left margin; bottom margin clears the demo playback bar
+    if safe_bottom is not None:
+        bottom = safe_bottom
+    top = safe_top if safe_top is not None else int(u * 0.05)
     if card:
         # lower third: [ring+avatar] NICKNAME / details, with the big label above it. The avatar and the nickname
         # stay for the whole clip; the label and the details go with the title card.
-        d = int(h * 0.11)
+        d = int(u * 0.11)
         ring = d + 6
         cy = h - bottom - ring
-        name_px, det_px = int(h * 0.05), int(h * 0.026)
-        tx = x0 + ring + int(h * 0.016)
+        name_px, det_px = int(u * 0.05), int(u * 0.026)
+        tx = x0 + ring + int(u * 0.016)
         texts.append({"font": font, "file": tf(card["name"]), "size": name_px, "x": str(tx),
                       "y": str(cy + int(ring * 0.12)), "alpha": "min(1,t/0.3)", "enable": None})
         if title:
             texts.append({"font": font, "file": tf(title[1]), "size": det_px, "x": str(tx),
                           "y": str(cy + int(ring * 0.12) + name_px + 8), "alpha": env, "enable": en})
-            big_px = int(h * 0.075)
+            big_px = int(u * 0.075)
             texts.append({"font": font, "file": tf(title[0]), "size": big_px, "x": str(x0),
                           "y": str(cy - 12 - big_px), "alpha": env, "enable": en})
         initial = (card["name"].strip()[:1] or "?").upper()
@@ -952,14 +965,14 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
                      "initial": None if card.get("photo") else tf(initial)}
     elif title:
         big, sub = title
-        big_px, sub_px = int(h * 0.075), int(h * 0.028)
+        big_px, sub_px = int(u * 0.075), int(u * 0.028)
         texts.append({"font": font, "file": tf(big), "size": big_px, "x": str(x0),
                       "y": str(h - bottom - sub_px - 10 - big_px), "alpha": env, "enable": en})
         texts.append({"font": font, "file": tf(sub), "size": sub_px, "x": str(x0),
                       "y": str(h - bottom - sub_px), "alpha": env, "enable": en})
     if counter and kills:
         outs = [out_time(segs, k) for k in sorted(kills)]
-        num_px, lab_px, margin = int(h * 0.09), int(h * 0.024), int(h * 0.05)
+        num_px, lab_px, margin = int(u * 0.09), int(u * 0.024), int(u * 0.05)
         total = total_duration(segs)
         label = tf("KILLS")
         for j, o in enumerate(outs):
@@ -967,9 +980,9 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
             if end - o < 0.05:
                 continue
             texts.append({"font": font, "file": tf(str(j + 1)), "size": num_px, "x": f"w-tw-{margin}",
-                          "y": str(margin), "alpha": f"min(1,(t-{o:.3f})/0.12)", "enable": f"between(t,{o:.3f},{end:.3f})"})
+                          "y": str(top), "alpha": f"min(1,(t-{o:.3f})/0.12)", "enable": f"between(t,{o:.3f},{end:.3f})"})
         texts.append({"font": font, "file": label, "size": lab_px, "x": f"w-tw-{margin}",
-                      "y": str(margin + num_px + 2), "alpha": "0.85", "enable": f"gte(t,{outs[0]:.3f})"})
+                      "y": str(top + num_px + 2), "alpha": "0.85", "enable": f"gte(t,{outs[0]:.3f})"})
     if clutch and clutch.get("n"):
         n = int(clutch["n"])
         ks = sorted(kills)
@@ -981,7 +994,7 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
         kills_out = [out_time(segs, k) for k in ks]
         a = out_time(segs, start)
         big = find_display_font() or font
-        small_px, x0, y0 = int(h * 0.09), int(h * 0.05), int(h * 0.05)
+        small_px, x0, y0 = int(u * 0.09), int(u * 0.05), top
         sc = clutch.get("score")
         line = "  ·  ".join(x for x in (f"ROUND {clutch['round']}" if clutch.get("round") else "",
                                          f"{sc[0]}–{sc[1]}" if sc else "") if x)
@@ -990,11 +1003,11 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
         if an:
             hold, fly = an["hold"], an["fly"]
             word = tf(f"1v{n}")
-            for t_ in announcement_texts(a, hold, fly, big, word, width, h, small_px, x0, y0):
+            for t_ in announcement_texts(a, hold, fly, big, word, width, u, small_px, x0, y0):
                 texts.append(t_)
             if line:
-                texts.append({"font": font, "file": tf(line), "size": int(h * 0.03), "x": "(w-text_w)/2",
-                              "y": f"(h/2)+{int(h * 0.13)}", "alpha": f"min(1,(t-{a + 0.25:.3f})/0.2)*min(1,({hold:.3f}-t)/0.12)",
+                texts.append({"font": font, "file": tf(line), "size": int(u * 0.03), "x": "(w-text_w)/2",
+                              "y": f"(h/2)+{int(u * 0.13)}", "alpha": f"min(1,(t-{a + 0.25:.3f})/0.2)*min(1,({hold:.3f}-t)/0.12)",
                               "enable": f"between(t,{a + 0.25:.3f},{hold:.3f})"})
             counter_from = fly
         else:
@@ -1007,7 +1020,7 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
                           "alpha": "1" if frm == counter_from and an else f"min(1,(t-{frm:.3f})/0.12)",
                           "enable": f"between(t,{frm:.3f},{state['to']:.3f})"})
         if line:
-            texts.append({"font": font, "file": tf(line), "size": int(h * 0.024), "x": str(x0),
+            texts.append({"font": font, "file": tf(line), "size": int(u * 0.024), "x": str(x0),
                           "y": str(y0 + small_px + 2), "alpha": f"0.85*min(1,(t-{counter_from:.3f})/0.25)",
                           "enable": f"gte(t,{counter_from:.3f})"})
     return texts, files, card_spec
@@ -1234,6 +1247,12 @@ def clip_timing(kill_times: list[float], duration: float, opts: dict) -> dict:
             "tail": total - out_time(segs, kills[-1]) if kills else total}
 
 
+REEL_W, REEL_H = 1080, 1920
+# the middle of the 16:9 picture (the crosshair, so the action) filling a 9:16 phone screen
+REEL_FILTER = f"crop=trunc(ih*9/16/2)*2:ih,scale={REEL_W}:{REEL_H}:flags=lanczos,setsar=1"
+REEL_SAFE_TOP, REEL_SAFE_BOTTOM = int(REEL_H * 0.11), int(REEL_H * 0.22)   # clear of the app's buttons and caption
+
+
 def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times: list[float], music: Path | None,
                    opts: dict, title: tuple[str, str] | None = None, fps_hint: float | None = None,
                    crf: int = 20, highlight: dict | None = None, card: dict | None = None,
@@ -1291,8 +1310,11 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
               if opts.get("cine_clutch", True) and highlight and highlight.get("type") == "clutch" else None)
     want_text = opts.get("cine_title") or opts.get("cine_counter") or (opts.get("cine_card") and card) or clutch
     font = find_font() if want_text else None
+    reel = bool(opts.get("_vertical"))    # a 9:16 reel: the texts go on the reframed picture
+    layout = ({"width": REEL_W, "height": REEL_H, "unit": 1080, "safe_top": REEL_SAFE_TOP, "safe_bottom": REEL_SAFE_BOTTOM}
+              if reel else {"width": width, "height": height})
     texts, text_files, card_spec = plan_texts(
-        segs, kills, width=width, height=height, title=title if opts.get("cine_title") else None,
+        segs, kills, **layout, title=title if opts.get("cine_title") else None,
         counter=bool(opts.get("cine_counter")), font=font, tmp_base=dst,
         card=card if opts.get("cine_card") else None, clutch=clutch) if font else ([], [], None)
     offset = 0.0
@@ -1316,7 +1338,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
                          duck=[(at, at + durs.get(pth, 1.5)) for pth, at in voices] if voices else None,
                          music_later=music_later,
                          lut=lut_file(str(opts.get("cine_grade", "teal_orange"))) if opts.get("cine_look") else None,
-                         edge_in=edge_in, edge_out=edge_out)
+                         edge_in=edge_in, edge_out=edge_out, reframe=REEL_FILTER if reel else None)
     args += ["-filter_complex", graph, "-map", "[vc]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast",
              "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
              "-t", f"{total_out:.3f}", str(dst)]
@@ -1722,11 +1744,12 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
                         smooth: bool | None = None, overrides: dict | None = None, progress=None,
                         montage_piece: bool = False, slow: bool = True, lead: float | None = None,
                         low_priority: bool = False, trim: float = 0.0, t_in: str | None = None,
-                        t_out: str | None = None, swoop: bool = False) -> dict:
+                        t_out: str | None = None, swoop: bool = False, reel: bool = False) -> dict:
     """Create <name>_cine.mp4 next to the clip and return the updated video entry. montage_piece=True makes
     <name>_mtg.mp4 without music instead (the montage gets one song over everything); the entry is not meant to
     be saved. A montage piece without voice lines comes from (or goes into) the piece cache: the entry then has
-    "cine_path" (the cached file, which the caller must not delete) and "cache_hit"."""
+    "cine_path" (the cached file, which the caller must not delete) and "cache_hit".
+    reel=True makes the 9:16 version for Shorts, Reels and TikTok instead: <name>_reel.mp4, in "reel"/"reel_info"."""
     cfg = load_config()
     opts = options(cfg, overrides)
     if smooth is not None:
@@ -1741,6 +1764,8 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         opts["_in"] = t_in        # transitions from / to the neighbouring plays of a montage
     if t_out:
         opts["_out"] = t_out
+    if reel:
+        opts["_vertical"] = True
     sw = video.get("swoop")
     if sw:   # recorded with a third-person swoop: shown when the montage chose it, else skipped
         if swoop:
@@ -1748,7 +1773,7 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         else:
             opts["_skip_before"] = float(sw["to"])
     src = videos_dir / demo_id / video["file"]
-    dst = src.with_name(src.stem + ("_mtg.mp4" if montage_piece else "_cine.mp4"))
+    dst = src.with_name(src.stem + ("_mtg.mp4" if montage_piece else "_reel.mp4" if reel else "_cine.mp4"))
     ctx = clip_context(demo_id, video["highlight_id"], int(video["start_tick"]), video.get("end_tick"))
     if ctx["highlight"] is None and video.get("ctx"):   # the match was deleted: what was saved with the clip
         ctx = video["ctx"]
@@ -1770,6 +1795,10 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         if hit and progress:
             progress("done (already made)", 1.0)
         video.update({"cine": path.name, "cine_path": str(path), "cine_info": info, "cache_hit": hit})
+        return video
+    if reel:
+        video["reel"] = dst.name
+        video["reel_info"] = make(dst)
         return video
     video["cine"] = dst.name
     video["cine_info"] = make(dst)

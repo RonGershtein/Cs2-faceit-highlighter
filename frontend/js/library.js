@@ -198,11 +198,29 @@
   segment('multi-min-seg', 'multi-min', () => multiPreview());
   const setOrder = segment('multi-order-seg', 'multi-order', (v) => { $('multi-order-hint').textContent = ORDER_HINT[v]; });
   setOrder('song');
+  const SLOW_HINT = { song: 'Slow motion only where a kill lands on a drop of the song.', all: 'Every kill in slow motion.', none: 'Everything at normal speed.' };
+  const setSlow = segment('multi-slow-seg', 'multi-slow', (v) => { $('multi-slow-hint').textContent = SLOW_HINT[v]; });
+  setSlow('song');
+  async function loadMontageLook() {   // the choices made last time
+    try {
+      const c = await API.getConfig();
+      setSlow(c.montage_slow || 'song');
+      $('multi-grade').value = c.cine_look === false ? 'off' : (c.cine_grade || 'teal_orange');
+      $('multi-trans').value = c.montage_transition || 'mixed';
+      $('multi-outro').checked = c.montage_outro !== false;
+      $('multi-swoop').checked = c.montage_swoop !== false;
+    } catch (_) { /* defaults */ }
+  }
+  function montageLook() {
+    const g = $('multi-grade').value;
+    return { montage_slow: $('multi-slow').value, montage_transition: $('multi-trans').value, montage_outro: $('multi-outro').checked,
+      montage_swoop: $('multi-swoop').checked, cine_look: g !== 'off', ...(g !== 'off' ? { cine_grade: g } : {}) };
+  }
   $('multi-cine').addEventListener('change', syncMultiStyle);
   $('multi-plain').addEventListener('change', syncMultiStyle);
   $('match-go').onclick = async () => {
     $('multi-msg').textContent = ''; $('multi-modal').style.display = '';
-    loadMultiMusic(); syncMultiStyle();
+    loadMultiMusic(); syncMultiStyle(); loadMontageLook();
     try { const s = await API.squad(); $('multi-team').value = s.team || ''; $('multi-intro').checked = s.intro !== false; } catch (_) { /* defaults */ }
     multiPreview();
   };
@@ -212,6 +230,7 @@
     $('multi-go').disabled = true; $('multi-msg').textContent = 'starting…';
     try {
       await API.saveTeam($('multi-team').value, $('multi-intro').checked);
+      if ($('multi-cine').checked) await API.setConfig(montageLook());   // kept as the defaults for next time
       await API.multiSquad({ demo_ids: mpicked, min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked, music: $('multi-cine').checked ? $('multi-music').value : '', order: $('multi-order').value });
       $('multi-modal').style.display = 'none'; $('multi-msg').textContent = ''; $('multi-name').value = '';
       selecting = false; mpicked = []; renderMatches(); renderBar();

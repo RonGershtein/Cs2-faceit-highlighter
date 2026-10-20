@@ -74,10 +74,19 @@ class ConfigIn(BaseModel):
     share_email: str | None = None
     share_app_password: str | None = None
     record_encoder: str | None = None
+    montage_slow: str | None = None
+    montage_swoop: bool | None = None
+    montage_outro: bool | None = None
+    montage_transition: str | None = None
+    cine_grade: str | None = None
+    cine_look: bool | None = None
 
 
 CONFIG_KEYS = ("my_steamid", "cs2_path", "watch_folder", "export_folder", "tick_step", "watch_interval", "share_email",
-               "record_encoder")
+               "record_encoder", "montage_slow", "montage_swoop", "montage_outro", "montage_transition", "cine_grade",
+               "cine_look")
+CHOICES = {"montage_slow": ("song", "all", "none"), "montage_transition": ("mixed", "whip", "zoom", "flash", "none"),
+           "cine_grade": ("classic", "teal_orange", "dark")}
 
 
 @app.get("/api/config")
@@ -105,6 +114,9 @@ def set_config(body: ConfigIn):
     changes = {k: v for k, v in body.model_dump().items() if v is not None}
     if changes.get("share_app_password") == "":
         changes.pop("share_app_password")   # an empty box keeps the saved password
+    for k, ok in CHOICES.items():
+        if k in changes and changes[k] not in ok:
+            raise HTTPException(400, f"{k} must be one of {', '.join(ok)}")
     c = cfgmod.update(**changes)
     return {**{k: c[k] for k in CONFIG_KEYS}, "share_password_set": bool(c.get("share_app_password"))}
 
@@ -427,6 +439,7 @@ def export_videos(demo_id: str):
 class CineIn(BaseModel):
     highlight_ids: list[int] | None = None   # None -> every clip without a cinematic version
     settings: dict | None = None             # cine_* options; saved to config.toml and used for this job
+    reel: bool = False                       # the 9:16 version (Shorts, Reels, TikTok) instead of the widescreen one
 
 
 @app.get("/api/cinematic/settings")
@@ -446,7 +459,8 @@ def make_cinematic_videos(demo_id: str, body: CineIn):
     from . import cinematic as cine
 
     idx = r.videos_index(demo_id)
-    todo = [v for v in idx.get("videos", []) if (body.highlight_ids is None and not v.get("cine"))
+    have = "reel" if body.reel else "cine"
+    todo = [v for v in idx.get("videos", []) if (body.highlight_ids is None and not v.get(have))
             or (body.highlight_ids is not None and v["highlight_id"] in body.highlight_ids)]
     if not todo:
         raise HTTPException(400, "no clips to process (record a highlight first)")
@@ -456,7 +470,7 @@ def make_cinematic_videos(demo_id: str, body: CineIn):
     if body.settings:
         cfgmod.update(**{k: opts[k] for k in cine.OPTION_KEYS if k in body.settings and k not in cine.PER_RUN_KEYS})
     try:
-        job = r.start_cinematic(demo_id, todo, opts)
+        job = r.start_cinematic(demo_id, todo, opts, reel=body.reel)
     except RuntimeError as e:
         raise HTTPException(409, str(e))
     return {"ok": True, "count": job["total"], "queued": job["queued"], "music": [m.name for m in cine.music_files()], "music_dir": str(cine.MUSIC_DIR)}

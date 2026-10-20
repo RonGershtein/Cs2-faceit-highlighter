@@ -74,7 +74,7 @@
       <span class="spacer"></span>
       <div class="filters">
         <div class="seg" role="group" aria-label="Show">
-          <button class="small active" data-kind="">All</button><button class="small" data-kind="cinematic">Cinematic</button><button class="small" data-kind="clip">Original</button><button class="small" data-kind="joined">Montages</button>
+          <button class="small active" data-kind="">All</button><button class="small" data-kind="cinematic">Cinematic</button><button class="small" data-kind="reel">Reels</button><button class="small" data-kind="clip">Original</button><button class="small" data-kind="joined">Montages</button>
         </div>
         <select id="clip-map-filter" aria-label="Filter highlights by map"><option value="">All maps</option></select>
         <button class="small" id="recap-open" title="your squad's plays of a month or a year in one video"><svg class="i" aria-hidden="true"><use href="#i-calendar"/></svg> Recap</button>
@@ -171,13 +171,23 @@
         <div class="seg sq-seg" role="radiogroup" aria-labelledby="multi-order-label" id="multi-order-seg"><button type="button" role="radio" data-v="song" aria-checked="true" class="active">Fit to the song</button><button type="button" role="radio" data-v="date" aria-checked="false">Match order</button></div></div>
       <p class="sq-hint" id="multi-order-hint"></p>
       <input type="hidden" id="multi-order" value="song">
+      <div class="sq-row"><span class="sq-k" id="multi-slow-label">Slow motion</span>
+        <div class="seg sq-seg" role="radiogroup" aria-labelledby="multi-slow-label" id="multi-slow-seg"><button type="button" role="radio" data-v="song" aria-checked="true" class="active">Fit to the song</button><button type="button" role="radio" data-v="all" aria-checked="false">Every play</button><button type="button" role="radio" data-v="none" aria-checked="false">None</button></div></div>
+      <p class="sq-hint" id="multi-slow-hint"></p>
+      <input type="hidden" id="multi-slow" value="song">
+      <div class="sq-row"><label class="sq-k" for="multi-grade">Colour</label><select id="multi-grade"><option value="teal_orange">Teal and orange</option><option value="classic">Punchy</option><option value="dark">Dark</option><option value="off">As recorded</option></select></div>
+      <div class="sq-row"><label class="sq-k" for="multi-trans">Between plays</label><select id="multi-trans"><option value="mixed">Mixed effects</option><option value="whip">Whip pan</option><option value="zoom">Zoom</option><option value="flash">Flash</option><option value="none">Hard cuts</option></select></div>
+      <div class="sq-toggles">
+        <label class="opt"><input type="checkbox" id="multi-intro" checked> <span>Intro card</span></label>
+        <label class="opt"><input type="checkbox" id="multi-outro" checked> <span>End card (GG and the squad)</span></label>
+        <label class="opt"><input type="checkbox" id="multi-swoop" checked> <span>Third-person swoops</span></label>
+      </div>
     </div>
   </div>
 
   <div class="sq-block sq-names">
     <div><label class="sq-label" for="multi-team">Team name</label><input type="text" id="multi-team" maxlength="40" autocomplete="off" placeholder="Squad"></div>
     <div><label class="sq-label" for="multi-name">Video name <span class="muted">optional</span></label><input type="text" id="multi-name" maxlength="80" autocomplete="off" placeholder="Squad montage"></div>
-    <label class="opt sq-intro"><input type="checkbox" id="multi-intro" checked> <span>Start with the intro card: team name, dates and the stats of the plays</span></label>
   </div>
 
   <div class="modal-foot"><span class="muted" id="multi-msg" role="status" aria-live="polite"></span><button class="primary" id="multi-go" disabled><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Create squad montage</button></div>

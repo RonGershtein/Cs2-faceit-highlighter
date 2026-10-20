@@ -441,3 +441,16 @@ def test_a_recorded_swoop_is_shown_or_skipped():
     segs = plan(keep)
     assert segs[0][0] >= 4.0                                                 # no third-person footage
     assert c.trim_out_start([(0.0, 3.0, 6.0), (3.0, 8.0, 1.0)], 4.0) == [(4.0, 8.0, 1.0)]
+
+
+def test_reel_texts_fit_a_phone_screen(tmp_path):
+    from backend.cinematic import REEL_H, REEL_SAFE_BOTTOM, REEL_SAFE_TOP, REEL_W, plan_texts
+    segs = [(0.0, 10.0, 1.0)]
+    texts, files, card = plan_texts(segs, [3.0, 6.0], width=REEL_W, height=REEL_H, title=("DOUBLE KILL", "round 5"),
+                                    counter=True, font=tmp_path / "f.ttf", tmp_base=tmp_path / "x.mp4",
+                                    card={"name": "qwqw", "photo": None}, unit=1080, safe_top=REEL_SAFE_TOP,
+                                    safe_bottom=REEL_SAFE_BOTTOM)
+    counter = [t for t in texts if t["x"].startswith("w-tw-")]
+    assert counter and int(counter[0]["y"]) == REEL_SAFE_TOP          # under the app's top bar
+    assert card["y"] + card["d"] <= REEL_H - REEL_SAFE_BOTTOM          # the player card above the caption
+    assert max(t["size"] for t in texts) <= int(1080 * 0.09)          # sized for 1080, not the 1920 height

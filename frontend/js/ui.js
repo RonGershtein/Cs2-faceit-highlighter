@@ -89,7 +89,7 @@
           <div class="actions">
             <button class="small act-play" data-i="${i}">${ic('play')} Play</button>
             <button class="small act-cs2" data-i="${i}" title="open CS2 at this moment">Open in CS2</button>
-            ${videoFor(h) ? `<button class="small act-video has-video" data-i="${i}" title="watch the recorded MP4">${ic('play')} Video</button>${videoFor(h).cine ? `<button class="small act-cine has-video" data-i="${i}" title="watch the cinematic version (slow-motion + music)">${ic('sparkles')} Cinematic</button>` : ''}` : `<button class="small act-rec" data-i="${i}" title="record only this highlight"><i class="rec-dot"></i> Rec</button>`}
+            ${videoFor(h) ? `<button class="small act-video has-video" data-i="${i}" title="watch the recorded MP4">${ic('play')} Video</button>${videoFor(h).cine ? `<button class="small act-cine has-video" data-i="${i}" title="watch the cinematic version (slow-motion + music)">${ic('sparkles')} Cinematic</button>` : ''}${videoFor(h).reel ? `<button class="small act-reel has-video" data-i="${i}" title="watch the 9:16 reel (Shorts, Instagram, TikTok)">${ic('play')} Reel</button>` : ''}` : `<button class="small act-rec" data-i="${i}" title="record only this highlight"><i class="rec-dot"></i> Rec</button>`}
             <button class="small ghost act-csdm" data-i="${i}" title="copy a CS Demo Manager sequence to the clipboard">CSDM</button>
           </div>
         </div>
@@ -130,6 +130,7 @@
       return;
     }
     if (b?.classList.contains('act-video')) { openVideo(videoFor(h)); return; }
+    if (b?.classList.contains('act-reel')) { const v = videoFor(h); openVideo({ ...v, file: v.reel, description: v.description + ' (reel)', seconds: v.reel_info?.seconds ?? v.seconds }); return; }
     if (b?.classList.contains('act-cine')) { const v = videoFor(h); openVideo({ ...v, file: v.cine, description: v.description + ' (cinematic)', seconds: v.cine_info?.seconds ?? v.seconds }); return; }
     if (b?.classList.contains('act-rec')) { startRecording([h.id]); return; }
     if (b?.classList.contains('act-csdm')) {
@@ -463,8 +464,10 @@
     document.querySelectorAll('.cine-trim-opt').forEach(el => { el.style.display = t === 'off' ? 'none' : ''; });
     document.querySelectorAll('.cine-fast-opt').forEach(el => { el.style.display = t === 'fast' ? '' : 'none'; });
   }
+  const cineReel = () => $('cine-format-reel').checked;
   function cineCounts() {
-    const nAll = videos.videos.filter(v => !v.cine).length;
+    const have = cineReel() ? 'reel' : 'cine';
+    const nAll = videos.videos.filter(v => !v[have]).length;
     const nSel = selectedHighlights().filter(h => videoFor(h)).length;
     const nCine = videos.videos.filter(v => v.cine).length;
     $('cine-n-all').textContent = nAll; $('cine-n-sel').textContent = nSel; $('cine-n-join').textContent = nCine;
@@ -537,6 +540,7 @@
   function setCineMode(mode) {
     cineFor = mode;
     $('cine-which-field').style.display = mode === 'squad' ? 'none' : '';
+    $('cine-format-field').style.display = mode === 'squad' ? 'none' : '';
     $('cine-go').innerHTML = mode === 'squad' ? `${ic('users')} Create squad montage` : `${ic('sparkles')} Create cinematic`;
     document.querySelector('#music-modal .modal-head').firstChild.textContent = mode === 'squad' ? 'Squad montage: cinematic settings ' : 'Cinematic clips ';
   }
@@ -555,6 +559,10 @@
     } catch (e) { $('cine-msg').textContent = e.message; renderMusic(); }
   };
   $('music-close').onclick = () => $('music-modal').style.display = 'none';
+  ['cine-format-wide', 'cine-format-reel'].forEach(k => $(k).addEventListener('change', () => {
+    cineCounts();
+    if (cineFor !== 'squad') $('cine-go').innerHTML = cineReel() ? `${ic('sparkles')} Create reel` : `${ic('sparkles')} Create cinematic`;
+  }));
   $('music-modal').addEventListener('click', async (e) => {
     if (e.target === $('music-modal')) $('music-modal').style.display = 'none';
     if (e.target.classList?.contains('voice-use')) e.preventDefault();   // the pill click below does the toggle
@@ -594,9 +602,10 @@
       const which = $('cine-which-sel').checked ? 'sel' : 'all';
       const ids = which === 'sel' ? selectedHighlights().filter(h => videoFor(h)).map(h => h.id) : null;
       if (ids && !ids.length) { $('cine-msg').textContent = 'select at least one recorded highlight'; return; }
-      if (!ids && !videos.videos.some(v => !v.cine)) { $('cine-msg').textContent = 'every clip already has a cinematic version'; return; }
+      const reel = cineReel();
+      if (!ids && !videos.videos.some(v => !v[reel ? 'reel' : 'cine'])) { $('cine-msg').textContent = `every clip already has a ${reel ? 'reel' : 'cinematic version'}`; return; }
       $('cine-go').disabled = true; $('cine-msg').textContent = 'starting…';
-      const r = await API.cinematic(id, ids, collectCine());
+      const r = await API.cinematic(id, ids, collectCine(), reel);
       $('cine-go').disabled = false; $('cine-msg').textContent = '';
       $('music-modal').style.display = 'none';
       toast(r.queued ? `${ic('sparkles')} Added to the queue (#${r.queued}): it starts by itself when the clip being made now is done. You can open other matches meanwhile.`

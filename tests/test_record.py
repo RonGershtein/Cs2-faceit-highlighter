@@ -180,7 +180,7 @@ def test_cinematic_queue(monkeypatch):
     import pytest
     from backend import record as r
     launched = []
-    monkeypatch.setattr(r, "_launch_cinematic", lambda d, vs, o=None: launched.append((d, [v["highlight_id"] for v in vs])) or {"total": len(vs)})
+    monkeypatch.setattr(r, "_launch_cinematic", lambda d, vs, o=None, reel=False: launched.append((d, [v["highlight_id"] for v in vs])) or {"total": len(vs)})
     monkeypatch.setattr(r, "_cine_thread", None)
     monkeypatch.setattr(r, "_cine_queue", [])
     monkeypatch.setattr(r, "_cine_job", {"demo_id": "aaa", "status": "running", "highlight_ids": [1]})
@@ -941,3 +941,20 @@ def test_montage_spaces_the_swoops_out():
     assert len(pos) >= 2                                                    # some plays swoop...
     assert all(b - a > SWOOP_GAP for a, b in zip(pos, pos[1:]))             # ...never two close together
     assert all(b - a <= 6 for a, b in zip(pos, pos[1:]))                    # one, then 3-5 without, then the next
+
+
+def test_montage_slow_motion_modes():
+    from backend.record import plan_song_order
+
+    def play(sec):
+        return [{"slow": True, "lead": None, "swoop": False, "seconds": sec + 4, "hit": 6.0},
+                {"slow": False, "lead": None, "swoop": False, "seconds": sec, "hit": None},
+                {"slow": True, "lead": None, "swoop": True, "seconds": sec + 7, "hit": 9.0},
+                {"slow": False, "lead": None, "swoop": True, "seconds": sec + 3, "hit": None}]
+    vs = [play(8 + i % 5) for i in range(10)]
+    drops = lambda off: [(t, 0.8) for t in (20.0, 45.0, 70.0)]   # noqa: E731
+    for mode, want in (("all", True), ("none", False)):
+        order, chosen, _ = plan_song_order(vs, [0.5] * 10, 0.0, lambda h: 0.0, drops, slow_mode=mode)
+        assert sorted(order) == list(range(10)) and all(c["slow"] is want for c in chosen), mode
+    _, chosen, _ = plan_song_order(vs, [0.5] * 10, 0.0, lambda h: 0.0, drops)
+    assert 0 < sum(c["slow"] for c in chosen) < 10          # "song": only the plays on a drop

@@ -3,7 +3,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const KIND = { clip: 'Original', cinematic: 'Cinematic', long: 'Long video', montage: 'Montage' };
+  const KIND = { clip: 'Original', cinematic: 'Cinematic', reel: 'Reel 9:16', long: 'Long video', montage: 'Montage' };
   const key = (c) => `${c.demo_id}/${c.file}`;
   const fmtLen = (s) => { s = Math.round(+s || 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const fmtDay = (d) => { if (!d) return ''; const x = new Date(d); return isNaN(x) ? String(d).slice(0, 10) : x.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
@@ -155,8 +155,10 @@
     const cineMode = $('tray-style').value === 'cine';
     const notPlays = cineMode ? items.filter(c => !['clip', 'cinematic'].includes(c.kind)).length : 0;
     $('tray-music').hidden = !cineMode;
-    $('tray-go').disabled = items.length < 2 || notPlays > 0 || montageRunning;
-    $('tray-go').title = notPlays ? `${notPlays} selected video${notPlays > 1 ? 's are' : ' is a'} long video${notPlays > 1 ? 's' : ''} or montage${notPlays > 1 ? 's' : ''}: those cannot be made cinematic again. Unselect them or pick "As they are".`
+    const reels = items.filter(c => c.kind === 'reel').length;   // 9:16: cannot go into a 16:9 montage
+    $('tray-go').disabled = items.length < 2 || notPlays > 0 || reels > 0 || montageRunning;
+    $('tray-go').title = reels ? `${reels} selected video${reels > 1 ? 's are reels' : ' is a reel'} (9:16 for the phone): a montage is widescreen. Unselect ${reels > 1 ? 'them' : 'it'}.`
+      : notPlays ? `${notPlays} selected video${notPlays > 1 ? 's are' : ' is a'} long video${notPlays > 1 ? 's' : ''} or montage${notPlays > 1 ? 's' : ''}: those cannot be made cinematic again. Unselect them or pick "As they are".`
       : montageRunning ? 'a montage is being made; wait for it to finish' : 'join the selected clips in this order (pick at least two)';
     $('tray-del').disabled = !items.length;
     $('tray-del').innerHTML = `${ic('trash')} Delete${items.length ? ' ' + items.length : ''}`;

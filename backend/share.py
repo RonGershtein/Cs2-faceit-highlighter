@@ -63,7 +63,7 @@ def video_info(demo_id: str, file: str) -> dict:
                 plays = [c.get("description") for c in e.get("clips", []) if c.get("description")]
         else:
             idx = json.loads((VIDEOS_DIR / demo_id / "videos.json").read_text(encoding="utf-8"))
-            e = next((v for v in idx.get("videos", []) + idx.get("long", []) if file in (v.get("file"), v.get("cine"))), None)
+            e = next((v for v in idx.get("videos", []) + idx.get("long", []) if file in (v.get("file"), v.get("cine"), v.get("reel"))), None)
             if e:
                 title = e.get("description") or title
     except (OSError, ValueError):

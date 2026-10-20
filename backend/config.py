@@ -43,6 +43,8 @@ DEFAULTS: dict = {
     "montage_beat_cuts": True, # end every montage play on a beat of the song (its tail cut a little)
     "montage_outro": True,
     "montage_lineup": True,    # the end card shows the squad: avatars, nicknames and kills of the players in the montage     # end montages with the end card: GG, the team name and the stats of the plays
+    "montage_swoop": True,     # show the third-person swoop on some plays (one, then 3-5 without)
+    "montage_slow": "song",    # slow motion in montages: "song" (where a kill lands on a drop), "all", "none"
     "montage_order": "song",   # squad montages and recaps: "song" (plays ordered to fit the song's drops) or "date"
     "record_demoui_each_demo": True,  # several demos in one CS2 session: close the demo panel again after each playdemo
     "record_hud": "killfeed",  # "killfeed": a clean picture with the kill feed only; "health_ammo": CS2's full HUD

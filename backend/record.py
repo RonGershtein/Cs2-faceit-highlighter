@@ -834,7 +834,7 @@ def delete_clips(demo_id: str, highlight_ids: list[int], downloads: bool = False
     gone = [v for v in index.get("videos", []) if v["highlight_id"] in want]
     if not gone:
         raise RuntimeError("none of the selected highlights has a recorded clip")
-    names = [n for v in gone for n in (v.get("file"), v.get("cine")) if n]
+    names = [n for v in gone for n in (v.get("file"), v.get("cine"), v.get("reel")) if n]
     removed, busy = 0, set()
     folders = [out_dir] + ([export_folder_for(demo_id)] if downloads else [])
     for folder in folders:
@@ -847,7 +847,7 @@ def delete_clips(demo_id: str, highlight_ids: list[int], downloads: bool = False
                 except (FileBusy, OSError):
                     busy.add(n)
     # a clip that is still open in a player stays listed, so deleting it again later works
-    gone = [v for v in gone if not ({v.get("file"), v.get("cine")} & busy)]
+    gone = [v for v in gone if not ({v.get("file"), v.get("cine"), v.get("reel")} & busy)]
     want = {v["highlight_id"] for v in gone}
     index["videos"] = [v for v in index.get("videos", []) if v["highlight_id"] not in want]
     (out_dir / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
@@ -1001,6 +1001,7 @@ def saved_clips() -> list[dict]:
         for v in index.get("videos", []):
             add(v.get("file"), "clip", v)
             add(v.get("cine"), "cinematic", v, (v.get("cine_info") or {}).get("seconds"))
+            add(v.get("reel"), "reel", v, (v.get("reel_info") or {}).get("seconds"))
         for lv in index.get("long", []):
             add(lv.get("file"), "long", lv)
     for m in montages_index():
@@ -1030,12 +1031,16 @@ def delete_saved(demo_id: str, name: str) -> dict:
     names: list[str] = []
     for v in list(index.get("videos", [])):
         if v.get("file") == name:
-            names += [n for n in (v.get("file"), v.get("cine")) if n]
+            names += [n for n in (v.get("file"), v.get("cine"), v.get("reel")) if n]
             index["videos"].remove(v)
         elif v.get("cine") == name:
             names.append(name)
             v.pop("cine", None)
             v.pop("cine_info", None)
+        elif v.get("reel") == name:
+            names.append(name)
+            v.pop("reel", None)
+            v.pop("reel_info", None)
     for lv in list(index.get("long", [])):
         if lv.get("file") == name:
             names.append(name)
@@ -1532,28 +1537,29 @@ def cancel_cinematic() -> dict:
     return {"ok": True, "killed": killed}
 
 
-def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = None) -> dict:
+def start_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = None, reel: bool = False) -> dict:
     """Process the given clips in a background thread; `overrides` are cine_* options on top of config.toml.
     While another job runs the request waits in a queue (any match) and starts by itself afterwards; clips that
-    are already queued or being processed are not added twice. Returns the job, with "queued": position (0 = now)."""
+    are already queued or being processed are not added twice. Returns the job, with "queued": position (0 = now).
+    reel=True makes the 9:16 versions (Shorts, Reels, TikTok) instead of the widescreen ones."""
     with _cine_lock:
         if cinematic_busy() or _cine_queue:
-            taken = {(q["demo_id"], v["highlight_id"]) for q in _cine_queue for v in q["videos"]}
+            taken = {(q["demo_id"], v["highlight_id"], q.get("reel", False)) for q in _cine_queue for v in q["videos"]}
             if cinematic_busy():
-                taken |= {(_cine_job["demo_id"], h) for h in (_cine_job.get("highlight_ids") or [])}
-            videos = [v for v in videos if (demo_id, v["highlight_id"]) not in taken]
+                taken |= {(_cine_job["demo_id"], h, _cine_job.get("reel", False)) for h in (_cine_job.get("highlight_ids") or [])}
+            videos = [v for v in videos if (demo_id, v["highlight_id"], reel) not in taken]
             if not videos:
                 raise RuntimeError("these clips are already being made or waiting in the queue")
-            _cine_queue.append({"demo_id": demo_id, "videos": videos, "overrides": overrides})
+            _cine_queue.append({"demo_id": demo_id, "videos": videos, "overrides": overrides, "reel": reel})
             return {"demo_id": demo_id, "status": "queued", "total": len(videos), "queued": len(_cine_queue)}
-        return {**_launch_cinematic(demo_id, videos, overrides), "queued": 0}
+        return {**_launch_cinematic(demo_id, videos, overrides, reel), "queued": 0}
 
 
 def _start_next_cinematic() -> None:
     with _cine_lock:
         if _cine_queue and not cinematic_busy():
             q = _cine_queue.pop(0)
-            _launch_cinematic(q["demo_id"], q["videos"], q["overrides"])
+            _launch_cinematic(q["demo_id"], q["videos"], q["overrides"], q.get("reel", False))
 
 
 def clear_cinematic_queue() -> int:
@@ -1563,11 +1569,11 @@ def clear_cinematic_queue() -> int:
         return n
 
 
-def _launch_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = None) -> dict:
+def _launch_cinematic(demo_id: str, videos: list[dict], overrides: dict | None = None, reel: bool = False) -> dict:
     global _cine_job, _cine_thread
     _cine_job = {"demo_id": demo_id, "status": "running", "total": len(videos), "done": 0, "current": videos[0]["file"],
                  "error": None, "stage": "starting", "clip_progress": 0.0, "progress": 0.0, "eta": None,
-                 "started": time.time(), "highlight_ids": [v["highlight_id"] for v in videos]}
+                 "started": time.time(), "highlight_ids": [v["highlight_id"] for v in videos], "reel": reel}
 
     def run():
         global _cine_job
@@ -1598,13 +1604,13 @@ def _launch_cinematic(demo_id: str, videos: list[dict], overrides: dict | None =
                     _cine_job.update({"stage": stage, "clip_progress": round(cp, 3), "progress": round(overall, 3),
                                       "eta": round(eta) if eta is not None else None})
                 nv = cine.cinematic_for_video(demo_id, v, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides,
-                                              progress=on_progress)
+                                              progress=on_progress, reel=reel)
                 clip_times.append(time.time() - t_clip)
                 idx = videos_index(demo_id)
                 idx["videos"] = [nv if x["highlight_id"] == nv["highlight_id"] else x for x in idx["videos"]]
                 (VIDEOS_DIR / demo_id / "videos.json").write_text(json.dumps(idx, indent=1), encoding="utf-8")
                 try:
-                    export_clips(demo_id, [{"file": nv["cine"]}])
+                    export_clips(demo_id, [{"file": nv["reel" if reel else "cine"]}])
                 except Exception:  # noqa: BLE001
                     pass
             _cine_job.update({"status": "done", "done": len(videos), "stage": "done", "progress": 1.0, "eta": 0})
@@ -2170,6 +2176,9 @@ def _plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: 
             "order": list(range(len(plays))), "note": None}
     cfg0 = load_config()
     opts0 = cine.options(cfg0, overrides)
+    slow_mode = str(cfg0.get("montage_slow", "song"))    # "song" | "all" | "none": which plays get slow motion
+    if slow_mode == "none":
+        plan["per_play"] = [{"slow": False} for _ in plays]
     if not (cfg0.get("cine_drop_slowmo", True) and len(plays) >= int(cfg0.get("cine_drop_min_plays", 6))
             and opts0.get("cine_music_sync") and float(opts0.get("cine_music_volume", 0.7)) > 0 and not opts0.get("cine_voice")):
         return plan
@@ -2177,6 +2186,8 @@ def _plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: 
     if not song:
         return plan
     variants = [play_variants(cine, demo_id, v, opts0, ffprobe) for demo_id, v in plays]
+    if not cfg0.get("montage_swoop", True):     # no third-person swoops in this montage
+        variants = [[v for v in vs if not v.get("swoop")] for vs in variants]
     curve = cine.loudness_curve(FFMPEG_EXE, song)
     drops = cine.find_drops(curve)
     start = cine.INTRO_SECONDS if intro else 0.0
@@ -2184,6 +2195,8 @@ def _plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: 
     first_hit = lambda hit, total: cine.find_drop(curve, 0.5, hit, total) - hit   # noqa: E731
     if not montage_reorders(reorder):
         picked, offset = plan_drop_slowmo(variants, start, drops, first_hit)
+        if slow_mode != "song":     # every play the same; the song still starts on the opener's drop
+            picked = [vs[0] if slow_mode == "all" else next(v for v in vs if not v["slow"]) for vs in variants]
         plan.update({"song": song, "offset": offset, "per_play": [{"slow": c["slow"], "lead": c["lead"]} for c in picked],
                      "note": f"{sum(1 for c in picked if c['slow'])} of {len(plays)} plays in slow motion, on the drops"})
         return plan
@@ -2219,7 +2232,7 @@ def _plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: 
         variants, [x / top for x in sizes], start, lambda hit: first_hit(hit, est_total),
         lambda off: song_drops_in_montage(songs, off), players=[str(v.get("player") or "") for _, v in plays],
         beats_for=lambda off: [t_ for t_, _ in song_drops_in_montage(
-            [(ps, b, [0.0] * len(b)) for (ps, _, _), b in zip(songs, song_beats)], off)])
+            [(ps, b, [0.0] * len(b)) for (ps, _, _), b in zip(songs, song_beats)], off)], slow_mode=slow_mode)
     t, hits = start, 0
     times = [d for d, _ in song_drops_in_montage(songs, offset)]
     for i in order:
@@ -2300,7 +2313,7 @@ def snap_to_beat(v: dict, t: float, beats: list[float]) -> dict:
 
 def plan_song_order(variants: list[list[dict]], scores: list[float], start: float, opener_offset, drops_for,
                     players: list[str] | None = None, tol: float = DROP_TOLERANCE,
-                    beats_for=None) -> tuple[list[int], list[dict], float]:
+                    beats_for=None, slow_mode: str = "song") -> tuple[list[int], list[dict], float]:
     """The order of a montage's plays and how each one is rendered so its slow-motion kills land on the song's
     drops, the biggest plays on the biggest drops. variants[i]: the ways play i can be rendered (as for
     plan_drop_slowmo, a normal-speed one among them); scores[i]: how big play i is, 0..1. start: where the first
@@ -2310,6 +2323,8 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
     kill within `tol` of an unused drop scores (0.5 + strength) * (0.6 + score), a bit less the further off; the
     last play scores its own size (the finale); the same player twice in a row costs a little. beats_for(offset) ->
     the soundtrack's beats in montage time: every play then ends on a beat (snap_to_beat), the cuts on the music.
+    slow_mode: "song" (slow motion only where it lands a kill on a drop), "all" (every play slow; the order still
+    puts kills on drops) or "none" (no slow motion).
     Returns (order of the play indices, the chosen variant per play index, song offset). Pure function; unit-tested."""
     import bisect
     n = len(variants)
@@ -2318,6 +2333,11 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
     normal = [next(v for v in vs if not v["slow"] and not v.get("swoop")) for vs in variants]
     swoop_normal = [next((v for v in vs if not v["slow"] and v.get("swoop")), None) for vs in variants]
     slow = [[v for v in vs if v["slow"] and v.get("hit") is not None] for vs in variants]
+    if slow_mode == "all":     # the slow default is what a play falls back to (a play with no kill stays normal)
+        normal = [vs[0] for vs in variants]
+        swoop_normal = [next((v for v in vs if v["slow"] and v.get("swoop")), sn) for vs, sn in zip(variants, swoop_normal)]
+    elif slow_mode == "none":
+        slow = [[] for _ in variants]
     # a little randomness in which plays get the third-person swoop, the same for the same plays every time
     import random as _random
     rnd = _random.Random(len(variants) * 7919 + round(sum(vs[0]["seconds"] for vs in variants) * 10))
@@ -2329,7 +2349,7 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
                      key=lambda i: -scores[i])[:ORDER_OPENERS] or [0]
     best = None
     for o in openers:
-        first = variants[o][0]
+        first = normal[o] if slow_mode == "none" else variants[o][0]
         hit0 = start + (first.get("hit") or 0.0)
         offset = max(0.0, opener_offset(hit0))
         drops = drops_for(offset)
@@ -2571,7 +2591,7 @@ def montage_plays(items: list[dict]) -> list[tuple[str, dict]]:
     plays = []
     for it in items:
         demo_id, name = str(it.get("demo_id")), str(it.get("file"))
-        v = next((v for v in videos_index(demo_id).get("videos", []) if name in (v.get("file"), v.get("cine"))), None) \
+        v = next((v for v in videos_index(demo_id).get("videos", []) if name in (v.get("file"), v.get("cine"), v.get("reel"))), None) \
             if demo_id != MONTAGE_ID else None
         if v is None:
             raise RuntimeError(f"{name} is not a highlight clip (long videos and montages cannot be made cinematic again)")
