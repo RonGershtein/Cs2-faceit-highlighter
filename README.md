@@ -22,7 +22,6 @@ Everything runs on your PC. Nothing is uploaded anywhere.
 ![a cinematic clip with the player card](docs/cinematic-frame.png)
 ![viewer](docs/viewer.png)
 ![cinematic options](docs/cinematic-options.png)
-![squad tab](docs/squad.png)
 
 ## Requirements
 
