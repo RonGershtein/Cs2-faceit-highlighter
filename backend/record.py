@@ -1807,6 +1807,15 @@ def _pin_song(overrides: dict | None) -> dict | None:
     return {**(overrides or {}), "cine_music": song.name} if song else overrides
 
 
+def _lineup_entry(cine, demo_id: str, v: dict) -> tuple[dict | None, int]:
+    """(player card, kills) of one montage play for the end card's line-up; (None, 0) when it cannot be told."""
+    try:
+        h = (v.get("ctx") or {}).get("highlight") or {"player": v.get("player_steamid"), "player_name": v.get("player")}
+        return cine.player_card(h), len(cine.video_kills(demo_id, v))
+    except (KeyError, OSError, ValueError, TypeError):
+        return None, 0
+
+
 def montage_timeline(infos: list[dict]) -> tuple[float, float | None, list[tuple[float, float]]]:
     """(total seconds, first slow-motion kill, voice-line windows) of pieces played one after the other, from the
     make_cinematic info of each piece. Pure function; unit-tested."""
@@ -2259,8 +2268,10 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             # behind the card: the last play's slow-motion kill, else a moment before its end (never a faded frame)
             hits = infos[-1].get("hits") or []
             at = float(hits[-1]) if hits else max(0.0, float(infos[-1].get("seconds") or 1.0) - 1.5)
+            squad = cine.lineup_players([_lineup_entry(cine, d_, v) for d_, v in plays]) \
+                if load_config().get("montage_lineup", True) else []
             secs = cine.make_outro(FFMPEG_EXE, ffprobe, pieces[-1], at, card, team, (intro or {}).get("stats", ""),
-                                   int(load_config().get("record_crf", 20)))
+                                   int(load_config().get("record_crf", 20)), players=squad)
             if secs:
                 pieces.append(card)
                 infos.append({"seconds": secs})

@@ -112,7 +112,8 @@ beat (its tail after the last kill is cut by up to 0.6 s), so every cut between 
 is a **transition** (whip blur, zoom punch or white flash in turn; `montage_transition`) that meets on the beat, and
 the montage opens and closes with **animated title cards**: the frame punches in and melts into a dark backdrop, an
 orange bar sweeps in, the title rises in a heavy display face (your team name at the start, **GG** at the end) with
-the plays' stats, and a light sweep crosses the screen.
+the plays' stats, and a light sweep crosses the screen. The end card also lines up the squad: everyone who appears
+in the montage pops in one by one, round avatar, nickname and kills, most kills first (`montage_lineup`).
 
 **Recap:** the **Recap** button makes one video of every recorded squad play in a month, a year or any date range.
 

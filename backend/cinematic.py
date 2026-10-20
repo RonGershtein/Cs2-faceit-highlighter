@@ -1418,19 +1418,22 @@ def fit_size(text: str, width: int, height: int, top: float, share: float = 0.86
 
 def card_args(ffmpeg: Path, src: Path, at: float, dst: Path, texts: dict, words: dict, font: Path, display: Path,
               width: int, height: int, fps: float, sample_rate: int, channels: int, crf: int, seconds: float,
-              kind: str) -> list[str]:
+              kind: str, lineup: list[dict] | None = None) -> list[str]:
     """FFmpeg command for an animated title card on one frame of `src` (at `at` s): the frame punches in and melts
     into a dark blurred backdrop that keeps drifting, an accent bar sweeps in, the big title (texts["big"], the
     display face, sized to fill the width) rises into place over its accent shadow, the accent line
     (texts["line"]) slides in, the small line (texts["small"]) fades in, and a light sweep crosses the screen.
     kind "intro" ends with a push in and a fade to black (the montage starts), "outro" with a slow fade to black.
     words: the same texts as strings (for sizing). Encoded like the montage pieces so it joins them without
-    re-encoding. Pure function; unit-tested."""
+    re-encoding. lineup (the end card): [{"photo": Path|None, "initial": textfile|None, "name": textfile, "kills":
+    textfile}] - the squad pops in under the title one by one, round avatars with their nickname and kills.
+    Pure function; unit-tested."""
     frames = max(1, round(seconds * fps))
-    big = fit_size(words["big"], width, height, 0.36 if kind == "outro" else 0.24)
+    lineup = lineup or []
+    big = fit_size(words["big"], width, height, 0.36 if kind == "outro" and not lineup else 0.24)
     line_px, small_px = round(height * 0.058), round(height * 0.036)
     bar_w, bar_h = round(width * 0.24), max(4, round(height * 0.01))
-    cy = round(height * 0.42)
+    cy = round(height * (0.26 if lineup else 0.42))
     off = max(4, round(big * 0.035))                # the accent shadow's offset
     end_fade = 0.35 if kind == "intro" else 0.6
     out_a = f"*if(gt(t,{seconds - end_fade:.2f}),max(0,({seconds:.2f}-t)/{end_fade}),1)"
@@ -1458,19 +1461,51 @@ def card_args(ffmpeg: Path, src: Path, at: float, dst: Path, texts: dict, words:
                       str(line_y), alpha=f"{_ease(0.85, 0.35)}{out_a}", color=INTRO_ACCENT),
             _drawtext(font, texts["small"], small_px, "(w-text_w)/2", str(line_y + line_px + round(height * 0.03)),
                       alpha=f"{_ease(1.25, 0.5)}{out_a}")]) + "[tx]",
-        f"[tx][shine]overlay=x='-w+(W+2*w)*min(1,max(0,(t-1.0)/0.8))':y=-h/4:eof_action=pass,"
-        f"fade=t=out:st={seconds - end_fade:.2f}:d={end_fade},format=yuv420p[v]",
+        f"[tx][shine]overlay=x='-w+(W+2*w)*min(1,max(0,(t-1.0)/0.8))':y=-h/4:eof_action=pass[sh]",
     ]
+    cur, extra = "[sh]", []
+    if lineup:
+        d = round(height * 0.14)
+        ring = d + 8
+        step = max(round(ring * 1.9), round(width * 0.12))
+        x_first = (width - step * (len(lineup) - 1)) // 2 - ring // 2
+        y_av = round(height * 0.665)
+        rgb = "r='r(X,Y)':g='g(X,Y)':b='b(X,Y)'"
+        for i, p in enumerate(lineup):
+            t0 = 1.5 + 0.25 * i
+            if p.get("photo"):
+                extra += ["-loop", "1", "-framerate", f"{fps:g}", "-t", f"{seconds:.3f}", "-i", str(p["photo"])]
+                av = (f"[{1 + len(extra) // 8}:v]scale={d}:{d}:force_original_aspect_ratio=increase,crop={d}:{d},"
+                      f"format=rgba,geq={rgb}:{_circle_alpha(d)}[av{i}]")
+            else:
+                av = f"color=c={CARD_BG}:s={d}x{d}:r={fps:g}:d={seconds:.3f},format=rgba"
+                if p.get("initial"):
+                    av += "," + _drawtext(display, p["initial"], int(d * 0.5), "(w-tw)/2", "(h-th)/2", color="white@0.9")
+                av += f",geq={rgb}:{_circle_alpha(d)}[av{i}]"
+            chain += [av,
+                      f"color=c={ACCENT}:s={ring}x{ring}:r={fps:g}:d={seconds:.3f},format=rgba,geq={rgb}:{_circle_alpha(ring)}[ring{i}]",
+                      f"[ring{i}][av{i}]overlay=4:4:format=auto,fade=t=in:st={t0:.2f}:d=0.3:alpha=1[p{i}]"]
+            cx = x_first + i * step
+            chain.append(f"{cur}[p{i}]overlay=x={cx}:y='{y_av}+{round(height * 0.04)}*(1-{_ease(t0, 0.4)})':eof_action=pass[l{i}]")
+            cur = f"[l{i}]"
+            name_y, kills_y = y_av + ring + round(height * 0.02), y_av + ring + round(height * 0.02) + round(height * 0.04)
+            col = f"{cx + ring // 2}-text_w/2"
+            chain.append(f"{cur}" + ",".join([
+                _drawtext(display, p["name"], round(height * 0.034), col, str(name_y), alpha=f"{_ease(t0 + 0.1, 0.3)}{out_a}"),
+                _drawtext(font, p["kills"], round(height * 0.026), col, str(kills_y), alpha=f"{_ease(t0 + 0.2, 0.3)}{out_a}",
+                          color=INTRO_ACCENT)]) + f"[n{i}]")
+            cur = f"[n{i}]"
+    chain.append(f"{cur}fade=t=out:st={seconds - end_fade:.2f}:d={end_fade},format=yuv420p[v]")
     layout = "stereo" if channels == 2 else "mono" if channels == 1 else f"{channels}c"
     return [str(ffmpeg), "-y", "-ss", f"{max(0.0, at):.3f}", "-i", str(src), "-f", "lavfi", "-t", f"{seconds:.3f}",
-            "-i", f"anullsrc=r={sample_rate}:cl={layout}", "-filter_complex", ";".join(chain),
+            "-i", f"anullsrc=r={sample_rate}:cl={layout}"] + extra + ["-filter_complex", ";".join(chain),
             "-map", "[v]", "-map", "1:a", "-frames:v", str(frames), "-c:v", "libx264", "-preset", "veryfast",
             "-crf", str(crf), "-pix_fmt", "yuv420p", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k",
             "-ar", str(sample_rate), "-ac", str(channels), "-movflags", "+faststart", "-t", f"{seconds:.3f}", str(dst)]
 
 
 def _make_card(ffmpeg: Path, ffprobe: Path, piece: Path, at: float, dst: Path, words: dict, crf: int, seconds: float,
-               kind: str) -> float:
+               kind: str, players: list[dict] | None = None) -> float:
     font, display = find_font(), find_display_font()
     if font is None or display is None:
         return 0.0
@@ -1481,20 +1516,51 @@ def _make_card(ffmpeg: Path, ffprobe: Path, piece: Path, at: float, dst: Path, w
         f = dst.with_name(f"{dst.stem}_{k}.txt")
         f.write_text(v or " ", encoding="utf-8")
         files[k] = f
+    lineup = []
+    for i, p in enumerate(players or []):
+        item = {"photo": p.get("photo")}
+        for k, v in (("name", p["name"]), ("kills", f"{p['kills']} kill{'s' if p['kills'] != 1 else ''}"),
+                     ("initial", (p["name"].strip()[:1] or "?").upper())):
+            f = dst.with_name(f"{dst.stem}_p{i}{k}.txt")
+            f.write_text(v, encoding="utf-8")
+            files[f"p{i}{k}"] = f
+            item[k] = f
+        if item["photo"]:
+            item["initial"] = None
+        lineup.append(item)
     try:
         r = subprocess.run(card_args(ffmpeg, piece, at, dst, files, words, font, display, info["width"], info["height"],
-                                     float(info["fps"] or 60), sr, ch, crf, seconds, kind), capture_output=True, text=True)
+                                     float(info["fps"] or 60), sr, ch, crf, seconds, kind, lineup), capture_output=True, text=True)
         return seconds if r.returncode == 0 and dst.exists() and dst.stat().st_size > 0 else 0.0
     finally:
         for f in files.values():
             f.unlink(missing_ok=True)
 
 
+LINEUP_MAX = 6
+OUTRO_LINEUP_SECONDS = 6.0
+
+
 def make_outro(ffmpeg: Path, ffprobe: Path, last_piece: Path, at: float, dst: Path, team: str, stats: str,
-               crf: int = 20) -> float:
-    """Render the animated end card (GG, the team, the stats) from the last frame; its length, 0 when it failed."""
+               crf: int = 20, players: list[dict] | None = None) -> float:
+    """Render the animated end card (GG, the team, the stats, and the squad line-up when `players` is given:
+    [{"name", "photo": Path|None, "kills"}]) over a frame of the last play; its length, 0 when it failed."""
+    players = (players or [])[:LINEUP_MAX]
     return _make_card(ffmpeg, ffprobe, last_piece, at, dst, {"big": "GG", "line": team.upper(), "small": stats},
-                      crf, OUTRO_SECONDS, "outro")
+                      crf, OUTRO_LINEUP_SECONDS if players else OUTRO_SECONDS, "outro", players)
+
+
+def lineup_players(plays: list[tuple[dict, int]]) -> list[dict]:
+    """The squad line-up of a montage from its plays [(player card {"name", "photo", "steamid"}, kills)]: each player
+    once with their kills added up, most kills first, at most LINEUP_MAX. Pure function; unit-tested."""
+    by: dict[str, dict] = {}
+    for card, kills in plays:
+        if not card:
+            continue
+        key = str(card.get("steamid") or card.get("name"))
+        p = by.setdefault(key, {"name": card.get("name") or "?", "photo": card.get("photo"), "kills": 0})
+        p["kills"] += int(kills or 0)
+    return sorted(by.values(), key=lambda p: -p["kills"])[:LINEUP_MAX]
 
 
 def probe_audio(ffprobe: Path, path: Path) -> tuple[int, int]:

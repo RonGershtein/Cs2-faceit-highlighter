@@ -39,7 +39,8 @@ DEFAULTS: dict = {
     "cine_drop_min_plays": 6,  # from how many plays on
     "montage_transition": "mixed",  # between montage plays: "mixed" (whip, zoom, flash in turn), "whip", "zoom", "flash", "none"
     "montage_beat_cuts": True, # end every montage play on a beat of the song (its tail cut a little)
-    "montage_outro": True,     # end montages with the end card: GG, the team name and the stats of the plays
+    "montage_outro": True,
+    "montage_lineup": True,    # the end card shows the squad: avatars, nicknames and kills of the players in the montage     # end montages with the end card: GG, the team name and the stats of the plays
     "montage_order": "song",   # squad montages and recaps: "song" (plays ordered to fit the song's drops) or "date"
     "record_demoui_each_demo": True,  # several demos in one CS2 session: close the demo panel again after each playdemo
     "record_hud": "killfeed",  # "killfeed": a clean picture with the kill feed only; "health_ammo": CS2's full HUD

@@ -800,7 +800,7 @@ def test_song_montage_ends_with_the_gg_card(tmp_path, monkeypatch):
         dst.write_bytes(b"c")
         return 3.5
 
-    def outro(ffmpeg, ffprobe, piece, at, dst, team, stats, crf=20):
+    def outro(ffmpeg, ffprobe, piece, at, dst, team, stats, crf=20, players=None):
         cards.append((piece.name, at, "GG", team, stats))
         dst.write_bytes(b"c")
         return 4.5
@@ -863,3 +863,13 @@ def test_a_recording_cut_off_early_is_marked_and_recorded_again(tmp_path, monkey
     assert r.is_recorded(r.check_length({"file": "x.mp4", "seconds": 67.2}, tmp_path / "x.mp4"))
     monkeypatch.setattr(r, "clip_seconds", lambda p: 0.0)           # could not measure: trust it
     assert r.is_recorded(r.check_length({"file": "x.mp4", "seconds": 67.2}, tmp_path / "x.mp4"))
+
+
+def test_lineup_adds_up_each_players_kills():
+    from backend.cinematic import lineup_players
+    a = {"name": "invis", "photo": None, "steamid": "1"}
+    b = {"name": "Ldr", "photo": "ldr.png", "steamid": "2"}
+    got = lineup_players([(a, 3), (b, 4), (a, 2), (None, 5)])
+    assert [(p["name"], p["kills"]) for p in got] == [("invis", 5), ("Ldr", 4)] and got[1]["photo"] == "ldr.png"
+    many = [({"name": f"p{i}", "steamid": str(i)}, i) for i in range(9)]
+    assert len(lineup_players(many)) == 6 and lineup_players(many)[0]["name"] == "p8"
