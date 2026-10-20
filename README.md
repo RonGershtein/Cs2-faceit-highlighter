@@ -169,8 +169,9 @@ highlights you ticked (those are remade). Takes ~10-20 s per clip
 - **Effects:** zoom punch and flash on each kill, vignette, fade in/out, and a **colour grade**: *teal & orange*
   (film contrast, warm highlights, teal shadows), *dark cinematic* (crushed blacks, less colour, cool) or *classic*.
   The grades are 3D LUTs the app makes itself (`data/luts/`).
-- **Clutch odds:** from the moment the clutch starts (the last teammate down), a big **1v3** at the top left counts
-  down with each kill, with the round and the score from your side under it. The title names the play by its kills
+- **Clutch odds:** the moment the clutch starts (the last teammate down), a huge **1v3** slams into the middle of the
+  screen over a dimmed picture, holds with the round and the score from your side, then shrinks and flies to the top
+  left, where it counts down with each kill. The title names the play by its kills
   (TRIPLE KILL, QUAD KILL, ACE).
 - **Text:** a title card for the first seconds (TRIPLE KILL / ACE / 1v3 CLUTCH, then "3K · map · round") and a kill counter.
   Uses Bahnschrift or Arial from Windows; drop any `.ttf` into `assets/fonts/` to use that instead.

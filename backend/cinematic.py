@@ -729,7 +729,8 @@ def _fesc(s: str) -> str:
 
 def _drawtext(font: Path, textfile: Path, size: int, x: str, y: str, alpha: str | None = None,
               enable: str | None = None, color: str = "white") -> str:
-    o = [f"fontfile={_fesc(font)}", f"textfile={_fesc(textfile)}", "expansion=none", f"fontsize={size}",
+    o = [f"fontfile={_fesc(font)}", f"textfile={_fesc(textfile)}", "expansion=none",
+         f"fontsize={_fesc(size) if isinstance(size, str) else size}",
          f"fontcolor={color}", "borderw=2", "bordercolor=black@0.55", "shadowx=2", "shadowy=2", "shadowcolor=black@0.5",
          f"x={_fesc(x)}", f"y={_fesc(y)}"]
     if alpha:
@@ -837,7 +838,9 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
         parts += _card_chain(card, fps)
         parts.append(f"{cur}[card]overlay=x={card['x']}:y={card['y']}:eof_action=pass[vcard]")
         cur = "[vcard]"
-    post = [_drawtext(t["font"], t["file"], t["size"], t["x"], t["y"], t.get("alpha"), t.get("enable")) for t in texts]
+    post = [t["raw"] if "raw" in t else
+            _drawtext(t["font"], t["file"], t["size"], t["x"], t["y"], t.get("alpha"), t.get("enable"), t.get("color", "white"))
+            for t in texts]
     if fade and not edge_in:
         post.append("fade=t=in:st=0:d=0.5")
     if fade and not edge_out:
@@ -965,18 +968,81 @@ def plan_texts(segs: list[Seg], kills: list[float], *, width: int, height: int, 
         if start is None:   # not known (an old clip of a deleted match): the last n kills are the clutch
             start = max(0.0, ks[-n] - 1.5) if len(ks) >= n else 0.0
         ks = [k for k in ks if k >= start - 0.01]
-        for state in clutch_states(n, [out_time(segs, k) for k in ks], total_duration(segs), out_time(segs, start)):
-            texts.append({"font": font, "file": tf(state["text"]), "size": int(h * 0.09), "x": str(int(h * 0.05)),
-                          "y": str(int(h * 0.05)), "alpha": f"min(1,(t-{state['from']:.3f})/0.12)",
-                          "enable": f"between(t,{state['from']:.3f},{state['to']:.3f})"})
+        kills_out = [out_time(segs, k) for k in ks]
+        a = out_time(segs, start)
+        big = find_display_font() or font
+        small_px, x0, y0 = int(h * 0.09), int(h * 0.05), int(h * 0.05)
         sc = clutch.get("score")
         line = "  ·  ".join(x for x in (f"ROUND {clutch['round']}" if clutch.get("round") else "",
                                          f"{sc[0]}–{sc[1]}" if sc else "") if x)
+        # the announcement: 1vN slams in at the middle, holds, then flies to the top left where the counter goes on
+        an = clutch_announcement(a, kills_out, total_duration(segs))
+        if an:
+            hold, fly = an["hold"], an["fly"]
+            word = tf(f"1v{n}")
+            for t_ in announcement_texts(a, hold, fly, big, word, width, h, small_px, x0, y0):
+                texts.append(t_)
+            if line:
+                texts.append({"font": font, "file": tf(line), "size": int(h * 0.03), "x": "(w-text_w)/2",
+                              "y": f"(h/2)+{int(h * 0.13)}", "alpha": f"min(1,(t-{a + 0.25:.3f})/0.2)*min(1,({hold:.3f}-t)/0.12)",
+                              "enable": f"between(t,{a + 0.25:.3f},{hold:.3f})"})
+            counter_from = fly
+        else:
+            counter_from = a
+        for state in clutch_states(n, kills_out, total_duration(segs), a):
+            frm = max(state["from"], counter_from)
+            if state["to"] - frm < 0.05:
+                continue
+            texts.append({"font": big, "file": tf(state["text"]), "size": small_px, "x": str(x0), "y": str(y0),
+                          "alpha": "1" if frm == counter_from and an else f"min(1,(t-{frm:.3f})/0.12)",
+                          "enable": f"between(t,{frm:.3f},{state['to']:.3f})"})
         if line:
-            texts.append({"font": font, "file": tf(line), "size": int(h * 0.024), "x": str(int(h * 0.05)),
-                          "y": str(int(h * 0.05) + int(h * 0.09) + 2), "alpha": "0.85",
-                          "enable": f"gte(t,{out_time(segs, start):.3f})"})
+            texts.append({"font": font, "file": tf(line), "size": int(h * 0.024), "x": str(x0),
+                          "y": str(y0 + small_px + 2), "alpha": f"0.85*min(1,(t-{counter_from:.3f})/0.25)",
+                          "enable": f"gte(t,{counter_from:.3f})"})
     return texts, files, card_spec
+
+
+ANNOUNCE_HOLD, ANNOUNCE_FLY = 1.1, 0.3
+
+
+def clutch_announcement(a: float, kills_out: list[float], total: float) -> dict | None:
+    """When the centred 1vN announcement holds and when it has flown to the corner: {"hold": end of the hold,
+    "fly": end of the flight}. It gets out of the way of the clutch's first kill, and is left out when there is
+    no room for it (less than half a second). Pure function; unit-tested."""
+    nxt = min([k for k in kills_out if k > a + 0.05] + [total])
+    hold = min(a + ANNOUNCE_HOLD, nxt - 0.1)
+    if hold - a < 0.5:
+        return None
+    return {"hold": round(hold, 3), "fly": round(min(hold + ANNOUNCE_FLY, total), 3)}
+
+
+def announcement_texts(a: float, hold: float, fly: float, font: Path, word: Path, width: int, h: int,
+                       small_px: int, x0: int, y0: int) -> list[dict]:
+    """The drawtext/drawbox steps of the 1vN announcement: the picture dips, the number slams in from 1.6x with an
+    orange/cyan split for a moment and an accent shadow, holds in the middle, then shrinks and flies to the corner
+    (x0, y0, small_px) where the counter takes over. Pure function; unit-tested."""
+    big = int(h * 0.26)
+    off = max(4, int(big * 0.035))
+    d = max(0.05, fly - hold)
+    slam = f"(1-pow(1-min(1,max(0,(t-{a:.3f})/0.25)),3))"          # 0 -> 1 as it lands
+    go = f"(1-pow(1-min(1,max(0,(t-{hold:.3f})/{d:.3f})),3))"       # 0 -> 1 as it flies
+    size = f"if(lt(t,{hold:.3f}),{big}*(1+0.6*(1-{slam})),{big}+({small_px}-{big})*{go})"
+    x = f"if(lt(t,{hold:.3f}),(w-text_w)/2,(w-text_w)/2*(1-{go})+{x0}*{go})"
+    y = f"if(lt(t,{hold:.3f}),(h-text_h)/2,(h-text_h)/2*(1-{go})+{y0}*{go})"
+    on = f"between(t,{a:.3f},{fly:.3f})"
+    split = f"between(t,{a:.3f},{a + 0.18:.3f})"
+    fade = f"max(0,1-(t-{a:.3f})/0.18)*0.8"
+    return [
+        {"raw": f"drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill:enable='between(t,{a:.3f},{hold:.3f})'"},
+        {"font": font, "file": word, "size": size, "x": f"{x}-{int(h * 0.016)}", "y": y, "alpha": fade, "enable": split,
+         "color": "0x22D3EE"},
+        {"font": font, "file": word, "size": size, "x": f"{x}+{int(h * 0.016)}", "y": y, "alpha": fade, "enable": split,
+         "color": INTRO_ACCENT},
+        {"font": font, "file": word, "size": size, "x": f"{x}+{off}*(1-{go})", "y": f"{y}+{off}*(1-{go})",
+         "alpha": "0.95", "enable": on, "color": INTRO_ACCENT},
+        {"font": font, "file": word, "size": size, "x": x, "y": y, "alpha": f"min(1,(t-{a:.3f})/0.08)", "enable": on},
+    ]
 
 
 def clutch_states(n: int, kills_out: list[float], total: float, start: float = 0.0) -> list[dict]:

@@ -329,8 +329,19 @@ def test_plan_texts_put_the_clutch_odds_top_left(tmp_path):
                                    font=tmp_path / "f.ttf", tmp_base=tmp_path / "o.mp4",
                                    clutch={"n": 2, "round": 8, "score": (7, 4)})
     words = [p.read_text(encoding="utf-8") for p in files]
-    assert words == ["1v2", "1v1", "ROUND 8  ·  7–4"]
-    assert all(t["x"] == "54" for t in texts)
+    # the announcement word, its round line in the middle, then the corner counter and its line
+    assert words == ["1v2", "ROUND 8  ·  7–4", "1v2", "1v1", "ROUND 8  ·  7–4"]
+    assert texts[0]["raw"].startswith("drawbox") and sum(1 for t in texts if t.get("enable") == "between(t,1.500,2.900)") == 2
+    corner = [t for t in texts if t.get("x") == "54"]
+    assert len(corner) == 3 and corner[0]["enable"] == "between(t,2.900,3.000)"   # the counter takes over after the flight
+
+
+def test_clutch_announcement_makes_room_for_the_first_kill():
+    assert c.clutch_announcement(2.0, [5.0], 20.0) == {"hold": 3.1, "fly": 3.4}
+    assert c.clutch_announcement(2.0, [2.8], 20.0) == {"hold": 2.7, "fly": 3.0}     # a kill comes soon: it leaves early
+    assert c.clutch_announcement(2.0, [2.3], 20.0) is None                           # no room: the counter only
+    ts = c.announcement_texts(2.0, 3.1, 3.4, Path("d.ttf"), Path("w.txt"), 1920, 1080, 97, 54, 54)
+    assert "if(lt(t,3.100)" in ts[-1]["size"] and ts[1]["color"] == "0x22D3EE" and ts[2]["color"] == c.INTRO_ACCENT
 
 
 def test_track_beats_finds_a_steady_beat():
