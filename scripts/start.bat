@@ -1,8 +1,10 @@
 @echo off
 title CS2 Highlighter
-rem Same as "CS2 Highlighter.exe", but in a console window (handy for seeing errors live).
-call "%~dp0scripts\check_folder.bat" "%~dp0" || ( pause & exit /b 1 )
-cd /d "%~dp0"
+rem Same as "CS2 Highlighter.exe", but in a console window (handy for seeing errors live, or when the exe is blocked).
+rem Lives in scripts\; everything runs from the app folder one level up.
+for %%I in ("%~dp0..") do set "APPROOT=%%~fI"
+call "%~dp0check_folder.bat" "%APPROOT%" || ( pause & exit /b 1 )
+cd /d "%APPROOT%"
 call scripts\ensure_uv.bat || ( pause & exit /b 1 )
 set "FIRST="
 if not exist ".venv\Scripts\python.exe" set "FIRST=1"

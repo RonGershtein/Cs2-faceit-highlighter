@@ -8,7 +8,7 @@
 #   make update    git pull + reinstall dependencies
 #   make shortcut  put a "CS2 Highlighter" icon on the Desktop (Windows)
 #   make clean     remove the Python env and caches (keeps your data)
-# On Windows without make, use:  cs2w.bat <same command>
+# On Windows without make, use:  scripts\cs2w.bat <same command>
 
 # Python and the dependencies come from uv (https://docs.astral.sh/uv/) and uv.lock.
 UV ?= uv

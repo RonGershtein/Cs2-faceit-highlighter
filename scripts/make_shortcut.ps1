@@ -6,7 +6,7 @@ $shell = New-Object -ComObject WScript.Shell
 $s = $shell.CreateShortcut($lnk)
 $exe = Join-Path $root 'CS2 Highlighter.exe'
 if (Test-Path $exe) { $s.TargetPath = $exe; $s.WindowStyle = 1 }   # the launcher: no console, lives in the tray
-else { $s.TargetPath = Join-Path $root 'start.bat'; $s.WindowStyle = 7 }   # minimized console window
+else { $s.TargetPath = Join-Path $root 'scripts\start.bat'; $s.WindowStyle = 7 }   # minimized console window
 $s.WorkingDirectory = $root
 $s.IconLocation = (Join-Path $root 'assets\icon.ico') + ',0'
 $s.Description = 'CS2 FACEIT Highlighter'

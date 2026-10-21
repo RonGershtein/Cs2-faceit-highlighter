@@ -879,7 +879,7 @@ namespace Cs2Highlighter
             {
                 if (!first || PortOpen(port))
                 {
-                    // already running (this launcher, or start.bat): just bring up the page
+                    // already running (this launcher, or scripts\start.bat): just bring up the page
                     if (PortOpen(port)) Proc.Open("http://localhost:" + port);
                     return 0;
                 }

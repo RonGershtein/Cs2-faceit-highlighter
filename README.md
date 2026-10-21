@@ -51,23 +51,24 @@ HLAE and FFmpeg are downloaded by the app itself when you first click **Install 
    double-click it to open the page again, right-click → **Quit CS2 Highlighter** to stop it.
    From now on just double-click the Desktop icon.
 
-`start.bat` still works and does the same in a console window (handy for seeing errors live).
+**If the exe does not start** (an antivirus blocks it, or it closes right away): open the `scripts` folder and double-click
+**`start.bat`**. It does the same in a console window, where you can also see what went wrong.
 
 ### Commands
 
-Everything can also be done from a terminal. `make` on Linux/macOS/WSL, `cs2w.bat` on Windows (same commands):
+Everything can also be done from a terminal. `make` on Linux/macOS/WSL, `scripts\cs2w.bat` on Windows (same commands):
 
 | command | what it does |
 |---|---|
-| `make install` / `cs2w install` | install Python + the locked dependencies with uv, download radars |
-| `make run` / `cs2w run` | start the app |
-| `make doctor` / `cs2w doctor` | check Python, dependencies, config, CS2 path, HLAE/FFmpeg, disk |
-| `make tools` / `cs2w tools` | download HLAE + FFmpeg for recording (same as the button in the app) |
-| `make test` / `cs2w test` | run the unit tests |
-| `make parse DEMO=x.dem.zst` / `cs2w parse x.dem.zst` | parse one demo from the CLI |
-| `make shortcut` / `cs2w shortcut` | (re)create the Desktop icon |
-| `make update` / `cs2w update` | `git pull` + reinstall dependencies |
-| `make clean` / `cs2w clean` | remove the Python env (keeps your data) |
+| `make install` / `scripts\cs2w install` | install Python + the locked dependencies with uv, download radars |
+| `make run` / `scripts\cs2w run` | start the app |
+| `make doctor` / `scripts\cs2w doctor` | check Python, dependencies, config, CS2 path, HLAE/FFmpeg, disk |
+| `make tools` / `scripts\cs2w tools` | download HLAE + FFmpeg for recording (same as the button in the app) |
+| `make test` / `scripts\cs2w test` | run the unit tests |
+| `make parse DEMO=x.dem.zst` / `scripts\cs2w parse x.dem.zst` | parse one demo from the CLI |
+| `make shortcut` / `scripts\cs2w shortcut` | (re)create the Desktop icon |
+| `make update` / `scripts\cs2w update` | `git pull` + reinstall dependencies |
+| `make clean` / `scripts\cs2w clean` | remove the Python env (keeps your data) |
 
 ### First-time setup (2 minutes)
 
@@ -231,7 +232,7 @@ rendered montage plays, the demo copies in the CS2 folder and leftover raw recor
 something is recording or rendering. Clips and montages are deleted in the Highlights tab, matches with their ✕.
 
 ### Config file
-`config.toml` is created next to `start.bat` on first run. Most of it is editable from Settings; the rest:
+`config.toml` is created next to `CS2 Highlighter.exe` on first run. Most of it is editable from Settings; the rest:
 
 | key | default | meaning |
 |---|---|---|
@@ -266,7 +267,8 @@ Restart the app after editing the file by hand.
 - **A demo stays at "parsing"**: look at the log for the error (tray icon → **Show log**, or `data\server.log`); remove the match and drop it again.
 - **Setup failed**: the launcher offers to open `data\setup.log`; usually it is the internet connection. Run the exe again to retry.
 - **"This folder is on a network path"**: the repo lives in WSL or on a share. Clone or copy it to a Windows folder such as `C:\cs2-highlighter` and start it from there.
-- **Something else is off**: run `cs2w doctor` (or `make doctor`); it lists what is missing and how to fix it.
+- **The exe does nothing or is blocked**: run `scripts\start.bat` instead; its console window shows the error.
+- **Something else is off**: run `scripts\cs2w doctor` (or `make doctor`); it lists what is missing and how to fix it.
 
 ## Safety
 
@@ -288,8 +290,9 @@ python -m backend.ingest path/to/match.dem.zst   # parse one demo from the CLI
 CS2 Highlighter.exe      Windows launcher: missing-downloads popup, first-run setup, starts run.py hidden, tray icon
 launcher/Launcher.cs     its source; rebuild with scripts\build_launcher.bat (uses the C# compiler built into Windows)
 pyproject.toml / uv.lock dependencies and their exact tested versions; .python-version pins 3.12
-scripts/ensure_uv.bat    downloads uv into tools\uv for start.bat / cs2w.bat (launcher does the same itself)
-run.py / start.bat       start the server (+ browser); cs2w.bat and Makefile wrap the common commands
+scripts/ensure_uv.bat    downloads uv into tools\uv for scripts\start.bat / scripts\cs2w.bat (launcher does the same itself)
+run.py                   starts the server (+ browser); scripts\start.bat is the exe's fallback in a console window,
+                         scripts\cs2w.bat and the Makefile wrap the common commands
 scripts/doctor.py        environment check; scripts/fetch_tools.py downloads HLAE + FFmpeg; scripts/make_shortcut.ps1 Desktop icon
 backend/app.py           FastAPI routes, static frontend
 backend/ingest.py        decompress → parse → artifacts → highlights → sqlite; watch folder

@@ -30,7 +30,7 @@ def main() -> int:
             importlib.import_module(mod)
             report(OK, f"module {mod}")
         except Exception as e:  # noqa: BLE001
-            report(BAD, f"module {mod}: {e}  -> run: make install  (or cs2w install)")
+            report(BAD, f"module {mod}: {e}  -> run: make install  (or scripts\\cs2w install)")
 
     from backend import config as cfgmod
     from backend.maps import DEFAULT_MAPS
@@ -51,8 +51,8 @@ def main() -> int:
         cs2 = find_cs2_path()
         report(OK if cs2 else WARN, f"CS2 install: {cs2 or 'not found (set cs2_path in Settings)'}")
         st = record.tools_status()
-        report(OK if st["hlae"] else WARN, "HLAE " + ("installed" if st["hlae"] else "missing (make tools / cs2w tools, or the button in the app)"))
-        report(OK if st["ffmpeg"] else WARN, "FFmpeg " + ("installed" if st["ffmpeg"] else "missing (make tools / cs2w tools)"))
+        report(OK if st["hlae"] else WARN, "HLAE " + ("installed" if st["hlae"] else "missing (make tools / scripts\\cs2w tools, or the button in the app)"))
+        report(OK if st["ffmpeg"] else WARN, "FFmpeg " + ("installed" if st["ffmpeg"] else "missing (make tools / scripts\\cs2w tools)"))
         if " " in str(cfgmod.ROOT):
             report(WARN, f"project path contains spaces ({cfgmod.ROOT}); recording uses a fallback folder, prefer a path without spaces")
     else:
