@@ -734,7 +734,8 @@ async def upload_music(file: UploadFile = File(...)):
             if not chunk:
                 break
             out.write(chunk)
-    # find its beats and drops now, so the song editor opens at once and the first video using it does not wait
+    # cut the silence off its ends and find its beats and drops now, so the song editor opens at once and the first
+    # video using it does not wait
     threading.Thread(target=_analyze_quietly, args=(dst,), daemon=True, name="song-analysis").start()
     return {"ok": True, "file": name}
 
@@ -753,6 +754,7 @@ def _analyze_quietly(path: Path) -> None:
 
     try:
         if FFMPEG_EXE.exists():
+            songs.trim_silence(FFMPEG_EXE, path)   # analyses it on the way
             songs.analyze(FFMPEG_EXE, path)
     except Exception:  # noqa: BLE001
         pass   # the song editor or the next video analyses it again and reports what is wrong

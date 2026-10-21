@@ -264,3 +264,11 @@ def test_a_song_can_leave_random_picks(tmp_path, monkeypatch):
     assert not songs.in_random("a.mp3")
     songs.set_in_random("a.mp3", True)
     assert songs.in_random("a.mp3") and not (tmp_path / "marks.json").read_text().strip("{}\n ")
+
+
+def test_silence_edges_cut_silence_but_never_quiet_music():
+    wave = [0.0] * 30 + [0.05] * 40 + [1.0] * 500 + [0.2] * 10 + [0.0] * 90   # 3 s silence, soft intro, 9 s silence
+    a, b = songs.silence_edges(wave, len(wave) * 0.1)
+    assert abs(a - 2.85) < 1e-6 and abs(b - 58.5) < 1e-6                    # the soft intro and the fade-out stay
+    assert songs.silence_edges([0.5] * 100, 10.0) is None                    # nothing to cut
+    assert songs.silence_edges([0.0] * 100, 10.0) is None                    # all silent: leave it alone

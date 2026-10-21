@@ -432,6 +432,43 @@ def analyze(ffmpeg: Path, path: Path) -> dict | None:
     return info
 
 
+SILENCE = 0.03      # of the song's loudest moment (waveform): below this is silence, not quiet music
+
+
+def silence_edges(wave: list[float], duration: float, step: float = WAVE_STEP) -> tuple[float, float] | None:
+    """(start, end) of a song without the silence before and after it (a downloaded video's black start or minutes of
+    nothing at the end), keeping 0.15 s before the first sound and 0.5 s after the last so a fade-out stays whole.
+    None when there is nothing worth cutting (under 0.8 s at the start and 1.5 s at the end). Quiet music, a soft
+    intro, is never cut. Pure function; unit-tested."""
+    on = [i for i, v in enumerate(wave) if v > SILENCE]
+    if not on:
+        return None
+    a = max(0.0, on[0] * step - 0.15)
+    b = min(duration, (on[-1] + 1) * step + 0.5)
+    if a < 0.8 and duration - b < 1.5:
+        return None
+    return round(a, 2), round(b, 2)
+
+
+def trim_silence(ffmpeg: Path, path: Path) -> tuple[float, float] | None:
+    """Cut the silence off both ends of a song file in place (stream copy, no quality loss); returns the seconds cut
+    (start, end), or None when there was nothing to cut or it could not be done (the file is then left as it was)."""
+    info = analyze(ffmpeg, path)
+    edges = silence_edges(info["wave"], info["duration"]) if info else None
+    if not edges:
+        return None
+    a, b = edges
+    tmp = path.with_name(path.stem + ".trimming" + path.suffix)
+    r = subprocess.run([str(ffmpeg), "-v", "error", "-y", "-ss", f"{a:.2f}", "-i", str(path), "-t", f"{b - a:.2f}",
+                        "-c", "copy", "-map_metadata", "0", str(tmp)], capture_output=True)
+    if r.returncode != 0 or not tmp.is_file() or tmp.stat().st_size < 0.5 * path.stat().st_size * (b - a) / info["duration"]:
+        tmp.unlink(missing_ok=True)
+        return None
+    tmp.replace(path)
+    analyze(ffmpeg, path)                  # the trimmed file is a new file: analysed (and cached) again
+    return round(a, 2), round(info["duration"] - b, 2)
+
+
 def main_drop(info: dict, hit: float, clip_len: float) -> float | None:
     """The drop a single clip starts its song on: the strongest one that leaves `hit` seconds of song before it and
     lasts to the end of the clip. Pure function; unit-tested."""
