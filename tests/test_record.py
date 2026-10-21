@@ -549,7 +549,9 @@ def test_find_drops_and_clip_timing():
     assert len(drops) == 2 and abs(drops[0] - 20.0) <= 1.0 and abs(drops[1] - 45.0) <= 1.0
     opts = {"cine_slow": 0.5, "cine_kills": "all", "cine_trim": "off", "cine_ramp": False}
     slow, normal = clip_timing([5.0], 10.0, opts), clip_timing([5.0], 10.0, {**opts, "_no_slow": True})
-    assert normal == {"seconds": 10.0, "hit": None, "tail": 5.0} and slow["seconds"] > 10.0 and slow["hit"] > 5.0
+    assert {k: normal[k] for k in ("seconds", "hit", "tail")} == {"seconds": 10.0, "hit": None, "tail": 5.0}
+    assert normal["outs"] == [5.0] and normal["slows"] == [False]
+    assert slow["seconds"] > 10.0 and slow["hit"] > 5.0 and slow["slows"] == [True]
     moved = clip_timing([5.0], 10.0, {**opts, "_lead": 2.0})                 # start 3 s in: the kill comes 3 s sooner
     assert abs(moved["hit"] - (slow["hit"] - 3.0)) < 1e-6
 

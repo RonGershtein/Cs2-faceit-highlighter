@@ -450,6 +450,50 @@ button.primary .rec-dot { background: var(--accent-ink); }
 .cine-grid .field .row input[type=range] { flex: 1 1 110px; min-width: 110px; }
 .cine-grid .field .row select { flex: 1; min-width: 0; }
 #music-dir, #voice-dir { overflow-wrap: anywhere; min-width: 0; }
+.dropzone.dz-music { margin-bottom: 10px; padding: 14px 18px; }
+.mu-list { display: flex; flex-wrap: wrap; gap: 4px; font-size: var(--fs-s); }
+.mu-list .pill { font-weight: 400; max-width: 100%; padding: 2px 4px 2px 10px; gap: 2px; background: var(--bg-4); }
+.mu-list .pill .pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.mu-list .pill button { padding: 1px 6px; }
+.mu-list .pill .song-open { padding: 0; background: none; font: inherit; color: inherit; cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { .mu-list .pill .song-open:hover { color: var(--accent-hi); } }
+.mu-list .pill.off { opacity: .55; }
+.punch { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; margin-right: 4px; }
+.punch b { width: 3px; background: var(--bg-5); }
+.punch b:nth-child(1) { height: 5px; } .punch b:nth-child(2) { height: 8px; } .punch b:nth-child(3) { height: 12px; }
+.punch b.on { background: var(--accent); }
+.song-random { margin: 0; }
+/* sound effect slots (Settings) */
+.fx-slots { display: grid; gap: 2px; background: var(--bg-2); padding: 4px; clip-path: var(--chamfer-s); }
+.fx-slot { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 10px; align-items: center; padding: 8px 8px 8px 12px; background: var(--bg-3); cursor: pointer; outline: 2px dashed transparent; outline-offset: -2px; transition: outline-color 150ms ease, background-color 150ms ease; }
+.fx-slot.over { outline-color: var(--accent); background: var(--bg-4); }
+@media (hover: hover) and (pointer: fine) { .fx-slot:hover { background: var(--bg-4); } }
+.fx-slot:focus-visible { outline-color: var(--accent); }
+.fx-text { display: grid; gap: 1px; min-width: 0; font-size: var(--fs-s); }
+.fx-text b { color: var(--text); font-weight: 600; }
+.fx-text span { color: var(--muted); }
+.fx-file { font-size: var(--fs-s); color: var(--muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-file.mine { color: var(--accent-hi); }
+.fx-slot button { padding: 4px 8px; }
+/* the song editor */
+.song-box { display: grid; gap: 12px; }
+.song-box .modal-head { margin-bottom: 0; }
+.song-meta { font-size: var(--fs-s); color: var(--text-2); }
+.song-meta b { color: var(--text); }
+.song-wave { position: relative; }
+.song-wave canvas { display: block; width: 100%; height: 170px; cursor: pointer; clip-path: var(--chamfer-s); touch-action: none; }
+.song-wave canvas:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.song-tip { position: absolute; top: 2px; padding: 1px 6px; font-size: 12px; font-variant-numeric: tabular-nums; background: var(--bg-5); color: var(--text); pointer-events: none; }
+.song-legend { display: flex; gap: 18px; font-size: 12px; color: var(--muted); }
+.song-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.song-legend i { display: inline-block; width: 12px; height: 12px; }
+.song-legend .lg-drop { width: 3px; background: var(--accent); }
+.song-legend .lg-auto { width: 0; border-left: 1px dashed var(--muted); }
+.song-legend .lg-bar { width: 2px; height: 6px; background: var(--bg-5); }
+.song-legend .lg-used { background: var(--bg-4); }
+.song-bar { display: flex; gap: 14px; align-items: center; }
+.song-time { font-size: var(--fs-s); font-variant-numeric: tabular-nums; color: var(--text-2); min-width: 86px; }
+.song-help { flex: 1; line-height: 1.45; }
 #music-list { display: flex; flex-wrap: wrap; gap: 4px; font-size: var(--fs-s); }
 .cine-slots { gap: 8px; margin: 2px 0 8px; grid-template-columns: repeat(3, 1fr); }
 .cine-slot { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 10px 12px; background: var(--bg-4); clip-path: var(--chamfer-s); align-content: start; min-width: 0; }

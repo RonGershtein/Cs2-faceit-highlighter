@@ -217,16 +217,50 @@
     <div class="hint" id="cfg-enc-hint">The graphics card's encoder leaves the CPU to the game, so recording goes faster.</div></div>
   <div class="field"><label for="cfg-cs2">CS2 install path (optional)</label><div class="row"><input type="text" id="cfg-cs2" name="cs2-path" autocomplete="off" spellcheck="false" placeholder="Auto-detected from Steam…"><button class="browse" data-for="cfg-cs2" data-title="Select the 'Counter-Strike Global Offensive' folder">Browse…</button></div></div>
   <div class="modal-foot"><span class="muted" id="cfg-msg" role="status" aria-live="polite"></span><button class="primary" id="cfg-save">Save</button></div>
+  <div class="st" aria-labelledby="mu-title">
+    <div class="sq-label" id="mu-title">Music <span class="sq-sum" id="mu-count"></span></div>
+    <div class="dropzone dz-music" id="mu-drop" role="button" tabindex="0" aria-label="Add songs">
+      <div class="dz-icon"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg></div>
+      <div class="dz-text"><h2>Drop songs here</h2>
+        <p>or click to choose. Drops and beats are found automatically.</p></div>
+      <div class="formats"><span class="badge">.mp3</span><span class="badge">.m4a</span><span class="badge">.wav</span></div>
+      <input type="file" id="mu-file" multiple accept=".mp3,.m4a,.aac,.wav,.ogg,.flac,.opus" style="display:none" aria-label="Choose songs">
+      <div class="uploads" id="mu-uploads" aria-live="polite"></div>
+    </div>
+    <div id="mu-list" class="mu-list"></div>
+    <p class="sq-note">Click a song to see its beats and drops, and move the drops yourself when one is off. The bars show how hard a song hits: when no song is chosen, a montage opens with one that hits hard.</p>
+  </div>
+  <div class="st" aria-labelledby="fx-title">
+    <div class="sq-label" id="fx-title">Sound effects</div>
+    <div class="fx-slots" id="fx-slots"></div>
+    <p class="sq-note">Built-in effects are made by the app. Drop your own file on a slot to use it instead.</p>
+  </div>
   <div class="st" aria-labelledby="st-title">
     <div class="sq-label" id="st-title">Storage <span class="sq-sum" id="st-total"></span></div>
     <div class="st-list" id="st-list"><div class="sq-empty">Measuring…</div></div>
     <p class="sq-note" id="st-msg" role="status" aria-live="polite"></p>
   </div>
 </div></div>
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="song-title" id="song-modal" style="display:none"><div class="modal-box wide song-box">
+  <div class="modal-head"><span id="song-title">Song</span> <span class="badge" id="song-state"></span><span class="spacer"></span><button class="small ghost" id="song-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <div class="song-meta" id="song-meta">Finding the beats and drops…</div>
+  <label class="opt song-random"><input type="checkbox" id="song-random"> <span>Use when no song is chosen <span class="hint" id="song-punch"></span></span></label>
+  <div class="song-wave" id="song-wave-wrap"><canvas id="song-wave" tabindex="0" aria-label="The song's waveform with its beats and drops"></canvas><div class="song-tip" id="song-tip" hidden></div></div>
+  <div class="song-legend"><span><i class="lg-drop"></i> drop</span><span><i class="lg-auto"></i> detected drop</span><span><i class="lg-bar"></i> bar</span><span><i class="lg-used"></i> played in montages</span></div>
+  <div class="song-bar">
+    <button class="small" id="song-play"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg> <span>Play</span></button>
+    <span class="song-time" id="song-time">0:00</span>
+    <span class="hint song-help">Click to listen from there. <b>Double-click</b> to add a drop, <b>drag</b> one to move it (it snaps to the beat; hold Alt to place it freely), <b>right-click</b> one to remove it. Clicking a drop plays the build-up into it.</span>
+  </div>
+  <div class="modal-foot"><span class="muted" id="song-msg" role="status" aria-live="polite"></span>
+    <button id="song-reset">Back to detected drops</button><button class="primary" id="song-save" disabled>Save drops</button></div>
+  <audio id="song-audio" preload="auto"></audio>
+</div></div>
 <script src="/js/api.js"></script>
 <script src="/js/share.js"></script>
 <script src="/js/library.js"></script>
 <script src="/js/clips.js"></script>
 <script src="/js/squad.js"></script>
+<script src="/js/songs.js"></script>
 </body>
 </html>

@@ -59,6 +59,12 @@ DEFAULTS: dict = {
     "cine_music_volume": 0.7,
     "cine_music": "",          # music file name in data/music; empty -> a random track per clip
     "cine_music_sync": True,   # start the track at its drop so the drop lands on the slow-motion kill
+    "cine_kill_beats": True,   # every other kill on a beat (the footage between kills sped up / slowed down a little)
+    "cine_drop_fx": True,      # build-up into a drop a kill lands on: the music muffled, a moment of silence, then the drop
+    "cine_sfx": True,          # sound effects: a hit on slow-motion kills, a whoosh into slow motion, a riser into the drop
+    "cine_sfx_volume": 0.8,
+    "cine_duck": True,         # the music dips under the gunshots
+    "cine_beat_fx": True,      # a light flash on the beat and a shake on the last kill
     "cine_trim": "fast",       # dead time between kills: "off" (keep), "cut" (drop it) or "fast" (fast-forward it)
     "cine_trim_lead": 2.0,     # seconds of normal speed kept before each kill when trimming
     "cine_fast": 6.0,          # fast-forward speed for dead time (cine_trim = "fast")

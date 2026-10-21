@@ -23,7 +23,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import db
+from . import db, songs
+from . import songs as songs_mod   # (_music_bed has a local named songs)
 from .config import DATA_DIR, ROOT, load as load_config
 from .ingest import ensure_dem
 from .launch import cs2_running, find_cs2_path
@@ -1970,7 +1971,7 @@ def pre_render_while_recording(predict, overrides: dict | None, intro: bool, reo
                     cine.cinematic_for_video(d, cur, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides, montage_piece=True,
                                              slow=pp.get("slow", True), lead=pp.get("lead"), low_priority=True,
                                              trim=pp.get("trim", 0.0), t_in=pp.get("t_in"), t_out=pp.get("t_out"),
-                                             swoop=bool(pp.get("swoop")))
+                                             swoop=bool(pp.get("swoop")), retime=pp.get("retime"), pulse=pp.get("pulse"))
                     with lock:
                         _squad_job["prerendered"] = int(_squad_job.get("prerendered") or 0) + 1
             n = max(1, min(2, int(cfg.get("render_parallel", 3) or 1)))
@@ -2015,9 +2016,28 @@ def montage_timeline(infos: list[dict]) -> tuple[float, float | None, list[tuple
     return round(t, 3), (round(hit, 3) if hit is not None else None), duck
 
 
+def concat_exact_args(files: list[Path], seconds: list[float], list_file: Path, out: Path) -> list[str]:
+    """Join same-format pieces: the pictures by stream copy, the sound decoded and laid end to end, each piece's
+    exactly its length. A stream-copied AAC track keeps the encoder's padding of every piece (about 40 ms), so over
+    a montage the game sound would slip further and further behind the picture and the music. Pure function;
+    unit-tested."""
+    list_file.write_text("".join(f"file '{f.as_posix()}'\n" for f in files), encoding="utf-8")
+    args = [str(FFMPEG_EXE), "-y", "-f", "concat", "-safe", "0", "-i", str(list_file)]
+    for f in files:
+        args += ["-i", str(f)]
+    chain = [f"[{i + 1}:a]atrim=end={sec:.6f},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a{i}]"
+             for i, sec in enumerate(seconds)]
+    chain.append("".join(f"[a{i}]" for i in range(len(files))) + f"concat=n={len(files)}:v=0:a=1[a]")
+    return args + ["-filter_complex", ";".join(chain), "-map", "0:v", "-map", "[a]", "-c:v", "copy",
+                   "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)]
+
+
 def _join(files: list[Path], infos: list[dict], out: Path, list_file: Path) -> None:
-    """Join same-format videos by stream copy; when that fails (pieces that do not fit together), re-encode."""
-    r = subprocess.run(concat_copy_args(files, list_file, out), capture_output=True, text=True)
+    """Join same-format videos (the pictures by stream copy, the sound exactly, see concat_exact_args); when that
+    fails (pieces that do not fit together), re-encode everything."""
+    secs = [float(i.get("seconds") or 0) for i in infos]
+    r = subprocess.run(concat_exact_args(files, secs, list_file, out) if all(x > 0 for x in secs)
+                       else concat_copy_args(files, list_file, out), capture_output=True, text=True)
     list_file.unlink(missing_ok=True)
     if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
         return
@@ -2039,9 +2059,12 @@ def _music_bed(cine, ffprobe: Path, first: Path, offset: float, total: float, wo
     pieces of the next songs, all crossfading. (None, []) when the song plays straight through without a cut.
     follow: the follow-up songs in the order to use them (the montage plan put its drops there); else the songs
     not heard for the longest time."""
+    gains: dict[str, float] = {}
+
     def pieces(f: Path) -> list[tuple[float, float]]:
-        c = cine.loudness_curve(FFMPEG_EXE, f)
-        return cine.song_pieces(c) if c else [(0.0, cine.probe_video(ffprobe, f)["duration"])]
+        fi = songs_mod.analyze(FFMPEG_EXE, f)
+        gains[str(f)] = float((fi or {}).get("gain_db") or 0.0)
+        return fi["pieces"] if fi else [(0.0, cine.probe_video(ffprobe, f)["duration"])]
     songs = [(first, pieces(first))]
     used, n = bed_pieces(songs, offset, total)
     if len(used) == 1 and used[0][2] - used[0][1] >= total:
@@ -2064,7 +2087,8 @@ def _music_bed(cine, ffprobe: Path, first: Path, offset: float, total: float, wo
         songs.append((nxt, pieces(nxt)))
     used, n = bed_pieces(songs, offset, total)
     bed = work_dir / f"music_bed_{stamp}.m4a"
-    r = subprocess.run(cine.pieces_bed_args(FFMPEG_EXE, used, bed), capture_output=True, text=True)
+    r = subprocess.run(cine.pieces_bed_args(FFMPEG_EXE, used, bed, gains=[gains.get(str(f), 0.0) for f, _, _ in used]),
+                       capture_output=True, text=True)
     if r.returncode != 0 or not bed.exists():
         bed.unlink(missing_ok=True)
         return None, []
@@ -2120,17 +2144,18 @@ def play_variants(cine, demo_id: str, v: dict, opts0: dict, ffprobe: Path) -> li
     base_lead = float(opts0.get("cine_trim_lead", 2.0))
     sw = v.get("swoop")
     base = {**opts0, "_skip_before": float(sw["to"])} if sw else opts0
-    vs = [{"slow": True, "lead": None, "swoop": False, **cine.clip_timing(kills, dur, base)},
-          {"slow": False, "lead": None, "swoop": False, **cine.clip_timing(kills, dur, {**base, "_no_slow": True})}]
+    def var(slow: bool, lead, swoop: bool, o: dict) -> dict:
+        # "_opts"/"_kills"/"_dur": how to time it again once its kills are put on the beats (tune_to_music)
+        return {"slow": slow, "lead": lead, "swoop": swoop, **cine.clip_timing(kills, dur, o), "_opts": o, "_kills": kills, "_dur": dur}
+    vs = [var(True, None, False, base), var(False, None, False, {**base, "_no_slow": True})]
     if kills:   # the same play with a little more or less footage before its first kill
         for k in range(3, 17):
             lead = k * 0.25
             if abs(lead - base_lead) > 0.01 and kills[0] - lead >= (float(sw["to"]) if sw else 0.0):
-                vs.append({"slow": True, "lead": lead, "swoop": False, **cine.clip_timing(kills, dur, {**base, "_lead": lead})})
+                vs.append(var(True, lead, False, {**base, "_lead": lead}))
     if sw:
         on = {**opts0, "_swoop": (float(sw["from"]), float(sw["to"]))}
-        vs += [{"slow": True, "lead": None, "swoop": True, **cine.clip_timing(kills, dur, on)},
-               {"slow": False, "lead": None, "swoop": True, **cine.clip_timing(kills, dur, {**on, "_no_slow": True})}]
+        vs += [var(True, None, True, on), var(False, None, True, {**on, "_no_slow": True})]
     if vs[0]["hit"] is None:   # a play without a kill inside the clip cannot carry a drop
         vs = [dict(vs[1])] + vs[1:]
     return vs
@@ -2179,72 +2204,160 @@ def _plan_montage(plays: list[tuple[str, dict]], overrides: dict | None, intro: 
     slow_mode = str(cfg0.get("montage_slow", "song"))    # "song" | "all" | "none": which plays get slow motion
     if slow_mode == "none":
         plan["per_play"] = [{"slow": False} for _ in plays]
-    if not (cfg0.get("cine_drop_slowmo", True) and len(plays) >= int(cfg0.get("cine_drop_min_plays", 6))
-            and opts0.get("cine_music_sync") and float(opts0.get("cine_music_volume", 0.7)) > 0 and not opts0.get("cine_voice")):
+    if not (opts0.get("cine_music_sync") and float(opts0.get("cine_music_volume", 0.7)) > 0 and not opts0.get("cine_voice")):
         return plan
+    # a short montage (or drop planning off): every play as it is, in the given order, only timed to the music
+    light = not (cfg0.get("cine_drop_slowmo", True) and len(plays) >= int(cfg0.get("cine_drop_min_plays", 6)))
     song = cine.pick_music(opts0)
     if not song:
+        return plan
+    info = songs.analyze(FFMPEG_EXE, song)
+    if not info:
         return plan
     variants = [play_variants(cine, demo_id, v, opts0, ffprobe) for demo_id, v in plays]
     if not cfg0.get("montage_swoop", True):     # no third-person swoops in this montage
         variants = [[v for v in vs if not v.get("swoop")] for vs in variants]
-    curve = cine.loudness_curve(FFMPEG_EXE, song)
-    drops = cine.find_drops(curve)
+    drops = info["drops"]
     start = cine.INTRO_SECONDS if intro else 0.0
     est_total = start + sum(next(v for v in vs if not v["slow"])["seconds"] for vs in variants)
-    first_hit = lambda hit, total: cine.find_drop(curve, 0.5, hit, total) - hit   # noqa: E731
-    if not montage_reorders(reorder):
-        picked, offset = plan_drop_slowmo(variants, start, drops, first_hit)
-        if slow_mode != "song":     # every play the same; the song still starts on the opener's drop
+
+    def first_hit(hit: float, total: float) -> float:   # song offset that puts the main drop on the opener's kill
+        d = songs.main_drop(info, hit, total)
+        return d - hit if d is not None else 0.0
+    beat_cuts = bool(cfg0.get("montage_beat_cuts", True))
+    kill_beats = bool(opts0.get("cine_kill_beats", True))
+    fps = float(cfg0.get("record_fps", 60) or 60)
+    if light or not montage_reorders(reorder):
+        if light:
+            picked = [vs[0] if slow_mode != "none" else next(v for v in vs if not v["slow"]) for vs in variants]
+            h0 = picked[0].get("hit")
+            offset = max(0.0, first_hit(start + h0, est_total)) if h0 is not None else 0.0
+        else:
+            picked, offset = plan_drop_slowmo(variants, start, drops, first_hit)
+        if slow_mode != "song" and not light:     # every play the same; the song still starts on the opener's drop
             picked = [vs[0] if slow_mode == "all" else next(v for v in vs if not v["slow"]) for vs in variants]
-        plan.update({"song": song, "offset": offset, "per_play": [{"slow": c["slow"], "lead": c["lead"]} for c in picked],
-                     "note": f"{sum(1 for c in picked if c['slow'])} of {len(plays)} plays in slow motion, on the drops"})
-        return plan
-    # the whole soundtrack: the song, then the songs that follow it when the montage is longer, with every drop
-    if follow is None:
-        follow = cine.fresh_order(exclude={song.name})
-    # each song only plays its loud pieces (song_pieces: no intro, outro or long quiet stretch); drops in the cut
-    # parts do not count
-    songs = [(cine.song_pieces(curve), drops, cine.drop_strengths(curve, drops))]
-    beat_cuts = bool(load_config().get("montage_beat_cuts", True))
-    song_beats = [cine.beat_times(FFMPEG_EXE, song) if beat_cuts else []]
-    used_follow, have = [], cine.pieces_length(songs[0][0]) - 30.0   # the song starts in its first half minute or so
-    for name in follow:
-        if have >= est_total * 1.3:
-            break
-        f = cine.MUSIC_DIR / name
-        if not f.is_file():
-            continue
-        c = cine.loudness_curve(FFMPEG_EXE, f)
-        if not c:
-            continue
-        d = cine.find_drops(c)
-        ps = cine.song_pieces(c)
-        songs.append((ps, d, cine.drop_strengths(c, d)))
-        song_beats.append(cine.beat_times(FFMPEG_EXE, f) if beat_cuts else [])
-        used_follow.append(name)
-        have += cine.pieces_length(ps) - 3.0
-    hls = [(v.get("ctx") or {}).get("highlight") or next((h for h in db.get_highlights(d) if h["id"] == v.get("highlight_id")), None)
-           for d, v in plays]
-    sizes = [play_score(v, h) for (_, v), h in zip(plays, hls)]
-    top = max(sizes) or 1
-    order, picked, offset = plan_song_order(
-        variants, [x / top for x in sizes], start, lambda hit: first_hit(hit, est_total),
-        lambda off: song_drops_in_montage(songs, off), players=[str(v.get("player") or "") for _, v in plays],
-        beats_for=lambda off: [t_ for t_, _ in song_drops_in_montage(
-            [(ps, b, [0.0] * len(b)) for (ps, _, _), b in zip(songs, song_beats)], off)], slow_mode=slow_mode)
-    t, hits = start, 0
-    times = [d for d, _ in song_drops_in_montage(songs, offset)]
-    for i in order:
-        c = picked[i]
-        if c["slow"] and c.get("hit") is not None and any(abs(t + c["hit"] - d) <= DROP_TOLERANCE + 1e-6 for d in times):
-            hits += 1
-        t += c["seconds"]
+        sound = [(info["pieces"], drops, info["strengths"])]
+        grid_of = [songs.beat_grid(info["beats"])]
+        beats_of = [info["beats"] if beat_cuts else []]
+        order = list(range(len(plays)))
+        used_follow = follow
+    else:
+        # the whole soundtrack: the song, then the songs that follow it when the montage is longer, with every drop
+        if follow is None:
+            follow = cine.fresh_order(exclude={song.name})
+        # each song only plays its loud pieces (no intro, outro or long quiet stretch); drops in the cut parts do
+        # not count
+        sound = [(info["pieces"], drops, info["strengths"])]
+        grid_of = [songs.beat_grid(info["beats"])]
+        beats_of = [info["beats"] if beat_cuts else []]
+        used_follow, have = [], cine.pieces_length(info["pieces"]) - 30.0   # the song starts in its first half minute or so
+        for name in follow:
+            if have >= est_total * 1.3:
+                break
+            f = cine.MUSIC_DIR / name
+            fi = songs.analyze(FFMPEG_EXE, f) if f.is_file() else None
+            if not fi:
+                continue
+            sound.append((fi["pieces"], fi["drops"], fi["strengths"]))
+            grid_of.append(songs.beat_grid(fi["beats"]))
+            beats_of.append(fi["beats"] if beat_cuts else [])
+            used_follow.append(name)
+            have += cine.pieces_length(fi["pieces"]) - 3.0
+        hls = [(v.get("ctx") or {}).get("highlight") or next((h for h in db.get_highlights(d) if h["id"] == v.get("highlight_id")), None)
+               for d, v in plays]
+        sizes = [play_score(v, h) for (_, v), h in zip(plays, hls)]
+        top = max(sizes) or 1
+        order, picked, offset = plan_song_order(
+            variants, [x / top for x in sizes], start, lambda hit: first_hit(hit, est_total),
+            lambda off: song_drops_in_montage(sound, off), players=[str(v.get("player") or "") for _, v in plays],
+            beats_for=lambda off: soundtrack_times(sound, beats_of, off), slow_mode=slow_mode)
+    # every kill exactly on the music: the drop kills on their drop, the others on the beat, each play ending on a beat
+    drops_at = song_drops_in_montage(sound, offset)
+    tuned, landed = tune_to_music(order, picked, start, drops_at, soundtrack_times(sound, grid_of, offset) if kill_beats else [],
+                                  soundtrack_times(sound, beats_of, offset), fps)
+    # a light pulse on the first beat of the bars
+    _add_pulses(tuned, order, start, soundtrack_times(sound, [_downbeats(f) for f in [song] + [cine.MUSIC_DIR / n for n in (used_follow or [])]], offset))
+    hits = len(landed)
     plan.update({"song": song, "offset": offset, "follow": used_follow, "order": order,
-                 "per_play": [{"slow": c["slow"], "lead": c["lead"], "trim": c.get("trim", 0.0),
-                               "swoop": bool(c.get("swoop"))} for c in picked],
-                 "note": f"plays ordered to the song: {hits} of {len(plays)} kills on a drop"})
+                 "per_play": [{"slow": c["slow"], "lead": c["lead"], "trim": c.get("trim", 0.0), "swoop": bool(c.get("swoop")),
+                               "retime": c.get("retime") or None, "pulse": c.get("pulse") or None} for c in tuned],
+                 "drops_at": landed, "beat": float(info.get("beat") or 0.5),
+                 "note": (f"timed to the song: {hits} kill{'s' if hits != 1 else ''} on a drop, the others on the beat" if light
+                          else f"plays ordered to the song: {hits} of {len(plays)} kills on a drop" if montage_reorders(reorder)
+                          else f"{sum(1 for c in tuned if c['slow'])} of {len(plays)} plays in slow motion, {hits} on a drop")})
     return plan
+
+
+def _downbeats(f: Path) -> list[float]:
+    fi = songs.analyze(FFMPEG_EXE, f) if Path(f).is_file() else None
+    return list((fi or {}).get("downbeats") or [])
+
+
+def soundtrack_times(sound: list[tuple], times_of: list[list[float]], offset: float) -> list[float]:
+    """Montage times of song times (beats, bar starts) across the soundtrack, as song_drops_in_montage places drops.
+    Pure function."""
+    return [t for t, _ in song_drops_in_montage([(ps, ts, [0.0] * len(ts)) for (ps, _, _), ts in zip(sound, times_of)], offset)]
+
+
+def tune_to_music(order: list[int], chosen: list[dict], start: float, drops_at: list[tuple[float, float]],
+                  grid: list[float], beats: list[float], fps: float = 60.0,
+                  tol: float = DROP_TOLERANCE) -> tuple[list[dict], list[tuple[float, float]]]:
+    """The chosen variant of every play re-timed so the music is hit exactly: a slow-motion kill the plan put on a
+    drop (within `tol`) lands on that drop to the frame, every other kill on the nearest point of `grid` (the beats;
+    empty: they stay where they are), each play's end on a beat again (snap_to_beat), and each play's length a whole
+    number of frames (what the render makes), so nothing drifts over a long montage. Returns (variants by play
+    index, [(montage time, strength)] of the drops a kill landed on). Variants without "_opts" are kept as they are.
+    Pure function; unit-tested."""
+    from . import cinematic as cine
+    out = list(chosen)
+    landed: list[tuple[float, float]] = []
+    used: set[float] = set()
+    t = start
+    for i in order:
+        v = chosen[i]
+        if v is None:
+            continue
+        if v.get("_opts") is not None:
+            drop_at, strength = None, 0.0
+            if v["slow"] and v.get("hit") is not None:
+                k = t + v["hit"]
+                near = [(abs(d - k), d, s) for d, s in drops_at if abs(d - k) <= tol + 1e-6 and d not in used]
+                if near:
+                    _, drop_at, strength = min(near)
+                    used.add(drop_at)
+            anchors = cine.beat_anchors(v["kills"], v["outs"], v["slows"], t, grid, drop_at)
+            o = {**v["_opts"], "_retime": anchors} if anchors else v["_opts"]
+            v2 = {**v, **cine.clip_timing(v["_kills"], v["_dur"], o), "retime": anchors, "trim": 0.0}
+            v2 = snap_to_beat(v2, t, beats)
+            if drop_at is not None:
+                landed.append((round(drop_at, 3), strength))
+        else:
+            v2 = dict(v)
+        frames = max(1, round(float(v2["seconds"]) * fps))
+        v2["seconds"] = frames / fps
+        out[i] = v2
+        t += v2["seconds"]
+    return out, landed
+
+
+PULSE_MIN_GAP = 0.9     # seconds between two beat pulses at least (a fast song pulses every other bar start)
+
+
+def _add_pulses(tuned: list[dict], order: list[int], start: float, downbeats: list[float]) -> None:
+    """Every play gets "pulse": its bars' first beats in its own time (a light flash on the beat)."""
+    t = start
+    for i in order:
+        v = tuned[i]
+        if v is None:
+            continue
+        end = t + float(v["seconds"])
+        ps, last = [], -9.0
+        for d in downbeats:
+            if t + 0.3 <= d <= end - 0.2 and d - last >= PULSE_MIN_GAP:
+                ps.append(round(d - t, 3))
+                last = d
+        v["pulse"] = ps
+        t = end
 
 
 def song_drops_in_montage(songs: list[tuple[list[tuple[float, float]], list[float], list[float]]], offset: float,
@@ -2256,7 +2369,7 @@ def song_drops_in_montage(songs: list[tuple[list[tuple[float, float]], list[floa
     out, t, first = [], 0.0, True
     for k, (pieces, drops, strengths) in enumerate(songs):
         if k == 0:
-            pieces = [(max(a, offset), b) for a, b in pieces if b > offset + 1.0]
+            pieces = first_pieces(pieces, offset)
         for a, b in pieces:
             for d, st in zip(drops, strengths):
                 if a <= d <= b and (first or d - a >= xfade):
@@ -2264,6 +2377,16 @@ def song_drops_in_montage(songs: list[tuple[list[tuple[float, float]], list[floa
             t += (b - a) - xfade
             first = False
     return sorted(out)
+
+
+def first_pieces(pieces: list[tuple[float, float]], offset: float) -> list[tuple[float, float]]:
+    """The pieces the first song plays when it starts at `offset`: from the offset on, the first of them starting
+    exactly there, even when that is in the quiet build-up before a loud part (the plan put the drop on the first
+    kill from that offset; skipping the build-up would move the drop). Pure function; unit-tested."""
+    ps = [(a, b) for a, b in pieces if b > offset + 1.0]
+    if ps:
+        ps[0] = (offset, ps[0][1])
+    return ps
 
 
 def bed_pieces(songs: list[tuple[object, list[tuple[float, float]]]], offset: float, total: float,
@@ -2274,7 +2397,7 @@ def bed_pieces(songs: list[tuple[object, list[tuple[float, float]]]], offset: fl
     out, have = [], -xfade
     for k, (song, pieces) in enumerate(songs):
         if k == 0:
-            pieces = [(max(a, offset), b) for a, b in pieces if b > offset + 1.0]
+            pieces = first_pieces(pieces, offset)
         for a, b in pieces:
             out.append((song, a, b))
             have += (b - a) - xfade
@@ -2469,7 +2592,7 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             nv = cine.cinematic_for_video(demo_id, v, FFMPEG_EXE, ffprobe, VIDEOS_DIR, overrides=overrides, progress=prog,
                                           montage_piece=True, slow=pp.get("slow", True), lead=pp.get("lead"),
                                           trim=pp.get("trim", 0.0), t_in=pp.get("t_in"), t_out=pp.get("t_out"),
-                                          swoop=bool(pp.get("swoop")))
+                                          swoop=bool(pp.get("swoop")), retime=pp.get("retime"), pulse=pp.get("pulse"))
             with lock:
                 if not nv.get("cine_path"):   # a cached piece stays in the cache
                     made_files.append(VIDEOS_DIR / demo_id / nv["cine"])
@@ -2503,6 +2626,9 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
                 infos.insert(0, {"seconds": secs})
             else:
                 card.unlink(missing_ok=True)
+                if plan_offset is not None:   # planned with the intro in front: the song starts that much later
+                    plan_offset += cine.INTRO_SECONDS
+                    mp["drops_at"] = [(t - cine.INTRO_SECONDS, st) for t, st in mp.get("drops_at") or []]
         if last and pieces and load_config().get("montage_outro", True):
             # the bookend: GG, the team and the stats of the plays over the last frame (the song fades out under it)
             _squad_job["piece"] = "making the end card"
@@ -2538,9 +2664,20 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             bed, songs = _music_bed(cine, ffprobe, music, offset, total, work_dir, stamp,
                                     follow=mp["follow"] if plan_song is not None else None)
             src, off = (bed, 0.0) if bed else (music, offset)
+            fi = songs_mod.analyze(FFMPEG_EXE, music)
+            # the build-up into the drops the plays' kills land on: muffled music, a riser, a moment of silence
+            music_fx, risers = "", []
+            if plan_song is not None and opts.get("cine_drop_fx", True):
+                music_fx, risers = cine.drop_fx(cine.buildup_drops(mp.get("drops_at") or []),
+                                                float(mp.get("beat") or (fi or {}).get("beat") or 0.5), total)
+            sfx_on = bool(opts.get("cine_sfx", True))
             try:
-                r = subprocess.run(cine.montage_music_args(FFMPEG_EXE, joined, src, out, total, off,
-                                                           float(opts["cine_music_volume"]), duck), capture_output=True, text=True)
+                r = subprocess.run(cine.montage_music_args(
+                    FFMPEG_EXE, joined, src, out, total, off, float(opts["cine_music_volume"]), duck,
+                    gain_db=0.0 if bed else float((fi or {}).get("gain_db") or 0.0), music_fx=music_fx,
+                    risers=risers if sfx_on else [], riser=cine.sfx.file_for("riser") if sfx_on and risers else None,
+                    riser_vol=float(opts.get("cine_sfx_volume", 0.8)) * cine.SFX_LEVEL["riser"],
+                    duck_shots=bool(opts.get("cine_duck", True))), capture_output=True, text=True)
             finally:
                 if bed:
                     bed.unlink(missing_ok=True)

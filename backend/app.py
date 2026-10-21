@@ -734,17 +734,159 @@ async def upload_music(file: UploadFile = File(...)):
             if not chunk:
                 break
             out.write(chunk)
+    # find its beats and drops now, so the song editor opens at once and the first video using it does not wait
+    threading.Thread(target=_analyze_quietly, args=(dst,), daemon=True, name="song-analysis").start()
     return {"ok": True, "file": name}
+
+
+def _ffmpeg_or_503() -> Path:
+    from .record import FFMPEG_EXE
+
+    if not FFMPEG_EXE.exists():
+        raise HTTPException(503, "FFmpeg is not installed yet (Install HLAE + FFmpeg)")
+    return FFMPEG_EXE
+
+
+def _analyze_quietly(path: Path) -> None:
+    from . import songs
+    from .record import FFMPEG_EXE
+
+    try:
+        if FFMPEG_EXE.exists():
+            songs.analyze(FFMPEG_EXE, path)
+    except Exception:  # noqa: BLE001
+        pass   # the song editor or the next video analyses it again and reports what is wrong
+
+
+def _song_path(name: str) -> Path:
+    from . import cinematic as cine
+
+    p = cine.MUSIC_DIR / Path(name).name
+    if p.suffix.lower() not in cine.MUSIC_EXT or not p.is_file():
+        raise HTTPException(404, "no such song")
+    return p
 
 
 @app.delete("/api/music/{name}")
 def delete_music(name: str):
-    from . import cinematic as cine
+    from . import cinematic as cine, songs
 
     p = cine.MUSIC_DIR / Path(name).name
     if p.exists():
         p.unlink()
+    songs.forget(p.name)
     return {"ok": True}
+
+
+@app.get("/api/music/{name}/file")
+def music_file(name: str):
+    """The song itself, for the song editor's player (seekable)."""
+    p = _song_path(name)
+    return FileResponse(p, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/music/{name}/analysis")
+def music_analysis(name: str):
+    """What the app found in a song: tempo, beats, bars, drops (and the ones placed by hand), the parts a montage
+    plays, and a waveform to draw."""
+    from . import songs
+
+    info = songs.analyze(_ffmpeg_or_503(), _song_path(name))
+    if not info:
+        raise HTTPException(422, "this file could not be read as audio")
+    keep = ("duration", "bpm", "beat", "beats", "downbeats", "auto_drops", "auto_strengths", "drops", "strengths",
+            "edited", "pieces", "gain_db", "wave", "punch", "random")
+    return {"name": Path(name).name, "wave_step": songs.WAVE_STEP, "big_drop": songs.BIG_DROP, **{k: info.get(k) for k in keep}}
+
+
+class DropsIn(BaseModel):
+    drops: list[float] | None = None   # None: back to the detected drops
+
+
+@app.put("/api/music/{name}/drops")
+def music_set_drops(name: str, body: DropsIn):
+    from . import songs
+
+    p = _song_path(name)
+    if body.drops is not None and len(body.drops) > 64:
+        raise HTTPException(400, "too many drops")
+    songs.set_marks(p.name, body.drops)
+    return music_analysis(p.name)
+
+
+class RandomIn(BaseModel):
+    on: bool
+
+
+@app.put("/api/music/{name}/random")
+def music_set_random(name: str, body: RandomIn):
+    """Whether the song may be picked when a video has no song chosen."""
+    from . import songs
+
+    p = _song_path(name)
+    songs.set_in_random(p.name, body.on)
+    return {"ok": True, "random": songs.in_random(p.name)}
+
+
+@app.get("/api/music/ratings")
+def music_ratings():
+    """Every song's punch (how hard it hits, 0..1, from its cached analysis; None when not analysed yet) and
+    whether it is in random picks, for the song list."""
+    from . import cinematic as cine, songs
+
+    out = {}
+    for f in cine.music_files():
+        info = None
+        try:
+            from .record import FFMPEG_EXE
+            info = songs.analyze(FFMPEG_EXE, f) if FFMPEG_EXE.exists() else None
+        except Exception:  # noqa: BLE001
+            info = None
+        out[f.name] = {"punch": (info or {}).get("punch"), "random": songs.in_random(f.name)}
+    return out
+
+
+# ---- sound effects (the hit, the whoosh and the riser of the cinematic edits) --------------------------------
+
+@app.get("/api/sfx")
+def list_sfx():
+    from . import sfx
+
+    return sfx.listing()
+
+
+@app.post("/api/sfx/{slot}")
+async def upload_sfx(slot: str, file: UploadFile = File(...)):
+    from . import sfx
+
+    data = await file.read()
+    if len(data) > 30 * 1024 * 1024:
+        raise HTTPException(400, "a sound effect should be a few seconds long (this file is over 30 MB)")
+    try:
+        name = sfx.save(slot, Path(file.filename or "effect").name, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "file": name, **sfx.listing()}
+
+
+@app.delete("/api/sfx/{slot}")
+def reset_sfx(slot: str):
+    from . import sfx
+
+    if slot not in sfx.SLOTS:
+        raise HTTPException(404, "no such slot")
+    sfx.reset(slot)
+    return sfx.listing()
+
+
+@app.get("/api/sfx/{slot}/file")
+def sfx_file(slot: str):
+    """The effect a slot uses now (the user's file or the built-in one), for the preview button."""
+    from . import sfx
+
+    if slot not in sfx.SLOTS:
+        raise HTTPException(404, "no such slot")
+    return FileResponse(sfx.file_for(slot), headers={"Cache-Control": "no-store"})
 
 
 # ---- voice lines (sound bites for cinematic clips) --------------------------------------------

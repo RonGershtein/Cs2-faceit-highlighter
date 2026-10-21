@@ -295,16 +295,6 @@ def test_casters_are_never_remembered():
     assert c.options({}, {"cine_voice": True})["cine_voice"] is True   # ticked for this run
 
 
-def test_fresh_tracks_avoid_the_songs_just_heard():
-    from backend.cinematic import fresh_tracks
-    names = ["a", "b", "c", "d"]
-    assert fresh_tracks(names, []) == names                     # nothing heard yet: any
-    assert fresh_tracks(names, ["a", "b"]) == ["c", "d"]          # never-used first
-    assert fresh_tracks(names, ["c", "a", "d", "b"]) == ["c", "a"]  # the half heard longest ago
-    assert fresh_tracks(["a"], ["a"]) == ["a"]
-    assert fresh_tracks([], ["a"]) == []
-
-
 def test_clutch_counter_counts_down_to_clutch():
     s = c.clutch_states(3, [2.0, 5.0, 9.0], 12.0)
     assert [x["text"] for x in s] == ["1v3", "1v2", "1v1"]                 # gone after the last kill

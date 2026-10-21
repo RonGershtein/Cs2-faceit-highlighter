@@ -279,8 +279,47 @@
     $('cfg-enc').value = config.record_encoder || 'auto';
     $('cfg-enc-hint').textContent = config.auto_encoder ? `Auto uses ${config.auto_encoder} on this PC (tested).` : 'Auto tests the graphics card\'s encoder the first time you record; the CPU is used when it does not work.';
     $('cfg-mailpw').placeholder = config.share_password_set ? 'app password saved (type to change)' : 'Gmail app password';
-    renderStorage();
+    renderStorage(); renderSongs();
   };
+  // ---- settings: music library (drop songs in; drops, beats and loud parts are measured when a video is made) ----
+  const MUSIC_RE = /\.(mp3|m4a|aac|wav|ogg|flac|opus)$/i;
+  const muDrop = $('mu-drop'), muFile = $('mu-file');
+  window.renderSongs = () => renderSongs();
+  async function renderSongs() {
+    try {
+      const m = await API.music();
+      $('mu-count').textContent = m.files.length ? `${m.files.length} song${m.files.length === 1 ? '' : 's'}` : '';
+      const rate = await API.musicRatings().catch(() => ({}));
+      const meter = (p) => p == null ? '' : `<i class="punch" title="hits ${p >= 0.6 ? 'hard' : p >= 0.35 ? 'medium' : 'softly'}: ${p >= 0.6 ? 'often opens a montage' : p >= 0.35 ? 'picked now and then' : 'rarely picked when no song is chosen'}">${[0.15, 0.35, 0.6].map(x => `<b class="${p >= x ? 'on' : ''}"></b>`).join('')}</i>`;
+      $('mu-list').innerHTML = m.files.length ? m.files.map(f => `<span class="pill${rate[f] && rate[f].random === false ? ' off' : ''}" title="${esc(f)}${rate[f] && rate[f].random === false ? ' (only when picked)' : ''}">${meter(rate[f] && rate[f].punch)}<button class="pill-name song-open" data-song="${esc(f)}" title="See and edit the drops of ${esc(f)}">${esc(f.replace(/\.[^.]+$/, ''))}</button><button class="small ghost" data-del-song="${esc(f)}" title="remove" aria-label="Remove ${esc(f)}">${ic('x')}</button></span>`).join('')
+        : '<span class="muted">No songs yet: cinematic videos get slow motion only.</span>';
+    } catch (e) { $('mu-list').innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
+  }
+  async function addSongs(files) {
+    for (const f of files) {
+      const el = document.createElement('div'); el.className = 'upload';
+      el.innerHTML = `<div class="row"><span>${esc(f.name)}</span><span class="muted st"></span></div>`;
+      $('mu-uploads').appendChild(el);
+      const st = el.querySelector('.st');
+      if (!MUSIC_RE.test(f.name)) { st.textContent = 'not an audio file (mp3, m4a, aac, wav, ogg, flac, opus)'; setTimeout(() => el.remove(), 4000); continue; }
+      st.textContent = 'adding…';
+      try { await API.uploadMusic(f); el.remove(); } catch (err) { st.textContent = 'failed: ' + err.message; }
+    }
+    renderSongs(); loadMultiMusic();
+  }
+  muDrop.addEventListener('click', (e) => { if (!e.target.closest('.uploads')) muFile.click(); });
+  muDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); muFile.click(); } });
+  muFile.addEventListener('change', () => { addSongs([...muFile.files]); muFile.value = ''; });
+  ['dragenter', 'dragover'].forEach(n => muDrop.addEventListener(n, e => { e.preventDefault(); muDrop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(n => muDrop.addEventListener(n, e => { e.preventDefault(); muDrop.classList.remove('over'); }));
+  muDrop.addEventListener('drop', e => addSongs([...e.dataTransfer.files]));
+  // a song dropped next to the zone must not make the browser leave the app to play it
+  ['dragover', 'drop'].forEach(n => modal.addEventListener(n, e => e.preventDefault()));
+  $('mu-list').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-del-song]'); if (!b) return;
+    if (!confirm(`Remove "${b.dataset.delSong}" from the music library?`)) return;
+    try { await API.deleteMusic(b.dataset.delSong); renderSongs(); loadMultiMusic(); } catch (err) { $('mu-count').textContent = err.message; }
+  });
   modal.addEventListener('click', async (e) => {
     const b = e.target.closest('button.browse'); if (!b) return;
     const input = $(b.dataset.for);

@@ -28,7 +28,7 @@ Everything runs on your PC. Nothing is uploaded anywhere.
 | | |
 |---|---|
 | OS | Windows 10/11 for the full feature set (CS2 launching and recording). The replay viewer and highlights also work on Linux/macOS. |
-| Python | 3.11 or 3.12. `start.bat` offers to install it for you (via winget) if it is missing; or get it from [python.org](https://www.python.org/downloads/) and tick **"Add python.exe to PATH"**. |
+| Python | nothing to install: the app downloads [uv](https://docs.astral.sh/uv/), which brings its own Python 3.12 into the app folder (`tools\python`) |
 | CS2 | installed through Steam (only needed for "Open in CS2" and recording) |
 | Disk | ~250 MB per demo kept by the app, plus ~35 MB per recorded 20 s clip |
 
@@ -39,11 +39,19 @@ HLAE and FFmpeg are downloaded by the app itself when you first click **Install 
 1. Download this repository: **Code → Download ZIP** and unzip it, or `git clone https://github.com/RonGershtein/Cs2-faceit-highlighter`.
    Put it in a folder **without spaces** in the path, for example `C:\cs2-highlighter`.
    It must be a normal Windows folder, not a network or WSL path (`\\wsl.localhost\...`).
-2. Double-click **`start.bat`**.
-   The first run creates a Python environment, installs the dependencies, downloads the radar images (1–3 minutes)
-   and puts a **CS2 Highlighter** icon on your Desktop.
-3. Your browser opens at **http://localhost:8000**. From now on just double-click the Desktop icon to start the app;
-   close its (minimized) console window to stop it.
+2. Double-click **`CS2 Highlighter.exe`**.
+   - If Steam or CS2 is missing, a window says so with a download button. Install it and click **Check again**.
+     CS2 is only needed for recording, so you can also continue without it.
+   - The first run then sets everything up (under a minute, one time only): it downloads uv, which installs Python 3.12 and the
+     exact package versions in `uv.lock` into the app folder. Nothing is installed system-wide; deleting the folder removes it all.
+     It also puts a **CS2 Highlighter** icon on your Desktop.
+   - If you downloaded the ZIP, Windows may say "Windows protected your PC" because the exe is not signed:
+     click **More info → Run anyway**. Its source is `launcher/Launcher.cs`.
+3. Your browser opens at **http://localhost:8000**. The app keeps running as an icon in the tray (bottom right, next to the clock):
+   double-click it to open the page again, right-click → **Quit CS2 Highlighter** to stop it.
+   From now on just double-click the Desktop icon.
+
+`start.bat` still works and does the same in a console window (handy for seeing errors live).
 
 ### Commands
 
@@ -51,7 +59,7 @@ Everything can also be done from a terminal. `make` on Linux/macOS/WSL, `cs2w.ba
 
 | command | what it does |
 |---|---|
-| `make install` / `cs2w install` | create the Python env, install dependencies, download radars |
+| `make install` / `cs2w install` | install Python + the locked dependencies with uv, download radars |
 | `make run` / `cs2w run` | start the app |
 | `make doctor` / `cs2w doctor` | check Python, dependencies, config, CS2 path, HLAE/FFmpeg, disk |
 | `make tools` / `cs2w tools` | download HLAE + FFmpeg for recording (same as the button in the app) |
@@ -183,9 +191,17 @@ highlights you ticked (those are remade). Takes ~10-20 s per clip
 - **Player card:** a round avatar with the player's nickname at the bottom left, like a pro-match lower third. It stays on screen for the whole clip. Photos go in
   `data/players/<steam64>.png` (or .jpg); without one a blank circle with the initial is shown. Optional `data/players.json`
   (`{"<steam64>": {"name": "nickname", "photo": "file.png"}}`) overrides the in-game name.
-- **Music:** add MP3/M4A/WAV files (royalty-free if you plan to publish). A random track or the one you pick plays under the game sound.
-  With "start the track at its drop" the app measures the track's loudness, finds the biggest sustained rise (the drop) and starts the
-  music so the drop lands exactly on the slow-motion kill.
+- **Music:** drop MP3/M4A/WAV files on **Settings → Music** (royalty-free if you plan to publish). The app analyses each song once:
+  its beats (to the hit of the drum), the first beat of every bar, its drops (where the loudness and the bass come in hard), the
+  parts worth playing and how loud it is (every song is brought to the same level). With "start the track at its drop" the drop
+  lands exactly on the slow-motion kill. Click a song in Settings to see its waveform with beats and drops; drag, add or remove
+  drops and they are used from then on. When no song is chosen, a montage opens with one that hits hard (the bars next to each
+  song); a song can be left out of random picks in its editor.
+- **On the music:** every kill lands on a beat (the game between two kills runs up to 25 % faster or slower; a kill that cannot
+  reach a beat goes on the half beat), and before a drop a kill lands on, the music goes muffled with a riser under it, cuts out for
+  half a beat, and the drop hits with the kill. The music dips a little under the gunshots.
+- **Sound effects:** a whoosh into slow motion, a deep hit and an echo on slow-motion kills; built in (made by the app), or drop your
+  own file on a slot in **Settings → Sound effects**. A light flash on the bars and a shake on the last kill go with them.
 - **Caster voice lines:** short sound bites in `data/voice/start`, `data/voice/kill` and `data/voice/final` play at the clip start, on
   every kill but the last, and right after the final kill. They are picked by what happened: a sub-folder named after the highlight type
   (`ace`, `clutch`, `multikill`, `knife`, `ninja_defuse`) or, for the kill slot, the kill number (`2`, `3`, `4`, `5`) wins when it has
@@ -247,8 +263,8 @@ Restart the app after editing the file by hand.
   (`speed` 1.4 = 1.4 s of game per second). If your CPU is maxed out while recording and you have an AMD card, try
   `record_encoder = "amf"`.
 - **CS2 kept recording after the app said it was done**: restart the app; it makes clips of whatever CS2 recorded meanwhile.
-- **A demo stays at "parsing"**: look at the console window for the error; remove the match and drop it again.
-- **Python not found**: answer `Y` when `start.bat` offers to install it, or install Python 3.11/3.12 from python.org with "Add to PATH" ticked, then run `start.bat` again.
+- **A demo stays at "parsing"**: look at the log for the error (tray icon → **Show log**, or `data\server.log`); remove the match and drop it again.
+- **Setup failed**: the launcher offers to open `data\setup.log`; usually it is the internet connection. Run the exe again to retry.
 - **"This folder is on a network path"**: the repo lives in WSL or on a share. Clone or copy it to a Windows folder such as `C:\cs2-highlighter` and start it from there.
 - **Something else is off**: run `cs2w doctor` (or `make doctor`); it lists what is missing and how to fix it.
 
@@ -259,15 +275,20 @@ HLAE and `-insecure` are the standard, long-established way of recording CS demo
 ## Development
 
 ```
-python -m venv .venv && .venv/Scripts/pip install -r requirements.txt    # or .venv/bin on Linux
-python scripts/fetch_radars.py
-python run.py                       # http://localhost:8000
-pytest tests/test_highlights.py tests/test_record.py
+uv sync                             # Python 3.12 + locked dependencies (incl. pytest) into .venv
+uv run scripts/fetch_radars.py
+uv run run.py                       # http://localhost:8000
+uv run pytest tests/test_highlights.py tests/test_record.py
+uv add <package>                    # new dependency: updates pyproject.toml + uv.lock (commit both)
 CS2_SAMPLE_DEMO=path/to/match.dem.zst pytest tests/test_parse.py
 python -m backend.ingest path/to/match.dem.zst   # parse one demo from the CLI
 ```
 
 ```
+CS2 Highlighter.exe      Windows launcher: missing-downloads popup, first-run setup, starts run.py hidden, tray icon
+launcher/Launcher.cs     its source; rebuild with scripts\build_launcher.bat (uses the C# compiler built into Windows)
+pyproject.toml / uv.lock dependencies and their exact tested versions; .python-version pins 3.12
+scripts/ensure_uv.bat    downloads uv into tools\uv for start.bat / cs2w.bat (launcher does the same itself)
 run.py / start.bat       start the server (+ browser); cs2w.bat and Makefile wrap the common commands
 scripts/doctor.py        environment check; scripts/fetch_tools.py downloads HLAE + FFmpeg; scripts/make_shortcut.ps1 Desktop icon
 backend/app.py           FastAPI routes, static frontend
@@ -278,6 +299,8 @@ backend/maps.py          radar calibration (from CS Demo Manager) and world→ra
 backend/launch.py        open CS2 at a tick
 backend/record.py        HLAE + FFmpeg recording pipeline
 backend/cinematic.py     slow-motion + music post-processing
+backend/songs.py         song analysis: beats, bars, drops, loudness, punch (cached in data/cache/songs)
+backend/sfx.py           sound effects: built-in hit / whoosh / riser, or the user's own
 frontend/                index.html (library), match.html (viewer), js/replay.js (canvas renderer)
 data/                    demos, parsed matches, videos, music, app.db   (not in git)
 tools/                   HLAE and FFmpeg                                (downloaded, not in git)

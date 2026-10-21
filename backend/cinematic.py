@@ -22,7 +22,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import db, voice
+from . import db, sfx, songs, voice
 from .config import DATA_DIR, ROOT, load as load_config
 
 MUSIC_DIR = DATA_DIR / "music"
@@ -36,7 +36,7 @@ CARD_BG = "0x2a2f3a"                   # blank avatar colour
 
 # cine_* keys of config.toml that the UI can change per job (see options())
 OPTION_KEYS = ("cine_slow", "cine_kills", "cine_smooth", "cine_game_volume", "cine_music_volume", "cine_music",
-               "cine_music_sync", "cine_trim", "cine_trim_lead", "cine_fast", "cine_skip_waits", "cine_ramp",
+               "cine_music_sync", "cine_kill_beats", "cine_drop_fx", "cine_sfx", "cine_sfx_volume", "cine_duck", "cine_beat_fx", "cine_trim", "cine_trim_lead", "cine_fast", "cine_skip_waits", "cine_ramp",
                "cine_impact", "cine_look", "cine_grade", "cine_clutch", "cine_fade", "cine_title", "cine_counter", "cine_card", "cine_voice",
                "cine_voice_volume", "cine_voice_pick")
 TRIM_MODES = ("off", "cut", "fast")   # dead time between kills: keep / drop / fast-forward
@@ -265,7 +265,7 @@ def split_at_out(segs: list[Seg], t: float) -> list[Seg]:
     out, acc = [], 0.0
     for a, b, s in segs:
         length = (b - a) / s
-        if acc + 0.02 < t < acc + length - 0.02:
+        if acc + SLIVER < t < acc + length - SLIVER:
             m = a + (t - acc) * s
             out += [(a, m, s), (m, b, s)]
         else:
@@ -331,6 +331,92 @@ def edge_filter(style: str, side: str, width: int, height: int, d: float = EDGE_
 
 def total_duration(segs: list[Seg]) -> float:
     return sum((b - a) / s for a, b, s in segs)
+
+
+SLIVER = 2.5 / 60     # output seconds a segment must last at least: a shorter one may give no frame at all (FFmpeg
+                      # then waits for it forever)
+
+
+def absorb_slivers(segs: list[Seg], min_out: float = SLIVER) -> list[Seg]:
+    """The segments with every one shorter than `min_out` in the output folded into its neighbour (the one before,
+    the next for the first): joined to it when they are contiguous, else left out with the neighbour playing that
+    much longer. The total length does not change. Pure function; unit-tested."""
+    out = [list(x) for x in segs]
+    i = 0
+    while len(out) > 1 and i < len(out):
+        a, b, s = out[i]
+        length = (b - a) / s
+        if length >= min_out:
+            i += 1
+            continue
+        j = i - 1 if i > 0 else i + 1
+        na, nb, ns = out[j]
+        keep_len = (nb - na) / ns + length
+        if abs(nb - a) < 1e-4 or abs(b - na) < 1e-4:      # contiguous: one segment over both
+            na, nb = min(na, a), max(nb, b)
+        out[j] = [na, nb, (nb - na) / keep_len]
+        del out[i]
+        i = max(0, i - 1)
+    return [tuple(x) for x in out]
+
+
+# how much footage may be sped up or slowed down so a kill lands on its beat: fast-forwarded dead time is a blur and
+# takes most of it, real-speed footage (and slow motion) only a little
+RETIME_FAST = (0.5, 2.0)
+RETIME_REAL = (0.8, 1.25)
+
+
+def split_at_src(segs: list[Seg], t: float) -> list[Seg]:
+    """The same segments with a split at source time `t`. Pure function."""
+    out = []
+    for a, b, s in segs:
+        if a + 1e-4 < t < b - 1e-4:
+            out += [(a, t, s), (t, b, s)]
+        else:
+            out.append((a, b, s))
+    return out
+
+
+def retime(segs: list[Seg], anchors: list[tuple[float, float]], fast: tuple[float, float] = RETIME_FAST,
+           real: tuple[float, float] = RETIME_REAL) -> list[Seg]:
+    """The segments with their speeds changed so each anchor (source time of a kill, the output time it should
+    play at) lands where it should: the footage between two anchors (from the start, for the first) is stretched or
+    squeezed as a whole, the fast-forwarded part first (within `fast`), the rest within `real`. An anchor out of
+    reach lands as close as it can. Pure function; unit-tested."""
+    if not anchors or not segs:
+        return segs
+    anchors = sorted(anchors)
+    for src, _ in anchors:
+        segs = split_at_src(segs, src)
+    out: list[Seg] = []
+    done_out, i = 0.0, 0
+    for src, want in anchors:
+        block = []
+        while i < len(segs) and segs[i][1] <= src + 1e-4:
+            block.append(segs[i])
+            i += 1
+        if not block:
+            continue
+        need = want - done_out                     # output seconds the block should last
+        fs = [k for k, (a, b, s) in enumerate(block) if s > 1.5]
+        rs = [k for k, (a, b, s) in enumerate(block) if s <= 1.5]
+        lf = sum((block[k][1] - block[k][0]) / block[k][2] for k in fs)
+        lr = sum((block[k][1] - block[k][0]) / block[k][2] for k in rs)
+        m_f = m_r = 1.0
+        if need > 0 and lf + lr > 0:
+            if lf > 0:     # the fast-forward first: its new length lf / m_f should make up the difference
+                target_f = need - lr
+                m_f = min(fast[1], max(fast[0], lf / target_f)) if target_f > 0 else fast[1]
+            rest = need - lf / m_f
+            if lr > 0 and rest > 0:
+                m_r = min(real[1], max(real[0], lr / rest))
+            elif lr > 0:
+                m_r = real[1]
+        for k, (a, b, s) in enumerate(block):
+            out.append((a, b, s * (m_f if s > 1.5 else m_r)))
+        done_out += lf / m_f + lr / m_r
+    out += segs[i:]
+    return out
 
 
 # ---- music analysis ----------------------------------------------------------------------------
@@ -567,17 +653,28 @@ def pieces_length(pieces: list[tuple[float, float]], xfade: float = 3.0) -> floa
     return sum(b - a for a, b in pieces) - xfade * max(0, len(pieces) - 1)
 
 
-def pieces_bed_args(ffmpeg: Path, pieces: list[tuple[Path, float, float]], dst: Path, xfade: float = 3.0) -> list[str]:
+def pieces_bed_args(ffmpeg: Path, pieces: list[tuple[Path, float, float]], dst: Path, xfade: float = 3.0,
+                    gains: list[float] | None = None) -> list[str]:
     """FFmpeg command playing the pieces (file, start, end) one after the other, each crossfading `xfade` seconds
-    into the previous: a montage's whole soundtrack, songs and the parts of each song. Pure function; unit-tested."""
+    into the previous: a montage's whole soundtrack, songs and the parts of each song. gains: dB per piece (each
+    song brought to the same loudness). Pure function; unit-tested."""
     args = [str(ffmpeg), "-y"]
     for f, a, b in pieces:
         args += (["-ss", f"{a:.3f}"] if a > 0 else []) + ["-t", f"{b - a:.3f}", "-i", str(f)]
+    gains = gains or [0.0] * len(pieces)
     if len(pieces) == 1:
-        return args + ["-map", "0:a", "-c:a", "aac", "-b:a", "256k", str(dst)]
-    chain, prev = [], "[0:a]"
+        af = ["-af", f"volume={gains[0]:.2f}dB"] if abs(gains[0]) > 0.05 else []
+        return args + ["-map", "0:a"] + af + ["-c:a", "aac", "-b:a", "256k", str(dst)]
+    chain, src = [], []
+    for i, g in enumerate(gains):
+        if abs(g) > 0.05:
+            chain.append(f"[{i}:a]volume={g:.2f}dB[s{i}]")
+            src.append(f"[s{i}]")
+        else:
+            src.append(f"[{i}:a]")
+    prev = src[0]
     for i in range(1, len(pieces)):
-        chain.append(f"{prev}[{i}:a]acrossfade=d={xfade:g}:c1=tri:c2=tri[x{i}]")
+        chain.append(f"{prev}{src[i]}acrossfade=d={xfade:g}:c1=tri:c2=tri[x{i}]")
         prev = f"[x{i}]"
     return args + ["-filter_complex", ";".join(chain), "-map", prev, "-c:a", "aac", "-b:a", "256k", str(dst)]
 
@@ -599,8 +696,9 @@ def drop_strengths(curve: list[float], drops: list[float], win: float = 0.5, aft
 
 def music_offset(ffmpeg: Path, track: Path, hit_time: float, clip_len: float) -> float:
     """Seconds to skip at the start of `track` so that its drop plays at `hit_time` of the clip."""
-    drop = find_drop(loudness_curve(ffmpeg, track), 0.5, hit_time, clip_len)
-    return max(0.0, drop - hit_time)
+    info = songs.analyze(ffmpeg, track)
+    drop = songs.main_drop(info, hit_time, clip_len) if info else None
+    return max(0.0, drop - hit_time) if drop is not None else 0.0
 
 
 # ---- text ---------------------------------------------------------------------------------------
@@ -766,8 +864,9 @@ def _atempo_chain(factor: float) -> str:
     return ",".join(parts)
 
 
-def _impact(kills_rel: list[float], fps: float) -> str:
-    """zoompan (8 % punch that decays over ~0.3 s) and eq flash on each kill; times relative to the segment."""
+def _impact(kills_rel: list[float], fps: float, shake_rel: float | None = None) -> str:
+    """zoompan (8 % punch that decays over ~0.3 s) and eq flash on each kill; times relative to the segment.
+    shake_rel: a kill (the play's last) that also shakes the picture for a moment, inside the room the punch makes."""
     tau = max(1.0, 0.3 * fps)
     z = ["if(gte(in\\,%d)\\,exp(-(in-%d)/%.1f)\\,0)" % (round(k * fps), round(k * fps), tau) for k in kills_rel]
     fl = ["if(between(t\\,%.3f\\,%.3f)\\,1-(t-%.3f)/0.15\\,0)" % (k, k + 0.15, k) for k in kills_rel]
@@ -777,8 +876,84 @@ def _impact(kills_rel: list[float], fps: float) -> str:
         for x in xs[1:]:
             e = f"max({e}\\,{x})"
         return e
-    return (f"zoompan=z='1+0.08*{mx(z)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=WxH:fps={fps:g}"
+    x, y = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+    if shake_rel is not None:
+        f0 = round(shake_rel * fps)
+        # a 12 Hz judder that dies away in about a fifth of a second (in frames of the segment), never past the edge
+        dec = "if(gte(in\\,%d)\\,exp(-(in-%d)/%.1f)\\,0)" % (f0, f0, max(1.0, 0.09 * fps))
+        w = 2 * math.pi * 12 / fps
+        x = f"max(0\\,min(iw-iw/zoom\\,{x}+iw*0.011*{dec}*sin((in-{f0})*{w:.4f})))"
+        y = f"max(0\\,min(ih-ih/zoom\\,{y}+ih*0.011*{dec}*cos((in-{f0})*{w * 1.3:.4f})))"
+    return (f"zoompan=z='1+0.08*{mx(z)}':x='{x}':y='{y}':d=1:s=WxH:fps={fps:g}"
             f",eq=brightness='0.3*{mx(fl)}':eval=frame")
+
+
+PULSE_SECONDS = 0.16
+
+
+def pulse_filter(times: list[float], amount: float = 0.055) -> str:
+    """A light flash on the first beat of the bars (output times), cheap (eq), or "" without beats. Pure function."""
+    if not times:
+        return ""
+    terms = "+".join("between(t\\,%.3f\\,%.3f)*(1-(t-%.3f)/%.2f)" % (p, p + PULSE_SECONDS, p, PULSE_SECONDS) for p in times)
+    return f"eq=brightness='{amount}*({terms})':contrast='1+{amount}*({terms})':eval=frame"
+
+
+DROP_LOWPASS = 420     # Hz the music is muffled to before a drop
+RISER_SKIP_MIN = 0.0
+
+
+def drop_fx(drops: list[float], beat: float, total: float, riser_len: float = 2.4) -> tuple[str, list[tuple[float, float]]]:
+    """The build-up into each drop a kill lands on (output times): the music goes muffled over a quarter second,
+    two beats before it, then silent for half a beat (a 12 ms fade, no click), and the drop comes in at full on the
+    kill. Returns (filters for the music chain, "" when nothing to do; the riser under each one as (start time,
+    seconds of the riser file to skip), so it ends on the drop). The muffle is two low-pass stages whose dry/wet mix
+    is moved by asendcmd (switching a filter on outright clicks). Pure function; unit-tested."""
+    pre = min(2.0, max(0.8, 2 * beat))
+    gap = min(0.28, max(0.1, beat / 2))
+    cmds, gaps, risers = [], [], []
+    for d in sorted(drops):
+        if d - pre < 0.4 or d > total - 0.2:
+            continue
+        for k in range(1, 11):          # in over 0.25 s
+            cmds.append((d - pre + k * 0.025, k / 10))
+        cmds.append((d, 0.0))
+        gaps.append(f"clip((t-{d - gap:.3f})/0.012\\,0\\,1)*lt(t\\,{d:.3f})")
+        length = min(riser_len, pre + 0.4)
+        risers.append((round(d - length, 3), round(riser_len - length, 3)))
+    if not cmds:
+        return "", []
+    sendcmd = ";".join(f"{t:.3f} lowpass@dfx0 mix {m:g}\\, lowpass@dfx1 mix {m:g}" for t, m in sorted(cmds))
+    filt = (f"aformat=channel_layouts=stereo,asendcmd=c='{sendcmd}',lowpass@dfx0=f={DROP_LOWPASS}:m=0,"
+            f"lowpass@dfx1=f={DROP_LOWPASS}:m=0,aeval=exprs='val(ch)*(1-({'+'.join(gaps)}))':c=same")
+    return filt, risers
+
+
+def sfx_events(segs: list[Seg], slow_kills: list[float]) -> list[tuple[str, float, float]]:
+    """(slot, output time, seconds of the file to skip) of the sound effects of a clip: a hit on every slow-motion
+    kill, and a whoosh that peaks where the slow motion begins (ramp included). Pure function; unit-tested."""
+    from .sfx import WHOOSH_SECONDS
+    out: list[tuple[str, float, float]] = []
+    starts: set[float] = set()
+    for k in slow_kills:
+        out.append(("impact", round(out_time(segs, k), 3), 0.0))
+        j = next((i for i, (a, b, s) in enumerate(segs) if a <= k <= b), None)
+        if j is None:
+            continue
+        while j > 0 and segs[j - 1][2] < 0.999 and abs(segs[j - 1][1] - segs[j][0]) < 1e-3:
+            j -= 1
+        st = round(out_time(segs, segs[j][0]), 3)
+        if st in starts:
+            continue
+        starts.add(st)
+        at = st - WHOOSH_SECONDS
+        out.append(("whoosh", round(max(0.0, at), 3), round(max(0.0, -at), 3)))
+    return sorted(out, key=lambda e: e[1])
+
+
+SFX_LEVEL = {"impact": 0.9, "whoosh": 0.55, "riser": 0.45}   # each effect's level at 100 %
+# the music under the gunshots: gentle, and slow enough to start that the hit of a drum on the same moment gets through
+DUCK = "sidechaincompress=threshold=0.1:ratio=2.5:attack=25:release=250:makeup=1"
 
 
 def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth: bool, kills: list[float],
@@ -786,8 +961,16 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
                  texts: list[dict], voices: list[float] | None = None, voice_vol: float = 1.0,
                  card: dict | None = None, pad: float = 0.0, duck: list[tuple[float, float]] | None = None,
                  music_later: bool = False, lut: Path | None = None, edge_in: str | None = None,
-                 edge_out: str | None = None, reframe: str | None = None) -> str:
-    """texts: [{"file": Path, "size": int, "x": str, "y": str, "alpha": str|None, "enable": str|None, "font": Path}]
+                 edge_out: str | None = None, reframe: str | None = None, shake: float | None = None,
+                 echo: bool = False, pulse: list[float] | None = None, sfx: list[dict] | None = None,
+                 music_fx: str = "", music_gain_db: float = 0.0, duck_shots: bool = False, hold: float = 0.0) -> str:
+    """shake: source time of the kill that shakes the picture; echo: an echo on the slowed-down sound of a
+    slow-motion kill; pulse: output times of a light flash on the beat; sfx: [{"idx": input, "at": output time,
+    "skip": seconds of the file to skip, "vol"}] sound effects mixed in; music_fx: filters for the music (drop_fx);
+    music_gain_db: the song's loudness correction; duck_shots: the music dips under the game's loud sounds;
+    hold: seconds of the last frame (and silence) added at the very end so the encode never comes out short of the
+    exact length the -t asks for.
+    texts: [{"file": Path, "size": int, "x": str, "y": str, "alpha": str|None, "enable": str|None, "font": Path}]
     voices: output-time offsets of the extra audio inputs that follow the clip (and the music, when there is one).
     card: {"idx": input index of the photo or None, "d": avatar px, "x", "y", "initial": Path|None, "font": Path}
     for the circular player card, which stays on screen for the whole clip.
@@ -802,19 +985,23 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
         au = f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS"
         cut_before = i > 0 and a > segs[i - 1][1] + 0.01          # footage left out between the two segments
         cut_after = i + 1 < len(segs) and segs[i + 1][0] > b + 0.01
-        if impact:
-            ks = [k - a for k in kills if a <= k < b]
-            if ks:
-                v += "," + _impact(ks, fps).replace("s=WxH", f"s={width}x{height}")
+        ks = [k - a for k in kills if a <= k < b]
+        if impact and ks:
+            sh = shake - a if shake is not None and a <= shake < b else None
+            v += "," + _impact(ks, fps, sh).replace("s=WxH", f"s={width}x{height}")
         if abs(s - 1.0) > 1e-3:
             v += f",setpts=PTS/{s:.4f}"
-            if s > 1.0:
+            if s > 1.5:
                 # a fast-forward keeps only the frames the output shows, right here: grading the others only to
-                # drop them at the end cost most of the render time
+                # drop them at the end cost most of the render time. (Not on a play sped up a little to land a kill
+                # on the beat: after the kill's zoompan an fps filter here makes FFmpeg crawl; the one at the end
+                # evens the frames out.)
                 v += f",fps={fps:g}"
             if smooth and s < 1.0:
                 v += f",minterpolate=fps={fps:g}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
             au += "," + _atempo_chain(s)
+            if echo and s < 0.6 and ks:   # the slow-motion shot rings out
+                au += ",aecho=0.8:0.6:70|150:0.35|0.2"
             if s > 1.5:
                 au += ",volume=0.35"   # fast-forwarded game audio is a blur: keep it under the music and the voice lines
         seg_len = (b - a) / s
@@ -846,6 +1033,9 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
         grade = f"lut3d=file={_fesc(lut)}:interp=trilinear" if lut else "eq=contrast=1.06:saturation=1.18:gamma=0.98"
         parts.append(f"{cur}{grade},vignette=angle=PI/4.6:dither=0[vl]")
         cur = "[vl]"
+    if pulse:
+        parts.append(f"{cur}{pulse_filter(pulse)}[vp]")
+        cur = "[vp]"
     if reframe:
         parts.append(f"{cur}{reframe}[vr]")
         cur = "[vr]"
@@ -861,6 +1051,8 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
     if fade and not edge_out:
         post.append(f"fade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7")
     post.append(f"fps={fps:g}")   # constant frame rate: speed changes leave irregular timestamps behind
+    if hold > 0:
+        post.append(f"tpad=stop_mode=clone:stop_duration={hold:.3f}")
     parts.append(cur + ",".join(post) + "[vc]")
     ag = f"volume={game_vol:.2f}" if has_music or music_later else "anull"
     win = "+".join(f"between(t\\,{a - 0.25:.2f}\\,{b + 0.25:.2f})" for a, b in duck) if duck else ""
@@ -871,23 +1063,34 @@ def build_filter(segs: list[Seg], *, fps: float, width: int, height: int, smooth
     if fade and not edge_out:
         ag += f",afade=t=out:st={max(0.0, total - 0.7):.3f}:d=0.7"
     mix = ["[ag]"]
-    parts.append(f"[ac0]{ag}[ag]")
+    duck_now = duck_shots and has_music
+    parts.append(f"[ac0]{ag}" + (",asplit=2[ag][agk]" if duck_now else "[ag]"))
     if has_music:
         fade_out = max(0.0, total - 2.0)
         mvol = f"volume={music_vol:.2f}"
         if win:   # and the music to 40 %
             mvol = f"volume='{music_vol:.2f}*(1-0.6*min(1\\,{win}))':eval=frame"
-        parts.append(f"[1:a]atrim=start=0:end={total:.3f},asetpts=PTS-STARTPTS,{mvol},"
-                     f"afade=t=in:st=0:d=1.5,afade=t=out:st={fade_out:.3f}:d=2[am]")
+        gain = f"volume={music_gain_db:.2f}dB," if abs(music_gain_db) > 0.05 else ""
+        fx = f"{music_fx}," if music_fx else ""
+        parts.append(f"[1:a]atrim=start=0:end={total:.3f},asetpts=PTS-STARTPTS,{gain}{fx}{mvol},"
+                     f"afade=t=in:st=0:d=1.5,afade=t=out:st={fade_out:.3f}:d=2" + ("[am0]" if duck_now else "[am]"))
+        if duck_now:
+            parts.append(f"[am0][agk]{DUCK}[am]")
         mix.append("[am]")
     for j, at in enumerate(voices or []):
         idx = j + (2 if has_music else 1)
         parts.append(f"[{idx}:a]adelay={int(round(at * 1000))}:all=1,volume={voice_vol:.2f}[vo{j}]")
         mix.append(f"[vo{j}]")
+    for j, e in enumerate(sfx or []):
+        skip = f"atrim=start={e['skip']:.3f},asetpts=PTS-STARTPTS," if e.get("skip") else ""
+        parts.append(f"[{e['idx']}:a]{skip}aformat=channel_layouts=stereo,adelay={int(round(e['at'] * 1000))}:all=1,"
+                     f"volume={float(e.get('vol', 1.0)):.2f}[fx{j}]")
+        mix.append(f"[fx{j}]")
     if len(mix) > 1:
-        parts.append("".join(mix) + f"amix=inputs={len(mix)}:duration=first:dropout_transition=0:normalize=0[aout]")
+        parts.append("".join(mix) + f"amix=inputs={len(mix)}:duration=first:dropout_transition=0:normalize=0"
+                     + (f",apad=pad_dur={hold:.3f}" if hold > 0 else "") + "[aout]")
     else:
-        parts.append("[ag]anull[aout]")
+        parts.append("[ag]" + (f"apad=pad_dur={hold:.3f}" if hold > 0 else "anull") + "[aout]")
     return ";".join(parts)
 
 
@@ -1233,18 +1436,63 @@ def plan_clip(kill_times: list[float], duration: float, opts: dict):
                 sg = skip_waits(sg, float(opts.get("cine_fast", 6.0)))
         if first_at > 0:
             sg = trim_out_start(sg, first_at)
-        return sg or [(0.0, duration, 1.0)]
+        if opts.get("_retime"):     # kills moved onto the beats of the song (the montage plan or the clip's song)
+            sg = retime(sg, [(float(a), float(b)) for a, b in opts["_retime"]])
+        return absorb_slivers(sg) or [(0.0, duration, 1.0)]
     return kills, slow_kills, keep, mode, plan
 
 
 def clip_timing(kill_times: list[float], duration: float, opts: dict) -> dict:
-    """{"seconds": output length, "hit": output time of the first slow-motion kill or None} of a clip rendered with
-    `opts` (no voice lines). Pure function; unit-tested."""
+    """{"seconds": output length, "hit": output time of the first slow-motion kill or None, "tail": seconds after
+    the last kill, "kills": the kills' source times, "outs": their output times, "slows": which of them are slow}
+    of a clip rendered with `opts` (no voice lines). Pure function; unit-tested."""
     kills, slow_kills, keep, mode, plan = plan_clip(kill_times, duration, opts)
     segs = plan(keep)
     total = total_duration(segs)
     return {"seconds": total, "hit": out_time(segs, slow_kills[0]) if slow_kills else None,
-            "tail": total - out_time(segs, kills[-1]) if kills else total}
+            "tail": total - out_time(segs, kills[-1]) if kills else total,
+            "kills": kills, "outs": [out_time(segs, k) for k in kills], "slows": [k in slow_kills for k in kills]}
+
+
+KILL_MIN_GAP = 0.18    # two kills put on the beat grid stay at least this far apart
+
+
+def beat_anchors(kills: list[float], outs: list[float], slow: list[bool], start: float, grid: list[float],
+                 drop_at: float | None = None, first_slow_fixed: bool = False,
+                 lo: float = 1 / RETIME_REAL[1], hi: float = 1 / RETIME_REAL[0]) -> list[tuple[float, float]]:
+    """Where the kills of a play should land (retime anchors: source time, output time in the play): the first
+    slow-motion kill on `drop_at` (montage time) when given, or where it is when `first_slow_fixed` (a single clip
+    starts its song so the drop is there already), every other kill on the nearest point of the beat grid (montage
+    time; the play starts at `start`) that retime can reach: the time since the kill before squeezed or stretched by
+    lo..hi at most (the real-speed limits), else the kill keeps its own time (no anchor). Pure function;
+    unit-tested."""
+    import bisect
+    out: list[tuple[float, float]] = []
+    prev_out, prev_tgt = 0.0, 0.0
+    first_slow = next((i for i, s in enumerate(slow) if s), None)
+    for i, (k, o) in enumerate(zip(kills, outs)):
+        want = None
+        if i == first_slow and drop_at is not None:
+            want = drop_at - start
+        elif i == first_slow and first_slow_fixed:
+            want = o
+        elif grid:
+            t = start + o
+            j = bisect.bisect_left(grid, t)
+            near = sorted((grid[x] for x in (j - 1, j) if 0 <= x < len(grid)), key=lambda g: abs(g - t))
+            # no beat within reach: the half beat between two (still on the rhythm, an eighth note)
+            halves = sorted(((grid[x] + grid[x + 1]) / 2 for x in (j - 2, j - 1, j) if 0 <= x < len(grid) - 1
+                             and grid[x + 1] - grid[x] > 0.3), key=lambda g: abs(g - t))
+            for g in near + halves:
+                cand = g - start
+                gap, was = cand - prev_tgt, o - prev_out
+                if cand > prev_tgt + KILL_MIN_GAP and (was <= 0.05 or lo - 1e-6 <= gap / was <= hi + 1e-6):
+                    want = cand
+                    break
+        if want is not None and want > prev_tgt + 0.05:
+            out.append((k, round(want, 4)))
+            prev_out, prev_tgt = o, want
+    return out
 
 
 REEL_W, REEL_H = 1080, 1920
@@ -1276,8 +1524,27 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     kills, slow_kills, keep, mode, plan = plan_clip(kill_times, duration, opts)
     title = title_for_shown(title, highlight, len(kills))
     segs = plan(keep)
+    has_music = music is not None and music.exists()
+    song_info, offset, drop_at = None, 0.0, None
+    if has_music:
+        report("finding the drop in the music")
+        song_info = songs.analyze(ffmpeg, music)
+    if song_info and opts.get("cine_music_sync") and slow_kills:
+        # the song starts so its drop plays on the first slow-motion kill, and (cine_kill_beats) every other kill is
+        # put on its beats
+        hit = out_time(segs, slow_kills[0])
+        d = songs.main_drop(song_info, hit, total_duration(segs))
+        if d is not None:
+            offset, drop_at = max(0.0, d - hit), hit
+        if opts.get("cine_kill_beats", True) and not opts.get("_retime"):
+            grid = [g - offset for g in songs.beat_grid(song_info["beats"])]
+            anchors = beat_anchors(kills, [out_time(segs, k) for k in kills], [k in slow_kills for k in kills], 0.0,
+                                   grid, first_slow_fixed=True)
+            if anchors:
+                opts["_retime"] = anchors
+                segs = plan(keep)
     if float(opts.get("_trim") or 0) > 0:          # a montage play ends on a beat: its tail is cut that much
-        segs = trim_out_end(segs, float(opts["_trim"]))
+        segs = absorb_slivers(trim_out_end(segs, float(opts["_trim"])))
     pins = voice.parse_pins(opts.get("cine_voice_pick"))
     voices = plan_voices(segs, kills, total_duration(segs), highlight, pins=pins) if opts.get("cine_voice") else []
     pad = 0.0
@@ -1305,7 +1572,8 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
     else:
         edge_out = None
     total_out = total_duration(segs) + pad
-    has_music = music is not None and music.exists()
+    fps_out = float(fps or 60.0)
+    total_out = max(1, round(total_out * fps_out)) / fps_out    # a whole number of frames: a montage adds them up
     clutch = ({"n": int(highlight.get("n") or 0), "round": highlight.get("round"), "score": score, "start": clutch_at}
               if opts.get("cine_clutch", True) and highlight and highlight.get("type") == "clutch" else None)
     want_text = opts.get("cine_title") or opts.get("cine_counter") or (opts.get("cine_card") and card) or clutch
@@ -1317,18 +1585,43 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         segs, kills, **layout, title=title if opts.get("cine_title") else None,
         counter=bool(opts.get("cine_counter")), font=font, tmp_base=dst,
         card=card if opts.get("cine_card") else None, clutch=clutch) if font else ([], [], None)
-    offset = 0.0
-    if has_music and opts.get("cine_music_sync") and slow_kills:
-        report("finding the drop in the music")
-        offset = music_offset(ffmpeg, music, out_time(segs, slow_kills[0]), total_out)
     args = [str(ffmpeg), "-y", "-i", str(src)]
     if has_music:
         args += ["-stream_loop", "-1"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + ["-i", str(music)]
     for p, _ in voices:
         args += ["-i", str(p)]
+    n_in = 1 + (1 if has_music else 0) + len(voices)
     if card_spec and card and card.get("photo"):
-        card_spec["idx"] = 1 + (1 if has_music else 0) + len(voices)
+        card_spec["idx"] = n_in
         args += ["-loop", "1", "-framerate", f"{fps:g}", "-i", str(card["photo"])]
+        n_in += 1
+    # sound effects: a hit on the slow-motion kills, a whoosh into slow motion, a riser into the drop
+    sfx_on = bool(opts.get("cine_sfx", True))
+    sfx_vol = float(opts.get("cine_sfx_volume", 0.8))
+    music_fx, risers = "", []
+    if drop_at is not None and opts.get("cine_drop_fx", True):
+        music_fx, risers = drop_fx([out_time(segs, slow_kills[0])], float(song_info.get("beat") or 0.5), total_out)
+    fx_list = []
+    events = sfx_events(segs, slow_kills) if sfx_on else []
+    events += [("riser", at, skip) for at, skip in risers] if sfx_on else []
+    for slot, at, skip in events:
+        if at >= total_out - 0.05:
+            continue
+        args += ["-i", str(sfx.file_for(slot))]
+        fx_list.append({"idx": n_in, "at": max(0.0, at), "skip": skip, "vol": sfx_vol * SFX_LEVEL[slot]})
+        n_in += 1
+    beat_fx = bool(opts.get("cine_beat_fx", True))
+    pulse = None
+    if beat_fx:
+        if opts.get("_pulse") is not None:
+            pulse = [float(x) for x in opts["_pulse"]]
+        elif song_info:
+            pulse, last = [], -9.0
+            for d_ in song_info.get("downbeats") or []:
+                t_ = d_ - offset
+                if 0.3 <= t_ <= total_out - 0.2 and t_ - last >= 0.9:
+                    pulse.append(round(t_, 3))
+                    last = t_
     graph = build_filter(segs, fps=fps, width=width, height=height, smooth=bool(opts.get("cine_smooth")), kills=kills,
                          impact=bool(opts.get("cine_impact")), look=bool(opts.get("cine_look")),
                          fade=bool(opts.get("cine_fade")), has_music=has_music,
@@ -1338,10 +1631,13 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
                          duck=[(at, at + durs.get(pth, 1.5)) for pth, at in voices] if voices else None,
                          music_later=music_later,
                          lut=lut_file(str(opts.get("cine_grade", "teal_orange"))) if opts.get("cine_look") else None,
-                         edge_in=edge_in, edge_out=edge_out, reframe=REEL_FILTER if reel else None)
+                         edge_in=edge_in, edge_out=edge_out, reframe=REEL_FILTER if reel else None,
+                         shake=kills[-1] if beat_fx and kills else None, echo=sfx_on, pulse=pulse, sfx=fx_list,
+                         music_fx=music_fx, music_gain_db=float((song_info or {}).get("gain_db") or 0.0),
+                         duck_shots=bool(opts.get("cine_duck", True)), hold=0.25)
     args += ["-filter_complex", graph, "-map", "[vc]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast",
              "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-             "-t", f"{total_out:.3f}", str(dst)]
+             "-frames:v", str(round(total_out * fps_out)), "-t", f"{total_out:.6f}", str(dst)]
     t0 = time.time()
     report("encoding", 0.0)
     try:
@@ -1364,7 +1660,13 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         effects.append("no font found: text overlays skipped")
     if voices:
         effects.append(f"{len(voices)} voice line(s)" + (f", held last frame {pad:.1f}s" if pad > 0 else ""))
-    return {"seconds": round(total_out, 1), "slow_segments": sum(1 for s in segs if s[2] < 0.999),
+    if opts.get("_retime"):
+        effects.append("kills on the beat")
+    if fx_list:
+        effects.append(f"{len(fx_list)} sound effect(s)")
+    if music_fx:
+        effects.append("build-up into the drop")
+    return {"seconds": round(total_out, 6), "slow_segments": sum(1 for s in segs if s[2] < 0.999),
             "dead_seconds": round(duration - sum(b - a for a, b in keep), 1), "music": music.name if has_music else None,
             "music_offset": round(offset, 1), "effects": effects, "encode_time": round(time.time() - t0, 1),
             "hits": [round(out_time(segs, k), 3) for k in slow_kills],
@@ -1407,18 +1709,49 @@ def music_bed_args(ffmpeg: Path, first: Path, offset: float, others: list[Path],
 
 
 def montage_music_args(ffmpeg: Path, video: Path, music: Path, dst: Path, total: float, offset: float,
-                       music_vol: float, duck: list[tuple[float, float]] | None = None) -> list[str]:
+                       music_vol: float, duck: list[tuple[float, float]] | None = None, gain_db: float = 0.0,
+                       music_fx: str = "", risers: list[tuple[float, float]] | None = None,
+                       riser: Path | None = None, riser_vol: float = 0.45, duck_shots: bool = False) -> list[str]:
     """FFmpeg command laying one song (looped when the montage is longer, started `offset` seconds in) under the
-    joined montage's own sound, dipping to 40 % while a voice line plays. The video stream is copied.
-    Pure function; unit-tested."""
+    joined montage's own sound, dipping to 40 % while a voice line plays. gain_db: the song's loudness correction;
+    music_fx: the build-up into the drops (drop_fx); risers: [(start, seconds to skip)] of the riser file `riser`;
+    duck_shots: the music dips under the game's loud sounds. The video stream is copied. Pure function; unit-tested."""
     win = "+".join(f"between(t\\,{a - 0.25:.2f}\\,{b + 0.25:.2f})" for a, b in duck) if duck else ""
     vol = f"volume='{music_vol:.2f}*(1-0.6*min(1\\,{win}))':eval=frame" if win else f"volume={music_vol:.2f}"
-    graph = (f"[1:a]atrim=start=0:end={total:.3f},asetpts=PTS-STARTPTS,{vol},afade=t=in:st=0:d=1.5,"
-             f"afade=t=out:st={max(0.0, total - 2.5):.3f}:d=2.5[m];"
-             "[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]")
-    return [str(ffmpeg), "-y", "-i", str(video), "-stream_loop", "-1"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + \
-        ["-i", str(music), "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
-         "-b:a", "192k", "-movflags", "+faststart", "-t", f"{total:.3f}", str(dst)]
+    gain = f"volume={gain_db:.2f}dB," if abs(gain_db) > 0.05 else ""
+    fx = f"{music_fx}," if music_fx else ""
+    risers = risers if riser else []
+    parts = [f"[1:a]atrim=start=0:end={total:.3f},asetpts=PTS-STARTPTS,{gain}{fx}{vol},afade=t=in:st=0:d=1.5,"
+             f"afade=t=out:st={max(0.0, total - 2.5):.3f}:d=2.5" + ("[m0]" if duck_shots else "[m]")]
+    game = "[0:a]"
+    if duck_shots:
+        parts += ["[0:a]asplit=2[g][gk]", f"[m0][gk]{DUCK}[m]"]
+        game = "[g]"
+    mix = [game, "[m]"]
+    if risers:
+        parts.append("[2:a]aformat=channel_layouts=stereo,asplit=%d" % len(risers) + "".join(f"[rs{i}]" for i in range(len(risers))))
+        for i, (at, skip) in enumerate(risers):
+            parts.append(f"[rs{i}]atrim=start={skip:.3f},asetpts=PTS-STARTPTS,adelay={int(round(max(0.0, at) * 1000))}:all=1,"
+                         f"volume={riser_vol:.2f}[r{i}]")
+            mix.append(f"[r{i}]")
+    parts.append("".join(mix) + f"amix=inputs={len(mix)}:duration=first:dropout_transition=0:normalize=0[a]")
+    args = [str(ffmpeg), "-y", "-i", str(video), "-stream_loop", "-1"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + \
+        ["-i", str(music)] + (["-i", str(riser)] if risers else [])
+    return args + ["-filter_complex", ";".join(parts), "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
+                   "-b:a", "192k", "-movflags", "+faststart", "-t", f"{total:.3f}", str(dst)]
+
+
+BUILDUP_GAP = 15.0     # seconds between two build-ups into a drop at least (the effect wears off when it is everywhere)
+
+
+def buildup_drops(landed: list[tuple[float, float]], big: float = 0.6, gap: float = BUILDUP_GAP) -> list[float]:
+    """Which drops a kill landed on get the build-up (muffle, silence, riser): the first one, and the big ones
+    (strength >= big) at least `gap` seconds after the last one that got it. Pure function; unit-tested."""
+    out: list[float] = []
+    for i, (t, st) in enumerate(sorted(landed)):
+        if (i == 0 or st >= big) and (not out or t - out[-1] >= gap):
+            out.append(t)
+    return out
 
 
 # ---- montage intro card ----------------------------------------------------------------------------------
@@ -1672,20 +2005,6 @@ def kill_times_for(demo_id: str, highlight_id: int, clip_start_tick: int) -> lis
 MUSIC_RECENT = DATA_DIR / "music_recent.json"   # track names, the most recently used last
 
 
-def fresh_tracks(names: list[str], recent: list[str]) -> list[str]:
-    """The tracks to pick a random one from: those not heard for the longest time. Never-used tracks first; of
-    the used ones, the half used longest ago, so the same song does not come back while others wait.
-    Pure function; unit-tested."""
-    if not names:
-        return []
-    last = {n: i for i, n in enumerate(recent)}            # higher = used more recently
-    never = [n for n in names if n not in last]
-    if never:
-        return never
-    by_age = sorted(names, key=lambda n: last[n])
-    return by_age[:max(1, len(by_age) // 2)]
-
-
 def _note_used(name: str) -> None:
     try:
         recent = json.loads(MUSIC_RECENT.read_text(encoding="utf-8")) if MUSIC_RECENT.is_file() else []
@@ -1695,37 +2014,52 @@ def _note_used(name: str) -> None:
         pass
 
 
+def _recent() -> list[str]:
+    try:
+        recent = json.loads(MUSIC_RECENT.read_text(encoding="utf-8")) if MUSIC_RECENT.is_file() else []
+    except (OSError, ValueError):
+        recent = []
+    return recent if isinstance(recent, list) else []
+
+
+def _random_order(exclude: set[str] | None = None) -> list[str]:
+    """The songs allowed in random picks (all of them when every one is switched off), but `exclude`, the
+    hardest-hitting first and the ones heard recently pushed back (songs.rank_for_random)."""
+    from .record import FFMPEG_EXE
+    tracks = [t for t in music_files() if t.name not in (exclude or set())]
+    allowed = [t for t in tracks if songs.in_random(t.name)] or tracks
+    punches = {}
+    for t in allowed:
+        info = None
+        try:
+            info = songs.analyze(FFMPEG_EXE, t) if FFMPEG_EXE.exists() else None
+        except Exception:  # noqa: BLE001
+            info = None
+        punches[t.name] = float((info or {}).get("punch", 0.5))
+    return songs.rank_for_random([t.name for t in allowed], punches, _recent())
+
+
 def pick_music(opts: dict, exclude: set[str] | None = None) -> Path | None:
-    """The chosen track, or (none chosen) a random one among those not heard for the longest time; `exclude`
-    leaves tracks out (the ones already in this montage)."""
+    """The chosen track, or (none chosen) one of the two that hit hardest among the songs allowed in random picks,
+    the ones heard recently pushed back so the strong songs take turns; `exclude` leaves tracks out (the ones
+    already in this montage)."""
     tracks = [t for t in music_files() if t.name not in (exclude or set())]
     if not tracks:
         return None
     want = str(opts.get("cine_music") or "")
     pick = next((t for t in tracks if t.name == want), None)
     if pick is None:
-        try:
-            recent = json.loads(MUSIC_RECENT.read_text(encoding="utf-8")) if MUSIC_RECENT.is_file() else []
-        except (OSError, ValueError):
-            recent = []
-        pool = set(fresh_tracks([t.name for t in tracks], recent if isinstance(recent, list) else []))
-        pick = random.choice([t for t in tracks if t.name in pool])
+        order = _random_order(exclude)
+        name = order[0] if len(order) < 2 or random.random() < 0.7 else order[1]
+        pick = MUSIC_DIR / name
     _note_used(pick.name)
     return pick
 
 
 def fresh_order(exclude: set[str] | None = None) -> list[str]:
-    """Every track name (but `exclude`) in the order pick_music would reach for them: never-used ones first (shuffled),
-    then the one heard longest ago. Nothing is marked as used. A montage fixes its follow-up songs with this."""
-    names = [t.name for t in music_files() if t.name not in (exclude or set())]
-    try:
-        recent = json.loads(MUSIC_RECENT.read_text(encoding="utf-8")) if MUSIC_RECENT.is_file() else []
-    except (OSError, ValueError):
-        recent = []
-    last = {n: i for i, n in enumerate(recent if isinstance(recent, list) else [])}
-    never = [n for n in names if n not in last]
-    random.shuffle(never)
-    return never + sorted((n for n in names if n in last), key=lambda n: last[n])
+    """Every track name allowed in random picks (but `exclude`) in the order a montage should follow its first song
+    with: the hardest-hitting first, the ones heard recently later. Nothing is marked as used."""
+    return _random_order(exclude)
 
 
 def note_used(name: str) -> None:
@@ -1744,7 +2078,8 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
                         smooth: bool | None = None, overrides: dict | None = None, progress=None,
                         montage_piece: bool = False, slow: bool = True, lead: float | None = None,
                         low_priority: bool = False, trim: float = 0.0, t_in: str | None = None,
-                        t_out: str | None = None, swoop: bool = False, reel: bool = False) -> dict:
+                        t_out: str | None = None, swoop: bool = False, reel: bool = False,
+                        retime: list | None = None, pulse: list[float] | None = None) -> dict:
     """Create <name>_cine.mp4 next to the clip and return the updated video entry. montage_piece=True makes
     <name>_mtg.mp4 without music instead (the montage gets one song over everything); the entry is not meant to
     be saved. A montage piece without voice lines comes from (or goes into) the piece cache: the entry then has
@@ -1766,6 +2101,10 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         opts["_out"] = t_out
     if reel:
         opts["_vertical"] = True
+    if retime:
+        opts["_retime"] = [[round(float(a), 4), round(float(b), 4)] for a, b in retime]   # kills put on the beat
+    if pulse:
+        opts["_pulse"] = [round(float(x), 3) for x in pulse]     # the bars' first beats, in the play's own time
     sw = video.get("swoop")
     if sw:   # recorded with a third-person swoop: shown when the montage chose it, else skipped
         if swoop:
@@ -1790,6 +2129,7 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
         key = piece_key(src, {"kills": ctx["kills"], "opts": shape, "title": title, "card": card, "score": ctx.get("score"),
                               "clutch": [(ctx["highlight"] or {}).get(k) for k in ("type", "n", "round")] + [ctx.get("clutch_at")],
                               "photo": _mtime((card or {}).get("photo")), "font": str(find_font()),
+                              "sfx": sfx.signature() if opts.get("cine_sfx", True) else None,
                               "fps": cfg.get("record_fps", 60), "crf": cfg.get("record_crf", 20)})
         path, info, hit = cached_piece(key, make)
         if hit and progress:
@@ -1809,7 +2149,8 @@ def cinematic_for_video(demo_id: str, video: dict, ffmpeg: Path, ffprobe: Path, 
 
 PIECE_CACHE = DATA_DIR / "cache" / "pieces"
 # options a montage piece does not depend on (it has no music; the song goes over the whole montage afterwards)
-PIECE_IGNORES = ("cine_music", "cine_music_volume", "cine_music_sync", "cine_voice_pick", "cine_voice_volume")
+PIECE_IGNORES = ("cine_music", "cine_music_volume", "cine_music_sync", "cine_voice_pick", "cine_voice_volume",
+                 "cine_drop_fx", "cine_duck")
 _inflight: dict[str, threading.Event] = {}   # pieces being made right now, so two jobs never make the same one
 _inflight_lock = threading.Lock()
 

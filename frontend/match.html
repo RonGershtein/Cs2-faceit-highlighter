@@ -169,6 +169,10 @@
     </div>
     <div class="field"><label>Effects</label>
       <label class="opt"><input type="checkbox" id="cine_impact"> zoom punch + flash on each kill</label>
+      <label class="opt" title="A whoosh into slow motion, a deep hit on the slow-motion kill and an echo on the shot. Settings has the effects: drop your own there."><input type="checkbox" id="cine_sfx"> sound effects (whoosh, hit, echo)</label>
+      <div class="row cine-sfx-opt"><span class="opt-text">effects <b id="cine_sfx_volume-val">80%</b></span>
+        <input type="range" id="cine_sfx_volume" min="0" max="1.5" step="0.05" value="0.8" data-fmt="pct"></div>
+      <label class="opt"><input type="checkbox" id="cine_beat_fx"> light flash on the beat, shake on the last kill</label>
       <label class="opt"><input type="checkbox" id="cine_look"> cinematic look (vignette + colour grade)</label>
       <div class="row cine-grade-opt"><span class="opt-text">colour grade</span>
         <select id="cine_grade"><option value="teal_orange">teal &amp; orange</option><option value="dark">dark cinematic</option><option value="classic">classic</option></select></div>
@@ -182,6 +186,9 @@
     <div class="field"><label>Music</label>
       <div class="row"><span class="opt-text">track</span><select id="cine_music"><option value="">random track</option></select></div>
       <label class="opt"><input type="checkbox" id="cine_music_sync"> start the track at its drop so the drop lands on the slow-motion kill</label>
+      <label class="opt" title="The game between two kills runs up to 25% faster or slower so each kill hits a beat"><input type="checkbox" id="cine_kill_beats"> every kill on the beat</label>
+      <label class="opt" title="Before the drop the music goes muffled with a riser under it, cuts out for half a beat, and the drop hits with the kill"><input type="checkbox" id="cine_drop_fx"> build-up into the drop (muffled, a riser, a beat of silence)</label>
+      <label class="opt"><input type="checkbox" id="cine_duck"> music dips under the gunshots</label>
       <div class="row"><span class="opt-text">game sound <b id="cine_game_volume-val">35%</b></span>
         <input type="range" id="cine_game_volume" min="0" max="1" step="0.05" value="0.35" data-fmt="pct"></div>
       <div class="row"><span class="opt-text">music <b id="cine_music_volume-val">70%</b></span>
