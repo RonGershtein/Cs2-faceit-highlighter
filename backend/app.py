@@ -311,6 +311,25 @@ def delete_demo(demo_id: str):
     return {"ok": True}
 
 
+class DeleteDemosIn(BaseModel):
+    ids: list[str]
+
+
+@app.post("/api/demos/delete")
+def delete_demos(body: DeleteDemosIn):
+    """Remove several matches at once, each as delete_demo does (the original download and the clips are kept)."""
+    gone, missing = [], []
+    for demo_id in dict.fromkeys(body.ids):
+        if not db.get_demo(demo_id):
+            missing.append(demo_id)
+            continue
+        if rec:
+            _rec().stamp_match(demo_id)
+        ingest.delete(demo_id)
+        gone.append(demo_id)
+    return {"deleted": len(gone), "missing": missing}
+
+
 @app.post("/api/demos/{demo_id}/reprocess")
 def reprocess(demo_id: str):
     _demo_or_404(demo_id)

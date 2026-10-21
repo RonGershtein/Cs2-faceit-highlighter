@@ -57,7 +57,7 @@
       const hs = me && me.kills ? Math.round(100 * me.headshots / me.kills) : 0;
       const pk = mpicked.indexOf(d.id);
       return `<div class="card match ${done ? '' : 'pending'} ${pk >= 0 ? 'mpicked' : ''}" data-id="${d.id}" data-done="${done ? 1 : 0}" style="--i:${Math.min(i, 9)}">
-        ${done ? `<span class="mpick" aria-hidden="true">${ic('select')}</span>` : ''}
+        <span class="mpick" aria-hidden="true">${ic('select')}</span>
         ${done ? `<a class="link" href="/match.html?id=${esc(d.id)}" aria-label="Open ${esc(d.map || 'match')} ${fmtDate(d.date)}"></a>` : ''}
         ${d.map ? `<div class="radar" style="background-image:url('/api/radars/${esc(d.map)}.png')"></div>` : ''}
         <div class="body">
@@ -87,9 +87,9 @@
     const del = ev.target.closest('.del');
     if (del) { ev.stopPropagation(); if (!confirm('Remove this match from the app?\n\nDeletes the app\'s copy of the demo and the parsed data. Your original download is kept, and the recorded clips stay in the Highlights tab.')) return; await API.deleteDemo(del.dataset.id); refresh(); return; }
     const card = ev.target.closest('.match');
-    if (selecting) {                                    // choosing matches for the squad montage
+    if (selecting) {                                    // choosing matches for a squad montage or to delete
       ev.preventDefault();
-      if (card && card.dataset.done === '1') { const i = mpicked.indexOf(card.dataset.id); if (i >= 0) mpicked.splice(i, 1); else mpicked.push(card.dataset.id); markMatches(); renderBar(); }
+      if (card && card.dataset.id) { const i = mpicked.indexOf(card.dataset.id); if (i >= 0) mpicked.splice(i, 1); else mpicked.push(card.dataset.id); markMatches(); renderBar(); }
       return;
     }
     if (ev.target.closest('a.link')) return;            // the real link handles navigation (Cmd/Ctrl+click works)
@@ -138,16 +138,28 @@
     });
   }
   function renderBar() {
-    mpicked = mpicked.filter(id => demos.some(d => d.id === id && d.status === 'done'));
+    mpicked = mpicked.filter(id => demos.some(d => d.id === id));
+    const ready = montageIds().length;
     $('match-bar').hidden = !selecting;
     $('matches').classList.toggle('selecting', selecting);
     $('match-select').classList.toggle('active', selecting);
     $('match-select').innerHTML = selecting ? 'Done' : `${ic('select')} Select matches`;
-    $('match-bar-n').textContent = mpicked.length ? `${mpicked.length} match${mpicked.length > 1 ? 'es' : ''} selected` : 'Click the matches to put in the montage';
-    $('match-go').disabled = !mpicked.length;
+    $('match-bar-n').textContent = !mpicked.length ? 'Click matches to select them'
+      : `${mpicked.length} match${mpicked.length > 1 ? 'es' : ''} selected` + (ready < mpicked.length ? ` (${ready} ready for a montage)` : '');
+    $('match-go').disabled = !ready;
+    $('match-del').disabled = !mpicked.length;
   }
   $('match-select').onclick = () => { selecting = !selecting; if (!selecting) mpicked = []; markMatches(); renderBar(); };
-  $('match-all').onclick = () => { mpicked = demos.filter(d => d.status === 'done' && (!mapFilter || d.map === mapFilter)).map(d => d.id); markMatches(); renderBar(); };
+  $('match-all').onclick = () => { mpicked = demos.filter(d => !mapFilter || d.map === mapFilter).map(d => d.id); markMatches(); renderBar(); };
+  // the montage uses the selected matches that are parsed; deleting takes any of them
+  function montageIds() { return mpicked.filter(id => demos.some(d => d.id === id && d.status === 'done')); }
+  $('match-del').onclick = async () => {
+    const n = mpicked.length; if (!n) return;
+    if (!confirm(`Remove ${n} match${n > 1 ? 'es' : ''} from the app?\n\nDeletes the app's copy of ${n > 1 ? 'each demo' : 'the demo'} and the parsed data. Your original downloads are kept, and the recorded clips stay in the Highlights tab.`)) return;
+    $('match-del').disabled = true;
+    try { await API.deleteDemos(mpicked); } catch (e) { alert(e.message); }
+    mpicked = []; selecting = false; renderBar(); refresh();
+  };
   $('match-none').onclick = () => { mpicked = []; markMatches(); renderBar(); };
   let multiSeq = 0;
   async function multiPreview() {
@@ -155,7 +167,7 @@
     $('multi-list').innerHTML = '<div class="sq-empty">Looking for your squad\'s plays…</div>';
     $('multi-sum').textContent = ''; $('multi-rec').hidden = true;
     try {
-      const r = await API.multiPreview(mpicked, +$('multi-min').value);
+      const r = await API.multiPreview(montageIds(), +$('multi-min').value);
       if (seq !== multiSeq) return;
       const ms = r.matches;
       const plays = ms.reduce((a, m) => a + m.ids.length, 0), need = ms.reduce((a, m) => a + m.need.length, 0);
@@ -236,7 +248,7 @@
     try {
       await API.saveTeam($('multi-team').value, $('multi-intro').checked);
       if ($('multi-cine').checked) await API.setConfig(montageLook());   // kept as the defaults for next time
-      await API.multiSquad({ demo_ids: mpicked, min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked, music: $('multi-cine').checked ? $('multi-music').value : '', order: $('multi-order').value, casters: $('multi-cine').checked ? $('multi-casters').value : 'off' });
+      await API.multiSquad({ demo_ids: montageIds(), min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked, music: $('multi-cine').checked ? $('multi-music').value : '', order: $('multi-order').value, casters: $('multi-cine').checked ? $('multi-casters').value : 'off' });
       $('multi-modal').style.display = 'none'; $('multi-msg').textContent = ''; $('multi-name').value = '';
       selecting = false; mpicked = []; renderMatches(); renderBar();
       window.startMontagePoll && window.startMontagePoll();

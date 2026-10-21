@@ -60,10 +60,11 @@
       <h2>Matches</h2>
       <span class="spacer"></span>
       <div class="filters"><select id="map-filter" aria-label="Filter by map"><option value="">All maps</option></select>
-        <button class="small" id="match-select" title="pick several matches and make one squad montage of all of them"><svg class="i" aria-hidden="true"><use href="#i-select"/></svg> Select matches</button></div>
+        <button class="small" id="match-select" title="pick several matches: one squad montage of all of them, or delete them"><svg class="i" aria-hidden="true"><use href="#i-select"/></svg> Select matches</button></div>
     </div>
-    <div class="match-bar" id="match-bar" hidden><span id="match-bar-n">Click the matches to put in the montage</span><span class="spacer"></span>
+    <div class="match-bar" id="match-bar" hidden><span id="match-bar-n">Click matches to select them</span><span class="spacer"></span>
       <button class="small ghost" id="match-all">Select all</button><button class="small ghost" id="match-none">Clear</button>
+      <button class="small danger" id="match-del" disabled><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg> Delete</button>
       <button class="small primary" id="match-go" disabled><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Squad montage</button></div>
     <section class="matches" id="matches" aria-label="Matches" aria-busy="true"><div class="card match skel" aria-hidden="true"></div><div class="card match skel" aria-hidden="true"></div><div class="card match skel" aria-hidden="true"></div></section>
   </div>

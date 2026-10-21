@@ -19,6 +19,7 @@ const API = (() => {
     frames: (id) => json(`/api/demos/${id}/frames`),
     highlights: (id, player) => json(`/api/demos/${id}/highlights${player ? `?player=${player}` : ''}`),
     deleteDemo: (id) => json(`/api/demos/${id}`, { method: 'DELETE' }),
+    deleteDemos: (ids) => post('/api/demos/delete', { ids }),
     clips: () => json('/api/clips'),
     deleteClip: (demoId, name) => json(`/api/clips/${demoId}/${encodeURIComponent(name)}`, { method: 'DELETE' }),
     montage: (clips, title, opts = {}) => post('/api/clips/montage', { clips, title, ...opts }),
