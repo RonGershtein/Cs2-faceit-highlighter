@@ -284,8 +284,18 @@ def test_caster_lines_go_on_the_big_plays_only():
     assert [(x["slot"], x["at"]) for x in few] == [("start", 3.8), ("final", 20.4)]      # one in four: the ace
     assert few[1]["prefer"] == ["ace", "multikill"]
     half = plan_caster_lines(plays, "half")
-    assert [x["play"] for x in half if x["slot"] == "final"] == [0, 1]                  # the ace and the first 3K
+    assert [x["play"] for x in half if x["slot"] == "final"] == [1, 3]   # the best of plays 0-1 (the ace), of 2-3 (the 3K)
     assert len(plan_caster_lines(plays, "all")) == 5 and plan_caster_lines(plays, "off") == []
+
+
+def test_caster_lines_spread_over_the_montage_and_reach_the_3ks():
+    from backend.record import plan_caster_lines
+    # 20 plays like a real squad montage: the 4Ks all early, 3Ks later
+    kinds = [40, 40, 40, 40] + [30] * 16
+    plays = [{"kills": [i * 10.0 + 5], "score": sc, "type": "multikill", "n": sc // 10} for i, sc in enumerate(kinds)]
+    picked = [x["play"] for x in plan_caster_lines(plays, "few") if x["slot"] == "final"]
+    assert len(picked) == 5 and picked[0] in (0, 1, 2, 3) and picked[-1] >= 16   # one per stretch of 4, to the end
+    assert sum(1 for i in picked if kinds[i] == 30) >= 3                       # the 3Ks get lines too
 
 
 def test_caster_lines_never_talk_over_each_other():

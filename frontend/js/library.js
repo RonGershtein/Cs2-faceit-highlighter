@@ -201,8 +201,8 @@
   const SLOW_HINT = { song: 'Slow motion only where a kill lands on a drop of the song.', all: 'Every kill in slow motion.', none: 'Everything at normal speed.' };
   const setSlow = segment('multi-slow-seg', 'multi-slow', (v) => { $('multi-slow-hint').textContent = SLOW_HINT[v]; });
   setSlow('song');
-  const CASTER_HINT = { off: 'No caster lines.', few: 'A caster line after the biggest plays (aces, clutches, 4Ks), about one play in four.',
-    half: 'A caster line after about half of the plays, the biggest first.', all: 'A caster line after every play.' };
+  const CASTER_HINT = { off: 'No caster lines.', few: 'A caster line about every fourth play, spread over the montage: the best play of each four gets it (a 3K too, when it is the best).',
+    half: 'A caster line about every second play: the better play of each two.', all: 'A caster line after every play.' };
   const setCasters = segment('multi-casters-seg', 'multi-casters', (v) => { $('multi-casters-hint').textContent = CASTER_HINT[v] + (v === 'off' ? '' : ' Never on every kill, never two at once; the song keeps its sync.'); });
   setCasters('off');
   async function loadMontageLook() {   // the choices made last time

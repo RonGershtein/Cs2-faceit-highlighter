@@ -2040,7 +2040,9 @@ CASTER_GAP = 1.0        # seconds of quiet at least between two caster lines
 def plan_caster_lines(plays: list[dict], amount: str, start: float = 0.0) -> list[dict]:
     """Which caster lines a montage gets, in montage time, before the lines are picked: [{"slot", "prefer", "at",
     "play"}]. plays: in montage order, {"kills": [montage times], "score": how big, "type": highlight type, "n":
-    kills}. amount: "few" (a quarter of the plays: the aces, clutches and biggest multi-kills), "half" or "all".
+    kills}. amount: "few" (about one play in four), "half" or "all". The montage is split into that many equal
+    stretches of plays and the biggest play of each stretch gets the line, so the lines are spread over the whole
+    video (not bunched where the aces happen to be) and a 3K gets one when it is the best play around it.
     A start line opens the montage; each chosen play gets one line right after its last kill (an ace line for an
     ace, a clutch line for a clutch). Never on every kill: the montage is not a commentary. Pure function;
     unit-tested."""
@@ -2048,8 +2050,12 @@ def plan_caster_lines(plays: list[dict], amount: str, start: float = 0.0) -> lis
     if not share or not plays:
         return []
     with_kills = [i for i, p in enumerate(plays) if p.get("kills")]
-    n = max(1, round(len(with_kills) * share))
-    chosen = set(sorted(with_kills, key=lambda i: (-float(plays[i].get("score") or 0), i))[:n])
+    n = max(1, min(len(with_kills), round(len(with_kills) * share)))
+    chosen = set()
+    for g in range(n):     # stretch g of the plays (in montage order): its biggest play
+        part = with_kills[round(g * len(with_kills) / n):round((g + 1) * len(with_kills) / n)]
+        if part:
+            chosen.add(max(part, key=lambda i: (float(plays[i].get("score") or 0), -i)))
     out = [{"slot": "start", "prefer": [], "at": round(start + 0.3, 3), "play": None}]
     for i, p in enumerate(plays):
         if i not in chosen:
