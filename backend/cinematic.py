@@ -1670,6 +1670,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
             "dead_seconds": round(duration - sum(b - a for a, b in keep), 1), "music": music.name if has_music else None,
             "music_offset": round(offset, 1), "effects": effects, "encode_time": round(time.time() - t0, 1),
             "hits": [round(out_time(segs, k), 3) for k in slow_kills],
+            "kills_out": [round(out_time(segs, k), 3) for k in kills if out_time(segs, k) <= total_out],
             "duck": [(round(at, 3), round(at + durs.get(pth, 1.5), 3)) for pth, at in voices]}
 
 
@@ -1711,11 +1712,13 @@ def music_bed_args(ffmpeg: Path, first: Path, offset: float, others: list[Path],
 def montage_music_args(ffmpeg: Path, video: Path, music: Path, dst: Path, total: float, offset: float,
                        music_vol: float, duck: list[tuple[float, float]] | None = None, gain_db: float = 0.0,
                        music_fx: str = "", risers: list[tuple[float, float]] | None = None,
-                       riser: Path | None = None, riser_vol: float = 0.45, duck_shots: bool = False) -> list[str]:
+                       riser: Path | None = None, riser_vol: float = 0.45, duck_shots: bool = False,
+                       voices: list[tuple[Path, float]] | None = None, voice_vol: float = 1.0) -> list[str]:
     """FFmpeg command laying one song (looped when the montage is longer, started `offset` seconds in) under the
     joined montage's own sound, dipping to 40 % while a voice line plays. gain_db: the song's loudness correction;
     music_fx: the build-up into the drops (drop_fx); risers: [(start, seconds to skip)] of the riser file `riser`;
-    duck_shots: the music dips under the game's loud sounds. The video stream is copied. Pure function; unit-tested."""
+    duck_shots: the music dips under the game's loud sounds; voices: caster lines (file, montage time) laid over it
+    all, the game sound dipping to half under them too. The video stream is copied. Pure function; unit-tested."""
     win = "+".join(f"between(t\\,{a - 0.25:.2f}\\,{b + 0.25:.2f})" for a, b in duck) if duck else ""
     vol = f"volume='{music_vol:.2f}*(1-0.6*min(1\\,{win}))':eval=frame" if win else f"volume={music_vol:.2f}"
     gain = f"volume={gain_db:.2f}dB," if abs(gain_db) > 0.05 else ""
@@ -1724,8 +1727,11 @@ def montage_music_args(ffmpeg: Path, video: Path, music: Path, dst: Path, total:
     parts = [f"[1:a]atrim=start=0:end={total:.3f},asetpts=PTS-STARTPTS,{gain}{fx}{vol},afade=t=in:st=0:d=1.5,"
              f"afade=t=out:st={max(0.0, total - 2.5):.3f}:d=2.5" + ("[m0]" if duck_shots else "[m]")]
     game = "[0:a]"
+    if voices and win:     # the game under the casters
+        parts.append(f"[0:a]volume='1-0.5*min(1\\,{win})':eval=frame[g0]")
+        game = "[g0]"
     if duck_shots:
-        parts += ["[0:a]asplit=2[g][gk]", f"[m0][gk]{DUCK}[m]"]
+        parts += [f"{game}asplit=2[g][gk]", f"[m0][gk]{DUCK}[m]"]
         game = "[g]"
     mix = [game, "[m]"]
     if risers:
@@ -1734,11 +1740,35 @@ def montage_music_args(ffmpeg: Path, video: Path, music: Path, dst: Path, total:
             parts.append(f"[rs{i}]atrim=start={skip:.3f},asetpts=PTS-STARTPTS,adelay={int(round(max(0.0, at) * 1000))}:all=1,"
                          f"volume={riser_vol:.2f}[r{i}]")
             mix.append(f"[r{i}]")
+    first_voice = 2 + (1 if risers else 0)
+    for j, (_, at) in enumerate(voices or []):
+        parts.append(f"[{first_voice + j}:a]aformat=channel_layouts=stereo,adelay={int(round(at * 1000))}:all=1,"
+                     f"volume={voice_vol:.2f}[vo{j}]")
+        mix.append(f"[vo{j}]")
     parts.append("".join(mix) + f"amix=inputs={len(mix)}:duration=first:dropout_transition=0:normalize=0[a]")
     args = [str(ffmpeg), "-y", "-i", str(video), "-stream_loop", "-1"] + (["-ss", f"{offset:.3f}"] if offset > 0 else []) + \
         ["-i", str(music)] + (["-i", str(riser)] if risers else [])
+    for f, _ in voices or []:
+        args += ["-i", str(f)]
     return args + ["-filter_complex", ";".join(parts), "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
                    "-b:a", "192k", "-movflags", "+faststart", "-t", f"{total:.3f}", str(dst)]
+
+
+def voice_over_args(ffmpeg: Path, video: Path, dst: Path, voices: list[tuple[Path, float]], voice_vol: float = 1.0) -> list[str]:
+    """FFmpeg command laying caster lines (file, time) over a video that has no song, the game sound dipping to half
+    under them. The video stream is copied. Pure function; unit-tested."""
+    win = "+".join(f"between(t\\,{at - 0.25:.2f}\\,{at + 4.0:.2f})" for _, at in voices)
+    parts = [f"[0:a]volume='1-0.5*min(1\\,{win})':eval=frame[g]"]
+    mix = ["[g]"]
+    for j, (_, at) in enumerate(voices):
+        parts.append(f"[{j + 1}:a]aformat=channel_layouts=stereo,adelay={int(round(at * 1000))}:all=1,volume={voice_vol:.2f}[vo{j}]")
+        mix.append(f"[vo{j}]")
+    parts.append("".join(mix) + f"amix=inputs={len(mix)}:duration=first:dropout_transition=0:normalize=0[a]")
+    args = [str(ffmpeg), "-y", "-i", str(video)]
+    for f, _ in voices:
+        args += ["-i", str(f)]
+    return args + ["-filter_complex", ";".join(parts), "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
+                   "-b:a", "192k", "-movflags", "+faststart", str(dst)]
 
 
 BUILDUP_GAP = 15.0     # seconds between two build-ups into a drop at least (the effect wears off when it is everywhere)

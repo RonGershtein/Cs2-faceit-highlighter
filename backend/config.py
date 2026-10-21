@@ -43,6 +43,8 @@ DEFAULTS: dict = {
     "montage_beat_cuts": True, # end every montage play on a beat of the song (its tail cut a little)
     "montage_outro": True,
     "montage_lineup": True,    # the end card shows the squad: avatars, nicknames and kills of the players in the montage     # end montages with the end card: GG, the team name and the stats of the plays
+    "montage_casters": "off",  # caster lines in a multi-match montage: "off", "few" (the big plays), "half" or "all" of the
+                               # plays; a one-match montage with the casters ticked uses it too ("few" when it is "off")
     "montage_swoop": True,     # show the third-person swoop on some plays (one, then 3-5 without)
     "montage_slow": "song",    # slow motion in montages: "song" (where a kill lands on a drop), "all", "none"
     "montage_order": "song",   # squad montages and recaps: "song" (plays ordered to fit the song's drops) or "date"

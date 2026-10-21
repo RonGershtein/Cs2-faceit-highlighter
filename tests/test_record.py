@@ -401,7 +401,7 @@ def test_match_groups_get_one_soundtrack_over_the_whole_video(tmp_path, monkeypa
     monkeypatch.setattr(rec, "MONTAGE_DIR", tmp_path)
     seen = []
 
-    def fake(plays, overrides, work_dir, out, base=0, last=True, intro=None, follow=None, reorder=None):
+    def fake(plays, overrides, work_dir, out, base=0, last=True, intro=None, follow=None, reorder=None, casters="off"):
         seen.append(([v["file"] for _, v in plays], overrides["cine_music"], intro is not None))
         return {"seconds": 20.0, "music": "Granite.mp3", "songs": ["Granite.mp3", "Blood Sugar.mp3"], "order": [2, 0, 1]}
     monkeypatch.setattr(rec, "_render_song_montage", fake)

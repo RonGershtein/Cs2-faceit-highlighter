@@ -78,14 +78,16 @@ class ConfigIn(BaseModel):
     montage_swoop: bool | None = None
     montage_outro: bool | None = None
     montage_transition: str | None = None
+    montage_casters: str | None = None
     cine_grade: str | None = None
     cine_look: bool | None = None
 
 
 CONFIG_KEYS = ("my_steamid", "cs2_path", "watch_folder", "export_folder", "tick_step", "watch_interval", "share_email",
                "record_encoder", "montage_slow", "montage_swoop", "montage_outro", "montage_transition", "cine_grade",
-               "cine_look")
+               "cine_look", "montage_casters")
 CHOICES = {"montage_slow": ("song", "all", "none"), "montage_transition": ("mixed", "whip", "zoom", "flash", "none"),
+           "montage_casters": ("off", "few", "half", "all"),
            "cine_grade": ("classic", "teal_orange", "dark")}
 
 
@@ -603,6 +605,7 @@ class MultiSquadIn(BaseModel):
     cinematic: bool = True         # False: the recorded clips joined as they are, no song
     music: str = ""                # one track for every match; "" = a fresh random track per match
     order: str = ""                # "song": the order that fits the song best, "date": match order, "" = config
+    casters: str = "off"           # caster lines: "off", "few" (the big plays), "half" or "all" of the plays
 
 
 @app.post("/api/squad/multi/preview")
@@ -616,7 +619,7 @@ def multi_squad(body: MultiSquadIn):
     """One squad montage of several matches (records what is missing first); poll /api/squad/status."""
     try:
         return _rec().start_multi_squad(body.demo_ids, max(2, min(5, body.min_kills)), body.title, body.cinematic, body.music,
-                                            body.order)
+                                            body.order, body.casters)
     except RuntimeError as e:
         raise HTTPException(409, str(e))
 

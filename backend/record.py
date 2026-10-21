@@ -1930,8 +1930,9 @@ def pre_render_while_recording(predict, overrides: dict | None, intro: bool, reo
     come out the same."""
     from . import cinematic as cine
     cfg = load_config()
-    if not cfg.get("render_while_recording", True) or cine.options(cfg, overrides).get("cine_voice"):
+    if not cfg.get("render_while_recording", True):
         return None
+    overrides = {**(overrides or {}), "cine_voice": False}   # as _render_song_montage: caster lines go over the montage
 
     def recording() -> bool:
         return (_job or {}).get("status") in ("preparing", "recording", "encoding") and (_squad_job or {}).get("status") == "running"
@@ -2030,6 +2031,74 @@ def concat_exact_args(files: list[Path], seconds: list[float], list_file: Path, 
     chain.append("".join(f"[a{i}]" for i in range(len(files))) + f"concat=n={len(files)}:v=0:a=1[a]")
     return args + ["-filter_complex", ";".join(chain), "-map", "0:v", "-map", "[a]", "-c:v", "copy",
                    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)]
+
+
+CASTER_SHARE = {"few": 0.25, "half": 0.5, "all": 1.0}   # montage casters: the share of plays that get a line
+CASTER_GAP = 1.0        # seconds of quiet at least between two caster lines
+
+
+def plan_caster_lines(plays: list[dict], amount: str, start: float = 0.0) -> list[dict]:
+    """Which caster lines a montage gets, in montage time, before the lines are picked: [{"slot", "prefer", "at",
+    "play"}]. plays: in montage order, {"kills": [montage times], "score": how big, "type": highlight type, "n":
+    kills}. amount: "few" (a quarter of the plays: the aces, clutches and biggest multi-kills), "half" or "all".
+    A start line opens the montage; each chosen play gets one line right after its last kill (an ace line for an
+    ace, a clutch line for a clutch). Never on every kill: the montage is not a commentary. Pure function;
+    unit-tested."""
+    share = CASTER_SHARE.get(amount)
+    if not share or not plays:
+        return []
+    with_kills = [i for i, p in enumerate(plays) if p.get("kills")]
+    n = max(1, round(len(with_kills) * share))
+    chosen = set(sorted(with_kills, key=lambda i: (-float(plays[i].get("score") or 0), i))[:n])
+    out = [{"slot": "start", "prefer": [], "at": round(start + 0.3, 3), "play": None}]
+    for i, p in enumerate(plays):
+        if i not in chosen:
+            continue
+        typ, k = str(p.get("type") or ""), int(p.get("n") or len(p["kills"]))
+        prefer = ["ace", "multikill"] if typ == "ace" or k >= 5 else [typ] if typ in ("clutch", "multikill", "knife", "ninja_defuse") else []
+        out.append({"slot": "final", "prefer": prefer, "at": round(max(p["kills"]) + 0.4, 3), "play": i})
+    return out
+
+
+def pick_caster_lines(plan: list[dict], total: float, duration_of, pick) -> list[tuple[Path, float]]:
+    """The caster files and their montage times for a plan (plan_caster_lines): pick(slot, prefer) -> a file or None,
+    duration_of(file) -> seconds. A line that would start before the one before has finished (plus CASTER_GAP) or
+    run past the end of the montage is left out, so the casters never talk over each other. Pure function;
+    unit-tested."""
+    out, free_at = [], 0.0
+    for ln in sorted(plan, key=lambda x: x["at"]):
+        if ln["at"] < free_at:
+            continue
+        f = pick(ln["slot"], ln["prefer"])
+        if f is None:
+            continue
+        d = float(duration_of(f) or 0) or 1.5
+        if ln["at"] + d > total - 0.3:
+            continue
+        out.append((f, ln["at"]))
+        free_at = ln["at"] + d + CASTER_GAP
+    return out
+
+
+def _caster_lines(plays: list[tuple[str, dict]], infos: list[dict], amount: str, total: float,
+                  intro_secs: float = 0.0) -> list[tuple[Path, float]]:
+    """The caster lines (file, montage time) of a joined montage: infos are the pieces in montage order (each play's
+    with "_play" and "kills_out"; intro and end cards without), amount as plan_caster_lines."""
+    if not amount or amount == "off":
+        return []
+    from . import cinematic as cine, voice
+    ffprobe = FFMPEG_DIR / "bin" / "ffprobe.exe"
+    rows, t = [], 0.0
+    for inf in infos:
+        if "_play" in inf:
+            d, v = plays[inf["_play"]]
+            h = (v.get("ctx") or {}).get("highlight") or next((x for x in db.get_highlights(d) if x["id"] == v.get("highlight_id")), None)
+            rows.append({"kills": [t + float(k) for k in inf.get("kills_out") or inf.get("hits") or []],
+                         "score": play_score(v, h), "type": (h or {}).get("type") or v.get("type"),
+                         "n": len((h or {}).get("kills") or [])})
+        t += float(inf.get("seconds") or 0)
+    plan = plan_caster_lines(rows, amount, start=intro_secs)
+    return pick_caster_lines(plan, total, lambda f: cine.probe_duration(ffprobe, f), lambda slot, prefer: voice.pick(slot, prefer))
 
 
 def _join(files: list[Path], infos: list[dict], out: Path, list_file: Path) -> None:
@@ -2541,16 +2610,24 @@ def plan_song_order(variants: list[list[dict]], scores: list[float], start: floa
 
 def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, work_dir: Path, out: Path,
                          base: int = 0, last: bool = True, intro: dict | None = None, reorder: bool | None = None,
-                         follow: list[str] | None = None) -> dict:
+                         follow: list[str] | None = None, casters: str | None = None) -> dict:
     """Every play (demo_id, its videos.json entry) rendered cinematic without music, joined in the given order,
     then ONE song over the whole video (its drop on the first slow-motion kill, dipping under the voice lines).
     Progress goes to _squad_job; base / last: this is one part (plays base.. of the job's total) of a recap.
     intro: {"team", "sub", "stats"} puts the intro card first (the song already plays under it).
     reorder / follow: see plan_montage (the plays may be joined in another order than given).
+    casters: "off", "few", "half" or "all" (plan_caster_lines); None: the config's montage_casters when the caster
+    lines are ticked (cine_voice), else off. The lines go over the joined montage with the song, never into the
+    plays, so the plays keep the timing that puts their kills on the music.
     Returns {"seconds", "music", "songs", "order": the play indices in the order they were joined}. The clips' own
     cinematic versions are left alone."""
     from . import cinematic as cine
     ffprobe = FFMPEG_DIR / "bin" / "ffprobe.exe"
+    if casters is None:
+        amount = str(load_config().get("montage_casters", "off"))
+        casters = (amount if amount in CASTER_SHARE else "few") if cine.options(load_config(), overrides).get("cine_voice") else "off"
+    voice_vol = float(cine.options(load_config(), overrides).get("cine_voice_volume", 1.0))
+    overrides = {**(overrides or {}), "cine_voice": False}     # the plays themselves never carry caster lines
     pieces: list[Path] = []
     cached: set[Path] = set()     # pieces that live in the piece cache: never deleted here
     infos: list[dict] = []
@@ -2613,7 +2690,7 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
         for i in order:   # joined in the planned order
             (demo_id, _), nv = plays[i], results[i]
             pieces.append(Path(nv["cine_path"]) if nv.get("cine_path") else VIDEOS_DIR / demo_id / nv["cine"])
-            infos.append(nv["cine_info"])
+            infos.append({**nv["cine_info"], "_play": i})
         cached = {Path(nv["cine_path"]) for nv in results if nv.get("cine_path")}
         if intro and pieces:
             _squad_job["piece"] = "making the intro"
@@ -2650,6 +2727,8 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
             _squad_job.update({"stage": "joining", "piece": "joining the plays"})
         total, hit, duck = montage_timeline(infos)
         _join(pieces, infos, joined, work_dir / f"montage_list_{stamp}.txt")
+        voices = _caster_lines(plays, infos, casters, total, intro_secs=float(infos[0]["seconds"]) if infos and "_play" not in infos[0] else 0.0)
+        duck = duck + [(at, at + (cine.probe_duration(ffprobe, f) or 1.5)) for f, at in voices]
         opts = cine.options(load_config(), overrides)
         music = plan_song or cine.pick_music(opts)   # drop-planned montages keep the song they were planned on
         song, songs = None, []
@@ -2677,13 +2756,18 @@ def _render_song_montage(plays: list[tuple[str, dict]], overrides: dict | None, 
                     gain_db=0.0 if bed else float((fi or {}).get("gain_db") or 0.0), music_fx=music_fx,
                     risers=risers if sfx_on else [], riser=cine.sfx.file_for("riser") if sfx_on and risers else None,
                     riser_vol=float(opts.get("cine_sfx_volume", 0.8)) * cine.SFX_LEVEL["riser"],
-                    duck_shots=bool(opts.get("cine_duck", True))), capture_output=True, text=True)
+                    duck_shots=bool(opts.get("cine_duck", True)), voices=voices, voice_vol=voice_vol),
+                    capture_output=True, text=True)
             finally:
                 if bed:
                     bed.unlink(missing_ok=True)
             if r.returncode != 0 or not out.exists():
                 raise RuntimeError("adding the song failed: " + r.stderr[-400:])
             song = music.name
+        elif voices:
+            r = subprocess.run(cine.voice_over_args(FFMPEG_EXE, joined, out, voices, voice_vol), capture_output=True, text=True)
+            if r.returncode != 0 or not out.exists():
+                raise RuntimeError("adding the caster lines failed: " + r.stderr[-400:])
         else:
             joined.replace(out)
         return {"seconds": round(total, 1), "music": song, "songs": [song] + songs if song else [], "order": order}
@@ -2922,7 +3006,8 @@ def start_recap(date_from: str, date_to: str, min_kills: int = 3, best_of: int |
 
 
 def _render_match_groups(groups: list[list[tuple[str, dict]]], out: Path, stamp: str, intro: dict | None,
-                         music: str = "", follow: list[str] | None = None, reorder: bool | None = None) -> dict:
+                         music: str = "", follow: list[str] | None = None, reorder: bool | None = None,
+                         casters: str = "off") -> dict:
     """Several matches in one video with ONE soundtrack over the whole of it: every play rendered cinematic, the
     matches oldest first, the intro before the first play, then the chosen song (`music`, or a song not heard
     lately) from its drop on the first slow-motion kill; when the video is longer than the song, the next
@@ -2933,7 +3018,7 @@ def _render_match_groups(groups: list[list[tuple[str, dict]]], out: Path, stamp:
     MONTAGE_DIR.mkdir(parents=True, exist_ok=True)
     plays = [x for g in groups for x in g]
     made = _render_song_montage(plays, cine.options(overrides={"cine_music": music or ""}), MONTAGE_DIR, out, intro=intro,
-                                follow=follow, reorder=reorder)
+                                follow=follow, reorder=reorder, casters=casters)
     return {"seconds": made["seconds"], "music": made.get("songs") or ([made["music"]] if made.get("music") else []),
             "plays": [plays[i] for i in made["order"]]}
 
@@ -3033,12 +3118,12 @@ def multi_squad_plan(demo_ids: list[str], min_kills: int = 3) -> list[dict]:
 
 
 def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", cinematic: bool = True,
-                      music: str = "", order: str = "") -> dict:
+                      music: str = "", order: str = "", casters: str = "off") -> dict:
     """The squad montage of several matches as one video (background job, squad_status() with demo_id "montages"):
     record what is missing match by match in CS2, then every play cinematic with one soundtrack over the whole video
     (cinematic=False: the recorded clips as they are, no song), the intro first, the matches joined oldest first,
     saved with the montages. order: "song" (the plays in the order that fits the soundtrack, plan_montage),
-    "date" (match order) or "" (config montage_order)."""
+    "date" (match order) or "" (config montage_order). casters: "off", "few", "half" or "all" (plan_caster_lines)."""
     global _squad_job
     if _squad_job and _squad_job.get("status") == "running":
         raise RuntimeError("a montage is already being made")
@@ -3102,7 +3187,8 @@ def start_multi_squad(demo_ids: list[str], min_kills: int = 3, title: str = "", 
             dates = {m["demo_id"]: m.get("date") for m in plan}
             intro = squad_intro("Squad montage", plays, dates)
             if cinematic:
-                made = _render_match_groups(groups, out, stamp, intro, song, follow=follow, reorder=reorder)
+                made = _render_match_groups(groups, out, stamp, intro, song, follow=follow, reorder=reorder,
+                                            casters=casters if casters in CASTER_SHARE else "off")
                 plays = made["plays"]   # the order they were joined in
             else:
                 made = _join_as_recorded(plays, out, stamp, intro)

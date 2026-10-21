@@ -272,3 +272,39 @@ def test_silence_edges_cut_silence_but_never_quiet_music():
     assert abs(a - 2.85) < 1e-6 and abs(b - 58.5) < 1e-6                    # the soft intro and the fade-out stay
     assert songs.silence_edges([0.5] * 100, 10.0) is None                    # nothing to cut
     assert songs.silence_edges([0.0] * 100, 10.0) is None                    # all silent: leave it alone
+
+
+def test_caster_lines_go_on_the_big_plays_only():
+    from backend.record import plan_caster_lines
+    plays = [{"kills": [5.0, 6.0, 7.0], "score": 30, "type": "multikill", "n": 3},
+             {"kills": [15.0, 17.0, 18.0, 19.0, 20.0], "score": 50, "type": "ace", "n": 5},
+             {"kills": [30.0, 31.0], "score": 25, "type": "clutch", "n": 2},
+             {"kills": [40.0, 41.0, 42.0], "score": 30, "type": "multikill", "n": 3}]
+    few = plan_caster_lines(plays, "few", start=3.5)
+    assert [(x["slot"], x["at"]) for x in few] == [("start", 3.8), ("final", 20.4)]      # one in four: the ace
+    assert few[1]["prefer"] == ["ace", "multikill"]
+    half = plan_caster_lines(plays, "half")
+    assert [x["play"] for x in half if x["slot"] == "final"] == [0, 1]                  # the ace and the first 3K
+    assert len(plan_caster_lines(plays, "all")) == 5 and plan_caster_lines(plays, "off") == []
+
+
+def test_caster_lines_never_talk_over_each_other():
+    from backend.record import pick_caster_lines
+    plan = [{"slot": "start", "prefer": [], "at": 0.3}, {"slot": "final", "prefer": [], "at": 2.0},
+            {"slot": "final", "prefer": ["ace"], "at": 6.0}, {"slot": "final", "prefer": [], "at": 58.5}]
+    got = pick_caster_lines(plan, 60.0, lambda f: 3.0, lambda slot, prefer: Path(f"{slot}-{'-'.join(prefer)}.mp3"))
+    # 2.0 starts while the start line still talks (to 3.3 + 1 s quiet); 58.5 would run past the end
+    assert got == [(Path("start-.mp3"), 0.3), (Path("final-ace.mp3"), 6.0)]
+    assert pick_caster_lines(plan, 60.0, lambda f: 1.0, lambda slot, prefer: None) == []   # no lines in the library
+
+
+def test_montage_music_lays_the_casters_over_the_song():
+    args = c.montage_music_args(Path("ff"), Path("v.mp4"), Path("m.mp3"), Path("o.mp4"), 60.0, 0.0, 0.7,
+                                duck=[(10.0, 12.0)], voices=[(Path("a.mp3"), 10.0)], voice_vol=0.9, duck_shots=True)
+    g = args[args.index("-filter_complex") + 1]
+    assert "[0:a]volume='1-0.5*min(1" in g and "[g0]asplit=2" in g            # the game dips under the caster
+    assert "[2:a]aformat=channel_layouts=stereo,adelay=10000:all=1,volume=0.90[vo0]" in g and "amix=inputs=3" in g
+    assert args[-12:].count("-i") == 0 and args.count("-i") == 3
+    v = c.voice_over_args(Path("ff"), Path("v.mp4"), Path("o.mp4"), [(Path("a.mp3"), 5.0), (Path("b.mp3"), 20.0)])
+    gv = v[v.index("-filter_complex") + 1]
+    assert "amix=inputs=3" in gv and "adelay=20000" in gv and v.count("-i") == 3

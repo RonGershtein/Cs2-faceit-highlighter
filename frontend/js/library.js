@@ -201,10 +201,15 @@
   const SLOW_HINT = { song: 'Slow motion only where a kill lands on a drop of the song.', all: 'Every kill in slow motion.', none: 'Everything at normal speed.' };
   const setSlow = segment('multi-slow-seg', 'multi-slow', (v) => { $('multi-slow-hint').textContent = SLOW_HINT[v]; });
   setSlow('song');
+  const CASTER_HINT = { off: 'No caster lines.', few: 'A caster line after the biggest plays (aces, clutches, 4Ks), about one play in four.',
+    half: 'A caster line after about half of the plays, the biggest first.', all: 'A caster line after every play.' };
+  const setCasters = segment('multi-casters-seg', 'multi-casters', (v) => { $('multi-casters-hint').textContent = CASTER_HINT[v] + (v === 'off' ? '' : ' Never on every kill, never two at once; the song keeps its sync.'); });
+  setCasters('off');
   async function loadMontageLook() {   // the choices made last time
     try {
       const c = await API.getConfig();
       setSlow(c.montage_slow || 'song');
+      setCasters(c.montage_casters || 'off');
       $('multi-grade').value = c.cine_look === false ? 'off' : (c.cine_grade || 'teal_orange');
       $('multi-trans').value = c.montage_transition || 'mixed';
       $('multi-outro').checked = c.montage_outro !== false;
@@ -213,7 +218,7 @@
   }
   function montageLook() {
     const g = $('multi-grade').value;
-    return { montage_slow: $('multi-slow').value, montage_transition: $('multi-trans').value, montage_outro: $('multi-outro').checked,
+    return { montage_slow: $('multi-slow').value, montage_casters: $('multi-casters').value, montage_transition: $('multi-trans').value, montage_outro: $('multi-outro').checked,
       montage_swoop: $('multi-swoop').checked, cine_look: g !== 'off', ...(g !== 'off' ? { cine_grade: g } : {}) };
   }
   $('multi-cine').addEventListener('change', syncMultiStyle);
@@ -231,7 +236,7 @@
     try {
       await API.saveTeam($('multi-team').value, $('multi-intro').checked);
       if ($('multi-cine').checked) await API.setConfig(montageLook());   // kept as the defaults for next time
-      await API.multiSquad({ demo_ids: mpicked, min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked, music: $('multi-cine').checked ? $('multi-music').value : '', order: $('multi-order').value });
+      await API.multiSquad({ demo_ids: mpicked, min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked, music: $('multi-cine').checked ? $('multi-music').value : '', order: $('multi-order').value, casters: $('multi-cine').checked ? $('multi-casters').value : 'off' });
       $('multi-modal').style.display = 'none'; $('multi-msg').textContent = ''; $('multi-name').value = '';
       selecting = false; mpicked = []; renderMatches(); renderBar();
       window.startMontagePoll && window.startMontagePoll();
