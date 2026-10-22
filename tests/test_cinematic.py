@@ -367,6 +367,13 @@ def test_edge_filters():
     assert "eval=frame" in z and "crop=1920:1080" in z and "(1-t/0.400)" in z and "color=white" in z
     assert c.edge_filter("flash", "in", 1920, 1080).startswith("fade=t=in") and "color=white" in c.edge_filter("flash", "out", 1920, 1080)
     assert c.edge_filter("none", "in", 1920, 1080) == "null"
+    # a play whose last stretch is 3 frames: the flash fits inside it (a fade may not start before 0)
+    import re
+    for style in ("whip", "zoom", "flash"):
+        for side in ("in", "out"):
+            f = c.edge_filter(style, side, 1920, 1080, 0.044)
+            assert all(float(x) >= 0 for x in re.findall(r"st=(-?[\d.]+)", f)), f
+    assert c.edge_filter("zoom", "out", 1920, 1080, 0.005) == "null"
 
 
 def test_clutch_counter_starts_when_the_clutch_does():

@@ -309,7 +309,10 @@ def edge_filter(style: str, side: str, width: int, height: int, d: float = EDGE_
     whip: the picture swings sideways out of the play and into the next, in one direction, smeared by motion blur;
     zoom: a punch in to 1.6x with blur, a white flash on the cut;
     flash: the picture blows out to white and the next play comes back from it.
-    Pure function; unit-tested."""
+    A last stretch shorter than the flash gets it squeezed in (FFmpeg refuses a fade that starts before 0), one
+    shorter than a frame gets no effect at all. Pure function; unit-tested."""
+    if d < 0.01:
+        return "null"
     rise = f"(t/{d:.3f})" if side == "out" else f"(1-t/{d:.3f})"     # 0 -> 1 towards the cut
     ease = f"({rise}*{rise})"
     if style == "whip":
@@ -321,7 +324,8 @@ def edge_filter(style: str, side: str, width: int, height: int, d: float = EDGE_
     if style == "zoom":
         z = f"(1+0.6*{rise})" if side == "in" else f"(1+0.6*{ease})"   # in: settles over the whole 0.4 s
         blur = ",".join(f"avgblur=sizeX={b}:sizeY={b}:enable='between({rise},{lo},{hi})'" for b, lo, hi in ((4, 0.5, 0.8), (10, 0.8, 1.01)))
-        flash = (f"fade=t=out:st={d - 0.06:.3f}:d=0.06:color=white" if side == "out" else "fade=t=in:st=0:d=0.12:color=white")
+        flash = (f"fade=t=out:st={max(0.0, d - 0.06):.3f}:d={min(0.06, d):.3f}:color=white" if side == "out"
+                 else f"fade=t=in:st=0:d={min(0.12, d):.3f}:color=white")
         return (f"scale=w='trunc(iw*{z}/2)*2':h='trunc(ih*{z}/2)*2':eval=frame,crop={width}:{height},{blur},{flash},setsar=1")
     if style == "flash":
         return (f"eq=brightness='0.35*{ease}':eval=frame,fade=t=out:st={d * 0.55:.3f}:d={d * 0.45:.3f}:color=white"
