@@ -144,6 +144,8 @@ kbd { background: var(--bg-4); padding: 0 6px; font-size: var(--fs-s); font-fami
 .recstatus:empty { display: none; }
 .recstatus .progress { margin-top: 8px; }
 .recstatus.err { color: var(--danger); }
+/* montages, recaps and highlight videos: above the tabs, so every tab shows the job */
+#montage-status { margin: 0 0 16px; padding: 12px 16px; background: var(--bg-2); clip-path: var(--chamfer-s); }
 #montage-status { margin: 0 0 16px; padding: 14px 18px; background: var(--bg-2); clip-path: var(--chamfer-s); }
 #montage-status:empty { display: none; }
 .section-head { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; flex-wrap: wrap; }
