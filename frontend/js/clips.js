@@ -8,7 +8,7 @@
   const fmtLen = (s) => { s = Math.round(+s || 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const fmtDay = (d) => { if (!d) return ''; const x = new Date(d); return isNaN(x) ? String(d).slice(0, 10) : x.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
   let clips = [], kind = '', mapFilter = '', picking = false, picked = [], loaded = false;
-  let killMin = 0, favOnly = false;   // with both: the plays of killMin+ kills plus the favorites
+  let killMin = 0, favOnly = false;   // killMin: exactly that many kills; with both: those plays plus the favorites
 
   // ---- tabs ---------------------------------------------------------------------------------------
   const TABS = { matches: ['tab-matches', 'view-matches'], highlights: ['tab-clips', 'view-clips'], squad: ['tab-squad', 'view-squad'] };
@@ -38,7 +38,7 @@
     catch (e) { $('clips').innerHTML = `<div class="card empty">failed to load: ${esc(e.message)}</div>`; }
   }
   function visible() {
-    const big = (c) => (c.kills || 0) >= killMin;
+    const big = (c) => c.kills === killMin;
     return clips.filter(c => (!kind || (kind === 'joined' ? ['long', 'montage'].includes(c.kind) : c.kind === kind))
       && (!mapFilter || c.map === mapFilter || (c.maps || []).includes(mapFilter))
       && (killMin && favOnly ? big(c) || c.fav : killMin ? big(c) : favOnly ? c.fav : true));
