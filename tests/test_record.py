@@ -961,3 +961,21 @@ def test_montage_slow_motion_modes():
         assert sorted(order) == list(range(10)) and all(c["slow"] is want for c in chosen), mode
     _, chosen, _ = plan_song_order(vs, [0.5] * 10, 0.0, lambda h: 0.0, drops)
     assert 0 < sum(c["slow"] for c in chosen) < 10          # "song": only the plays on a drop
+
+
+def test_saved_clips_kills_and_favorites(tmp_path, monkeypatch):
+    r, d = _saved_setup(tmp_path, monkeypatch)
+    cs = {(c["file"]): c for c in r.saved_clips()}
+    assert cs["02_ace.mp4"]["kills"] == 0 and cs["long_2clips.mp4"]["kills"] is None   # no highlight: guessed from the type
+    import json
+    idx = json.loads((d / "videos.json").read_text())
+    idx["videos"][0]["ctx"] = {"highlight": {"kills": [1, 2, 3, 4]}}                     # a deleted match keeps its kills
+    idx["videos"][1]["type"] = "ace"
+    (d / "videos.json").write_text(json.dumps(idx))
+    cs = {(c["file"]): c for c in r.saved_clips()}
+    assert cs["01_clutch.mp4"]["kills"] == 4 and cs["01_clutch_cine.mp4"]["kills"] == 4 and cs["02_ace.mp4"]["kills"] == 5
+    assert not any(c["fav"] for c in cs.values())
+    r.set_favorite("ab12cd34ef567890", "01_clutch_cine.mp4", True)
+    assert [c["file"] for c in r.saved_clips() if c["fav"]] == ["01_clutch_cine.mp4"]
+    r.delete_saved("ab12cd34ef567890", "01_clutch.mp4")                                 # takes its cinematic version along
+    assert r.load_favorites() == set()

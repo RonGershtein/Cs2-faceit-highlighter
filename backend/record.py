@@ -976,6 +976,7 @@ def saved_clips() -> list[dict]:
     out: list[dict] = []
     if not VIDEOS_DIR.is_dir():
         return out
+    favs = load_favorites()
     for d in VIDEOS_DIR.iterdir():
         if not (d / "videos.json").is_file():
             continue
@@ -987,13 +988,20 @@ def saved_clips() -> list[dict]:
             continue
         live = db.get_demo(demo_id) is not None
         match = index.get("match") or _match_from_folder(index.get("export_folder", ""))
+        try:
+            hls = {h["id"]: h for h in db.get_highlights(demo_id)} if live else {}
+        except Exception:  # noqa: BLE001
+            hls = {}
 
         def add(file: str | None, kind: str, v: dict, seconds=None) -> None:
             p = d / file if file else None
             if not p or not p.is_file():
                 return
             st = p.stat()
+            play = kind in ("clip", "cinematic", "reel")
+            h = hls.get(v.get("highlight_id")) or (v.get("ctx") or {}).get("highlight") if play else None
             out.append({"demo_id": demo_id, "file": file, "kind": kind, "demo_exists": live,
+                        "kills": play_kills(v, h) if play else None, "fav": f"{demo_id}/{file}" in favs,
                         "map": match.get("map"), "date": match.get("date"), "match": match,
                         "highlight_id": v.get("highlight_id"), "type": v.get("type"), "round": v.get("round"),
                         "player": v.get("player"), "player_steamid": v.get("player_steamid"),
@@ -1010,10 +1018,38 @@ def saved_clips() -> list[dict]:
         if p.is_file():
             st = p.stat()
             out.append({"demo_id": MONTAGE_ID, "file": m["file"], "kind": "montage", "demo_exists": False,
+                        "kills": None, "fav": f"{MONTAGE_ID}/{m['file']}" in favs,
                         "map": None, "date": None, "match": {}, "maps": m.get("maps", []), "description": m["description"],
                         "seconds": m.get("seconds"), "size": st.st_size, "created": st.st_mtime})
     out.sort(key=lambda c: c["created"], reverse=True)
     return out
+
+
+def _favorites_path() -> Path:
+    return VIDEOS_DIR / "favorites.json"
+
+
+def load_favorites() -> set[str]:
+    """The videos marked as favorites in the Highlights tab, as "<demo_id>/<file>"."""
+    try:
+        return set(json.loads(_favorites_path().read_text(encoding="utf-8")).get("favorites", []))
+    except (OSError, ValueError):
+        return set()
+
+
+def set_favorite(demo_id: str, name: str, on: bool) -> bool:
+    favs = load_favorites()
+    (favs.add if on else favs.discard)(f"{demo_id}/{name}")
+    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+    _favorites_path().write_text(json.dumps({"favorites": sorted(favs)}, indent=1), encoding="utf-8")
+    return on
+
+
+def _forget_favorites(demo_id: str, names: list[str]) -> None:
+    favs = load_favorites()
+    if any(f"{demo_id}/{n}" in favs for n in names):
+        for n in names:
+            set_favorite(demo_id, n, False)
 
 
 def delete_saved(demo_id: str, name: str) -> dict:
@@ -1026,6 +1062,7 @@ def delete_saved(demo_id: str, name: str) -> dict:
             raise RuntimeError("no such clip")
         remove_video_file(MONTAGE_DIR / name)
         _write_montages([m for m in ms if m["file"] != name])
+        _forget_favorites(demo_id, [name])
         return {"ok": True, "files": [name]}
     out_dir = VIDEOS_DIR / demo_id
     index = videos_index(demo_id)
@@ -1051,6 +1088,7 @@ def delete_saved(demo_id: str, name: str) -> dict:
     for n in names:
         remove_video_file(out_dir / n)   # before the index changes: a busy file stays listed, so it can be retried
     (out_dir / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
+    _forget_favorites(demo_id, names)
     return {"ok": True, "files": names}
 
 
@@ -2831,9 +2869,11 @@ def montage_plays(items: list[dict]) -> list[tuple[str, dict]]:
     return plays
 
 
-def start_library_montage(items: list[dict], title: str = "", overrides: dict | None = None) -> dict:
-    """The library's cinematic montage of clips of any matches, in the given order, with one song; background job
-    reported through squad_status() with demo_id "montages"."""
+def start_library_montage(items: list[dict], title: str = "", overrides: dict | None = None, order: str = "mine",
+                          casters: str = "off") -> dict:
+    """The library's cinematic montage of clips of any matches with one song; background job reported through
+    squad_status() with demo_id "montages". order: "mine" (the order picked in the tray) or "song" (the order that
+    fits the song, plan_montage). casters: "off", "few", "half" or "all" (plan_caster_lines)."""
     global _squad_job
     if _squad_job and _squad_job.get("status") == "running":
         raise RuntimeError("a montage is already being made")
@@ -2852,13 +2892,15 @@ def start_library_montage(items: list[dict], title: str = "", overrides: dict | 
             out = MONTAGE_DIR / f"montage_{len(plays)}clips_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
             dates = {d: (videos_index(d).get("match") or {}).get("date") or (db.get_demo(d) or {}).get("date") for d, _ in plays}
             made = _render_song_montage(plays, overrides, MONTAGE_DIR, out, intro=squad_intro("Montage", plays, dates),
-                                        reorder=False)   # the order picked in the tray
+                                        reorder=order == "song", casters=casters if casters in CASTER_SHARE else "off")
+            joined = [plays[i] for i in made["order"]]
             song = made["music"]
-            maps = sorted({(db.get_demo(d) or {}).get("map") or "" for d, _ in plays} - {""})
+            maps = sorted({(videos_index(d).get("match") or {}).get("map") or (db.get_demo(d) or {}).get("map") or ""
+                           for d, _ in plays} - {""})
             entry = {"file": out.name, "seconds": made["seconds"], "maps": maps, "cinematic": True, "music": song,
                      "description": (title.strip()[:80] or f"Montage · {len(plays)} highlights (cinematic)")
                      + (f" · {Path(song).stem}" if song and not title.strip() else ""),
-                     "clips": [{"demo_id": d, "file": v["file"], "description": v.get("description")} for d, v in plays],
+                     "clips": [{"demo_id": d, "file": v["file"], "description": v.get("description")} for d, v in joined],
                      "created": time.time()}
             _save_montage(out, entry)
             _squad_job.update({"status": "done", "stage": "done", "result": {**entry, "demo_id": MONTAGE_ID}})

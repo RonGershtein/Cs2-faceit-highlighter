@@ -515,11 +515,29 @@ def delete_saved_clip(demo_id: str, name: str):
         raise HTTPException(404, str(e))
 
 
+class FavoriteIn(BaseModel):
+    demo_id: str
+    file: str
+    on: bool = True
+
+
+@app.put("/api/clips/favorite")
+def favorite_clip(body: FavoriteIn):
+    """Mark a saved video as a favorite (the Highlights tab can show only those, or those besides the big plays)."""
+    r = _rec()
+    if not (re.fullmatch(r"[0-9a-f]{8,64}", body.demo_id) or body.demo_id == r.MONTAGE_ID) or "/" in body.file \
+            or "\\" in body.file or ".." in body.file or not (r.VIDEOS_DIR / body.demo_id / body.file).is_file():
+        raise HTTPException(404, "no such clip")
+    return {"fav": r.set_favorite(body.demo_id, body.file, body.on)}
+
+
 class MontageIn(BaseModel):
     clips: list[dict]   # [{"demo_id", "file"}] in play order
     title: str = ""
     cinematic: bool = False        # every play made cinematic, one song over the whole montage (background job)
     music: str | None = None       # that song ("" = random); not saved as the default
+    order: str = "mine"            # "mine": the order picked, "song": the order that fits the song
+    casters: str = "off"           # caster lines: "off", "few", "half" or "all" of the plays
 
 
 @app.post("/api/clips/montage")
@@ -530,7 +548,7 @@ def make_montage(body: MontageIn):
         if body.cinematic:
             from . import cinematic as cine
             overrides = cine.options(overrides={"cine_music": body.music}) if body.music is not None else None
-            return _rec().start_library_montage(body.clips, body.title, overrides)
+            return _rec().start_library_montage(body.clips, body.title, overrides, body.order, body.casters)
         return _rec().compile_montage(body.clips, body.title)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, str(e))

@@ -5,6 +5,7 @@
   let config = {};
   let mapFilter = '';
   let selecting = false, mpicked = [];
+  let dlgMode = 'matches', dlgClips = [], dlgDone = null;   // the montage dialog: several matches, or videos picked in Highlights
 
   const fmtDate = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); };
   const myScore = (d) => { if (!d.me) return null; const mine = d.me.team_start === 'CT' ? d.score_a : d.score_b; const theirs = d.me.team_start === 'CT' ? d.score_b : d.score_a; return { mine, theirs, result: mine > theirs ? 'win' : mine < theirs ? 'loss' : 'tie' }; };
@@ -194,8 +195,10 @@
       if (!m.files.length) sel.innerHTML = '<option value="">No music yet: add tracks in a match\'s Cinematic dialog</option>';
     } catch (_) { /* keep the list */ }
   }
-  const syncMultiStyle = () => { $('multi-cine-opts').hidden = !$('multi-cine').checked; };
-  const ORDER_HINT = { song: 'Kills land on the song\'s drops, the biggest plays on the biggest drops.', date: 'The plays in the order they happened, oldest match first.' };
+  const syncMultiStyle = () => { $('multi-cine-opts').hidden = !$('multi-cine').checked; if (dlgMode === 'clips') clipsPreview(); };
+  const ORDER_HINT = { song: 'Kills land on the song\'s drops, the biggest plays on the biggest drops.', date: 'The plays in the order they happened, oldest match first.',
+    mine: 'The videos in the order of your selection (drag them in the tray to change it).' };
+  const orderHint = (v) => ORDER_HINT[v === 'date' && dlgMode === 'clips' ? 'mine' : v];
   // a row of buttons that works like radio buttons and keeps its value in a hidden input
   function segment(id, input, onChange) {
     const seg = $(id);
@@ -208,7 +211,7 @@
     return set;
   }
   segment('multi-min-seg', 'multi-min', () => multiPreview());
-  const setOrder = segment('multi-order-seg', 'multi-order', (v) => { $('multi-order-hint').textContent = ORDER_HINT[v]; });
+  const setOrder = segment('multi-order-seg', 'multi-order', (v) => { $('multi-order-hint').textContent = orderHint(v); });
   setOrder('song');
   const SLOW_HINT = { song: 'Slow motion only where a kill lands on a drop of the song.', all: 'Every kill in slow motion.', none: 'Everything at normal speed.' };
   const setSlow = segment('multi-slow-seg', 'multi-slow', (v) => { $('multi-slow-hint').textContent = SLOW_HINT[v]; });
@@ -235,7 +238,46 @@
   }
   $('multi-cine').addEventListener('change', syncMultiStyle);
   $('multi-plain').addEventListener('change', syncMultiStyle);
+  // the same dialog makes a highlight video of the videos picked in the Highlights tab
+  function setDialogMode(mode) {
+    dlgMode = mode;
+    const clips = mode === 'clips';
+    $('multi-title').textContent = clips ? 'Highlight video' : 'Squad montage';
+    $('multi-lead').textContent = clips ? 'The videos you selected, in one video.' : 'Your squad\'s plays from the selected matches, in one video.';
+    $('multi-min-block').hidden = clips;
+    $('multi-list-label').textContent = clips ? 'Videos' : 'Matches';
+    $('multi-order-mine').textContent = clips ? 'Your order' : 'Match order';
+    $('multi-order-hint').textContent = orderHint($('multi-order').value);
+    $('multi-plain-desc').textContent = clips ? 'The selected videos joined as they are, in your order' : 'The clips joined as they are, with the game sound';
+    $('multi-go-label').textContent = clips ? 'Create highlight video' : 'Create squad montage';
+    $('multi-name').placeholder = clips ? 'Highlight video' : 'Squad montage';
+  }
+  function clipsPreview() {
+    const by = new Map();
+    for (const c of dlgClips) { const k = c.demo_id; if (!by.has(k)) by.set(k, { map: c.map || (c.maps || []).join(' · '), date: c.date, n: 0 }); by.get(k).n++; }
+    const mapName = (m) => (m || 'montage').replace(/^de_/, '').replace(/^./, c => c.toUpperCase());
+    $('multi-list').innerHTML = [...by.values()].map(m => `<div class="sq-match"><span class="map">${esc(mapName(m.map))}<span>${esc(m.date ? fmtDate(m.date).split(' · ')[0].replace(/ \d{4}$/, '') : '')}</span></span>`
+      + `<span class="rec"></span><span class="n">${m.n} video${m.n > 1 ? 's' : ''}</span></div>`).join('') || '<div class="sq-empty">No videos selected</div>';
+    const secs = dlgClips.reduce((a, c) => a + (+c.seconds || 0), 0);
+    $('multi-sum').textContent = dlgClips.length ? `${dlgClips.length} videos · ${fmtLen(secs)}${$('multi-cine').checked ? ' before slow motion' : ''}` : '';
+    const cine = $('multi-cine').checked;
+    const reels = dlgClips.filter(c => c.kind === 'reel').length;
+    const joined = cine ? dlgClips.filter(c => !['clip', 'cinematic'].includes(c.kind)).length : 0;
+    const why = reels ? `${reels} of them ${reels > 1 ? 'are reels' : 'is a reel'} (9:16 for the phone): this video is widescreen. Unselect ${reels > 1 ? 'them' : 'it'} in the tray.`
+      : joined ? `${joined} of them ${joined > 1 ? 'are long videos or montages' : 'is a long video or a montage'}: those cannot be made cinematic again. Unselect ${joined > 1 ? 'them' : 'it'} or pick As recorded.`
+      : dlgClips.length < 2 ? 'Pick at least two videos.' : '';
+    $('multi-rec').hidden = !why; $('multi-rec').textContent = why;
+    $('multi-go').disabled = !!why;
+  }
+  window.openClipMontage = async (items, done) => {
+    dlgClips = items; dlgDone = done;
+    setDialogMode('clips');
+    $('multi-msg').textContent = ''; $('multi-modal').style.display = '';
+    loadMultiMusic(); loadMontageLook(); syncMultiStyle();
+    try { const s = await API.squad(); $('multi-team').value = s.team || ''; $('multi-intro').checked = s.intro !== false; } catch (_) { /* defaults */ }
+  };
   $('match-go').onclick = async () => {
+    setDialogMode('matches');
     $('multi-msg').textContent = ''; $('multi-modal').style.display = '';
     loadMultiMusic(); syncMultiStyle(); loadMontageLook();
     try { const s = await API.squad(); $('multi-team').value = s.team || ''; $('multi-intro').checked = s.intro !== false; } catch (_) { /* defaults */ }
@@ -248,6 +290,17 @@
     try {
       await API.saveTeam($('multi-team').value, $('multi-intro').checked);
       if ($('multi-cine').checked) await API.setConfig(montageLook());   // kept as the defaults for next time
+      if (dlgMode === 'clips') {
+        const body = dlgClips.map(c => ({ demo_id: c.demo_id, file: c.file })), cine = $('multi-cine').checked;
+        if (!cine) $('multi-msg').textContent = 'joining… (can take a minute)';
+        const r = cine ? await API.montage(body, $('multi-name').value, { cinematic: true, music: $('multi-music').value,
+          order: $('multi-order').value === 'song' ? 'song' : 'mine', casters: $('multi-casters').value })
+          : await API.montage(body, $('multi-name').value);
+        $('multi-modal').style.display = 'none'; $('multi-msg').textContent = ''; $('multi-name').value = '';
+        dlgDone && dlgDone(cine ? null : r);
+        if (cine) window.startMontagePoll && window.startMontagePoll();
+        return;
+      }
       await API.multiSquad({ demo_ids: montageIds(), min_kills: +$('multi-min').value, title: $('multi-name').value, cinematic: $('multi-cine').checked, music: $('multi-cine').checked ? $('multi-music').value : '', order: $('multi-order').value, casters: $('multi-cine').checked ? $('multi-casters').value : 'off' });
       $('multi-modal').style.display = 'none'; $('multi-msg').textContent = ''; $('multi-name').value = '';
       selecting = false; mpicked = []; renderMatches(); renderBar();

@@ -219,6 +219,12 @@ kbd { background: var(--bg-4); padding: 0 6px; font-size: var(--fs-s); font-fami
 .clip .kind.k-cinematic { background: var(--accent); color: var(--accent-ink); }
 .clip .kind.k-reel { background: var(--text); color: var(--bg); }
 .clip .kind.k-montage, .clip .kind.k-long { background: var(--ok); color: #04140d; }
+.clip[hidden] { display: none; }
+.clip .fav-mark { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; display: grid; place-items: center; color: var(--accent); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .8)); }
+.picking .clip .fav-mark { right: 44px; }
+.fav-btn { background: transparent; padding: 0; justify-content: center; }
+.fav-btn.on { color: var(--accent); }
+.tray-foot #tray-note { font-size: var(--fs-s); }
 .clip .len { position: absolute; right: 10px; bottom: 10px; padding: 1px 8px; background: rgba(0, 0, 0, .78); font-size: var(--fs-s); font-variant-numeric: tabular-nums; }
 .clip .play { position: absolute; inset: 0; margin: auto; width: 52px; height: 52px; clip-path: var(--chamfer-s); display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); opacity: 0; transform: scale(.9); transition: opacity 180ms ease, transform 220ms var(--ease-out); }
 .clip .play .i { width: 22px; height: 22px; margin-left: 3px; }
@@ -251,8 +257,6 @@ kbd { background: var(--bg-4); padding: 0 6px; font-size: var(--fs-s); font-fami
 .tray-list .tt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tray-list .grip { color: var(--muted); cursor: grab; }
 .tray-foot { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
-.tray-foot input { flex: 1; min-width: 0; }
-.tray-foot select { max-width: 220px; }
 #view-clips.picking { padding-bottom: 220px; }
 .tray.drop-ready { background: var(--bg-5); }
 .tray.drop-over { box-shadow: inset 0 0 0 2px var(--accent); }

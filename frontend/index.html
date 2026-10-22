@@ -74,9 +74,13 @@
       <span class="muted hint-inline">Every clip you recorded, kept even after the match is deleted</span>
       <span class="spacer"></span>
       <div class="filters">
-        <div class="seg" role="group" aria-label="Show">
+        <div class="seg" role="group" aria-label="Show" id="kind-seg">
           <button class="small active" data-kind="">All</button><button class="small" data-kind="cinematic">Cinematic</button><button class="small" data-kind="reel">Reels</button><button class="small" data-kind="clip">Original</button><button class="small" data-kind="joined">Montages</button>
         </div>
+        <div class="seg" role="group" aria-label="Kills" id="kill-seg" title="the plays with at least that many kills (long videos and montages are hidden)">
+          <button class="small active" data-k="0">Any kills</button><button class="small" data-k="3">3K+</button><button class="small" data-k="4">4K+</button><button class="small" data-k="5">Aces</button>
+        </div>
+        <button class="small" id="fav-filter" aria-pressed="false" title="only your favorites; with a kill filter: those plays plus your favorites"><svg class="i" aria-hidden="true"><use href="#i-star"/></svg> Favorites</button>
         <select id="clip-map-filter" aria-label="Filter highlights by map"><option value="">All maps</option></select>
         <button class="small" id="recap-open" title="your squad's plays of a month or a year in one video"><svg class="i" aria-hidden="true"><use href="#i-calendar"/></svg> Recap</button>
         <button class="small" id="montage-mode" title="select clips to delete several at once or join them into a montage (you can also drag a clip)"><svg class="i" aria-hidden="true"><use href="#i-select"/></svg> Select</button>
@@ -123,15 +127,19 @@
     <button class="ghost small" id="tray-all" title="select every clip shown with the current filters">Select all</button><button class="ghost small" id="tray-clear">Clear</button><button class="ghost small" id="tray-close">Done</button>
     <button class="danger small" id="tray-del" disabled><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg> Delete</button></div>
   <ol class="tray-list" id="tray-list"></ol>
-  <div class="tray-foot"><input type="text" id="tray-title" maxlength="80" placeholder="Montage name (optional)" aria-label="Montage name" autocomplete="off">
-    <select id="tray-style" aria-label="Montage style" title="Cinematic: slow motion and effects on every play and one song over the whole montage. As they are: the clips joined as they are."><option value="cine">Cinematic + song</option><option value="plain">As they are</option></select>
-    <select id="tray-music" aria-label="Song"><option value="">random track</option></select>
-    <button class="primary" id="tray-go" disabled title="join the selected clips in this order (pick at least two)"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> Create montage</button></div>
+  <div class="tray-foot"><span class="muted" id="tray-note"></span><span class="spacer"></span>
+    <button class="primary" id="tray-go" disabled title="pick at least two clips: song, slow motion, casters and the rest are chosen next"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> Create highlight video…</button></div>
 </div>
 
 <div class="modal" role="dialog" aria-modal="true" id="video-modal" style="display:none"><div class="modal-box wide">
   <div class="modal-head"><span id="video-title"></span><span class="spacer"></span><a id="video-dl" href="#" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg> Download</a> <button class="small ghost" id="video-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
   <video id="video-el" controls autoplay playsinline></video>
+</div></div>
+
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="del-title" id="del-modal" style="display:none"><div class="modal-box">
+  <div class="modal-head"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg> <span id="del-title">Delete videos</span><span class="spacer"></span><button class="small ghost" id="del-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <p id="del-text"></p>
+  <div class="modal-foot"><button id="del-cancel">Cancel</button><button class="danger" id="del-all"></button><button class="primary" id="del-keep"></button></div>
 </div></div>
 
 <div class="modal" role="dialog" aria-modal="true" aria-labelledby="crop-title" id="crop-modal" style="display:none"><div class="modal-box">
@@ -143,10 +151,10 @@
 </div></div>
 
 <div class="modal" role="dialog" aria-modal="true" aria-labelledby="multi-title" id="multi-modal" style="display:none"><div class="modal-box sq">
-  <div class="modal-head" id="multi-title"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Squad montage <span class="spacer"></span><button class="small ghost" id="multi-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
-  <p class="sq-lead">Your squad's plays from the selected matches, in one video.</p>
+  <div class="modal-head"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> <span id="multi-title">Squad montage</span> <span class="spacer"></span><button class="small ghost" id="multi-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <p class="sq-lead" id="multi-lead">Your squad's plays from the selected matches, in one video.</p>
 
-  <div class="sq-block">
+  <div class="sq-block" id="multi-min-block">
     <div class="sq-label" id="multi-min-label">Plays</div>
     <div class="seg sq-seg" role="radiogroup" aria-labelledby="multi-min-label" id="multi-min-seg">
       <button type="button" role="radio" data-v="3" aria-checked="true" class="active">3K and up</button><button type="button" role="radio" data-v="4" aria-checked="false">4K and up</button><button type="button" role="radio" data-v="5" aria-checked="false">Aces</button>
@@ -155,7 +163,7 @@
   </div>
 
   <div class="sq-block">
-    <div class="sq-label">Matches <span class="sq-sum" id="multi-sum"></span></div>
+    <div class="sq-label"><span id="multi-list-label">Matches</span> <span class="sq-sum" id="multi-sum"></span></div>
     <div class="sq-matches" id="multi-list"><div class="sq-empty">…</div></div>
     <p class="sq-note" id="multi-rec" hidden></p>
   </div>
@@ -164,12 +172,12 @@
     <div class="sq-label" id="multi-style-label">Style</div>
     <div class="sq-choice" role="radiogroup" aria-labelledby="multi-style-label">
       <label class="sq-tile"><input type="radio" name="multi-style" id="multi-cine" checked><b>Cinematic</b><span>Slow motion, effects, player cards and one soundtrack</span></label>
-      <label class="sq-tile"><input type="radio" name="multi-style" id="multi-plain"><b>As recorded</b><span>The clips joined as they are, with the game sound</span></label>
+      <label class="sq-tile"><input type="radio" name="multi-style" id="multi-plain"><b>As recorded</b><span id="multi-plain-desc">The clips joined as they are, with the game sound</span></label>
     </div>
     <div class="sq-sub" id="multi-cine-opts">
       <div class="sq-row"><label class="sq-k" for="multi-music">Song</label><select id="multi-music"><option value="">Random</option></select></div>
       <div class="sq-row"><span class="sq-k" id="multi-order-label">Order</span>
-        <div class="seg sq-seg" role="radiogroup" aria-labelledby="multi-order-label" id="multi-order-seg"><button type="button" role="radio" data-v="song" aria-checked="true" class="active">Fit to the song</button><button type="button" role="radio" data-v="date" aria-checked="false">Match order</button></div></div>
+        <div class="seg sq-seg" role="radiogroup" aria-labelledby="multi-order-label" id="multi-order-seg"><button type="button" role="radio" data-v="song" aria-checked="true" class="active">Fit to the song</button><button type="button" role="radio" data-v="date" aria-checked="false" id="multi-order-mine">Match order</button></div></div>
       <p class="sq-hint" id="multi-order-hint"></p>
       <input type="hidden" id="multi-order" value="song">
       <div class="sq-row"><span class="sq-k" id="multi-slow-label">Slow motion</span>
@@ -195,7 +203,7 @@
     <div><label class="sq-label" for="multi-name">Video name <span class="muted">optional</span></label><input type="text" id="multi-name" maxlength="80" autocomplete="off" placeholder="Squad montage"></div>
   </div>
 
-  <div class="modal-foot"><span class="muted" id="multi-msg" role="status" aria-live="polite"></span><button class="primary" id="multi-go" disabled><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Create squad montage</button></div>
+  <div class="modal-foot"><span class="muted" id="multi-msg" role="status" aria-live="polite"></span><button class="primary" id="multi-go" disabled><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> <span id="multi-go-label">Create squad montage</span></button></div>
 </div></div>
 <div class="modal" role="dialog" aria-modal="true" aria-labelledby="recap-title" id="recap-modal" style="display:none"><div class="modal-box">
   <div class="modal-head" id="recap-title"><svg class="i" aria-hidden="true"><use href="#i-calendar"/></svg> Recap <span class="spacer"></span><button class="small ghost" id="recap-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>

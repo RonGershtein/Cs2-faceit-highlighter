@@ -8,6 +8,7 @@
   const fmtLen = (s) => { s = Math.round(+s || 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const fmtDay = (d) => { if (!d) return ''; const x = new Date(d); return isNaN(x) ? String(d).slice(0, 10) : x.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
   let clips = [], kind = '', mapFilter = '', picking = false, picked = [], loaded = false;
+  let killMin = 0, favOnly = false;   // with both: the plays of killMin+ kills plus the favorites
 
   // ---- tabs ---------------------------------------------------------------------------------------
   const TABS = { matches: ['tab-matches', 'view-matches'], highlights: ['tab-clips', 'view-clips'], squad: ['tab-squad', 'view-squad'] };
@@ -37,8 +38,10 @@
     catch (e) { $('clips').innerHTML = `<div class="card empty">failed to load: ${esc(e.message)}</div>`; }
   }
   function visible() {
+    const big = (c) => (c.kills || 0) >= killMin;
     return clips.filter(c => (!kind || (kind === 'joined' ? ['long', 'montage'].includes(c.kind) : c.kind === kind))
-      && (!mapFilter || c.map === mapFilter || (c.maps || []).includes(mapFilter)));
+      && (!mapFilter || c.map === mapFilter || (c.maps || []).includes(mapFilter))
+      && (killMin && favOnly ? big(c) || c.fav : killMin ? big(c) : favOnly ? c.fav : true));
   }
   function render() {
     $('clip-count').textContent = clips.length ? String(clips.length) : '';
@@ -60,7 +63,8 @@
       return `<article class="card clip ${n >= 0 ? 'picked' : ''}" data-k="${esc(key(c))}" draggable="true" style="--i:${Math.min(i, 11)}">
         <div class="thumb" role="button" tabindex="0" aria-label="${picking ? 'Select' : 'Play'}: ${esc(c.description)}">
           <video src="${url}#t=1.5" preload="metadata" muted playsinline tabindex="-1"></video>
-          <span class="kind k-${c.kind}">${KIND[c.kind] || c.kind}</span>
+          <span class="kind k-${c.kind}">${KIND[c.kind] || c.kind}${c.kills >= 3 ? ` · ${c.kills === 5 ? 'Ace' : c.kills + 'K'}` : ''}</span>
+          ${c.fav ? `<span class="fav-mark" title="favorite">${ic('star')}</span>` : ''}
           <span class="len">${fmtLen(c.seconds)}</span>
           ${picking ? `<span class="pick" aria-hidden="true">${n >= 0 ? n + 1 : ''}</span>` : `<span class="play" aria-hidden="true">${ic('play')}</span>`}
         </div>
@@ -70,6 +74,7 @@
           <div class="clip-foot">
             ${c.demo_exists ? `<a href="/match.html?id=${esc(c.demo_id)}" class="small-link">open match</a>` : (c.kind === 'montage' ? '' : '<span class="muted gone" title="the demo was deleted; the clip is kept">match deleted</span>')}
             <span class="spacer"></span>
+            <button class="icon-btn fav-btn${c.fav ? ' on' : ''}" aria-pressed="${!!c.fav}" title="${c.fav ? 'remove from favorites' : 'add to favorites'}" aria-label="Favorite: ${esc(c.description)}">${ic(c.fav ? 'star' : 'star-o')}</button>
             <a class="icon-btn" href="${url}" download="${esc(c.file)}" title="download" aria-label="Download ${esc(c.description)}">${ic('download')}</a>
             <button class="small ghost del-clip" title="delete this video" aria-label="Delete ${esc(c.description)}">${ic('x')}</button>
           </div>
@@ -78,21 +83,37 @@
   }
   const byKey = (k) => clips.find(c => key(c) === k);
 
-  $('view-clips').querySelector('.seg').addEventListener('click', (e) => {
+  $('kind-seg').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-kind]'); if (!b) return;
     kind = b.dataset.kind;
     b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
     render();
   });
+  function setKillFilter(k, fav) {
+    killMin = k; favOnly = fav;
+    $('kill-seg').querySelectorAll('button').forEach(x => x.classList.toggle('active', +x.dataset.k === k));
+    $('fav-filter').classList.toggle('active', fav); $('fav-filter').setAttribute('aria-pressed', String(fav));
+  }
+  $('kill-seg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-k]'); if (!b) return;
+    setKillFilter(+b.dataset.k, favOnly); render();
+  });
+  $('fav-filter').onclick = () => { setKillFilter(killMin, !favOnly); render(); };
   $('clip-map-filter').addEventListener('change', (e) => { mapFilter = e.target.value; render(); });
 
   $('clips').addEventListener('click', async (e) => {
     const card = e.target.closest('.clip'); if (!card) return;
     const c = byKey(card.dataset.k); if (!c) return;
+    if (e.target.closest('.fav-btn')) {
+      const on = !c.fav;
+      markFav(card, c, on);   // at once: the request can wait behind the thumbnails loading
+      try { await API.favorite(c.demo_id, c.file, on); } catch (err) { markFav(card, c, !on); alert(err.message); }
+      return;
+    }
     if (e.target.closest('.del-clip')) {
       const extra = c.kind === 'clip' && clips.some(x => x.kind === 'cinematic' && x.demo_id === c.demo_id && x.highlight_id === c.highlight_id)
-        ? '\n\nIts cinematic version is deleted too.' : '';
-      if (!confirm(`Delete "${c.description}" (${KIND[c.kind] || c.kind})?${extra}\n\nCopies already in your Downloads folder stay.`)) return;
+        ? `\n\nIts cinematic version is deleted too${(cineOf(c) || {}).fav ? ', and that one is a favorite' : ''}.` : '';
+      if (!confirm(`Delete "${c.description}" (${KIND[c.kind] || c.kind})?${c.fav ? '\n\nIt is one of your favorites.' : ''}${extra}\n\nCopies already in your Downloads folder stay.`)) return;
       try { await API.releaseVideo(c.file); await API.deleteClip(c.demo_id, c.file); picked = picked.filter(k => byKey(k) && k !== key(c)); await load(); renderTray(); }
       catch (err) { alert(err.message); }
       return;
@@ -101,6 +122,16 @@
     if (picking) { togglePick(key(c)); return; }
     openVideo(c);
   });
+  function markFav(card, c, on) {
+    c.fav = on;
+    const b = card.querySelector('.fav-btn');
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); b.title = on ? 'remove from favorites' : 'add to favorites';
+    b.innerHTML = ic(on ? 'star' : 'star-o');
+    const mark = card.querySelector('.fav-mark');
+    if (on && !mark) card.querySelector('.kind').insertAdjacentHTML('afterend', `<span class="fav-mark" title="favorite">${ic('star')}</span>`);
+    if (!on && mark) mark.remove();
+    card.hidden = !visible().includes(c);   // unstarred while only favorites are shown
+  }
   $('clips').addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.classList?.contains('thumb')) { e.preventDefault(); e.target.click(); }
   });
@@ -128,7 +159,6 @@
   // ---- montage ------------------------------------------------------------------------------------
   function setPicking(on) {
     picking = on;
-    if (on) loadMusic();
     $('montage-mode').classList.toggle('active', on);
     $('view-clips').classList.toggle('picking', on);
     $('tray').hidden = !on;
@@ -151,15 +181,9 @@
     const items = picked.map(byKey).filter(Boolean);
     const total = items.reduce((a, c) => a + (+c.seconds || 0), 0);
     const nMatches = new Set(items.map(c => c.demo_id)).size;
-    $('tray-info').textContent = items.length ? `${items.length} selected · ${fmtLen(total)} · from ${nMatches} match${nMatches > 1 ? 'es' : ''}` : 'click or drag clips here; for a montage, the order below is the play order';
-    const cineMode = $('tray-style').value === 'cine';
-    const notPlays = cineMode ? items.filter(c => !['clip', 'cinematic'].includes(c.kind)).length : 0;
-    $('tray-music').hidden = !cineMode;
-    const reels = items.filter(c => c.kind === 'reel').length;   // 9:16: cannot go into a 16:9 montage
-    $('tray-go').disabled = items.length < 2 || notPlays > 0 || reels > 0 || montageRunning;
-    $('tray-go').title = reels ? `${reels} selected video${reels > 1 ? 's are reels' : ' is a reel'} (9:16 for the phone): a montage is widescreen. Unselect ${reels > 1 ? 'them' : 'it'}.`
-      : notPlays ? `${notPlays} selected video${notPlays > 1 ? 's are' : ' is a'} long video${notPlays > 1 ? 's' : ''} or montage${notPlays > 1 ? 's' : ''}: those cannot be made cinematic again. Unselect them or pick "As they are".`
-      : montageRunning ? 'a montage is being made; wait for it to finish' : 'join the selected clips in this order (pick at least two)';
+    $('tray-info').textContent = items.length ? `${items.length} selected · ${fmtLen(total)} · from ${nMatches} match${nMatches > 1 ? 'es' : ''}` : 'click or drag clips here; for a video, the order below is the play order';
+    $('tray-note').textContent = montageRunning ? 'a montage is being made; wait for it to finish' : items.length === 1 ? 'pick at least one more' : '';
+    $('tray-go').disabled = items.length < 2 || montageRunning;
     $('tray-del').disabled = !items.length;
     $('tray-del').innerHTML = `${ic('trash')} Delete${items.length ? ' ' + items.length : ''}`;
     $('tray-list').innerHTML = items.map((c, i) => `<li data-k="${esc(key(c))}" draggable="true" title="drag to change the order"><span class="grip" aria-hidden="true">⠿</span><span class="n">${i + 1}</span><span class="tt" title="${esc(c.description)}">${esc(c.description)}</span>
@@ -182,20 +206,37 @@
     for (const c of visible()) if (!picked.includes(key(c))) picked.push(key(c));
     markPicks(); renderTray();
   };
-  $('tray-style').onchange = renderTray;
-  async function loadMusic() {
-    try {
-      const m = await API.music(), sel = $('tray-music'), cur = sel.value;
-      sel.innerHTML = '<option value="">random track</option>' + m.files.map(f => `<option value="${esc(f)}">${esc(f.replace(/\.[^.]+$/, ''))}</option>`).join('');
-      sel.value = m.files.includes(cur) ? cur : '';
-      if (!m.files.length) sel.innerHTML = '<option value="">no music yet (add it in a match: Cinematic)</option>';
-    } catch (_) { /* keep the list */ }
+  // the cinematic version of an original (deleting an original takes it along)
+  const cineOf = (c) => c.kind === 'clip' ? clips.find(x => x.kind === 'cinematic' && x.demo_id === c.demo_id && x.highlight_id === c.highlight_id) : null;
+  // with favorites among the selected: delete them too, or keep them (and the originals of starred cinematic versions)
+  function askDelete(items) {
+    const keep = items.filter(c => !c.fav && !(cineOf(c) || {}).fav);
+    const favs = items.filter(c => c.fav).length, saved = items.length - favs - keep.length;
+    const s = (n) => n > 1 ? 's' : '';
+    $('del-text').textContent = `${favs} of the ${items.length} selected video${s(items.length)} ${favs > 1 ? 'are favorites' : 'is a favorite'}`
+      + (saved ? ` and ${saved} ${saved > 1 ? 'are originals' : 'is an original'} of a starred cinematic version` : '')
+      + `. Delete ${favs + saved > 1 ? 'them' : 'it'} too, or keep ${favs + saved > 1 ? 'them' : 'it'}? Copies already in your Downloads folder stay.`;
+    $('del-all').textContent = `Delete all ${items.length}`;
+    $('del-keep').textContent = keep.length ? `Keep favorites, delete ${keep.length}` : 'Keep favorites';
+    $('del-modal').style.display = '';
+    return new Promise(res => {
+      const done = (v) => { $('del-modal').style.display = 'none'; res(v); };
+      $('del-all').onclick = () => done(items);
+      $('del-keep').onclick = () => done(keep);
+      $('del-cancel').onclick = $('del-close').onclick = () => done(null);
+      $('del-modal').onclick = (e) => { if (e.target === $('del-modal')) done(null); };
+    });
   }
   $('tray-del').onclick = async () => {
-    const items = picked.map(byKey).filter(Boolean);
+    let items = picked.map(byKey).filter(Boolean);
     if (!items.length) return;
-    const withCine = items.filter(c => c.kind === 'clip' && clips.some(x => x.kind === 'cinematic' && x.demo_id === c.demo_id && x.highlight_id === c.highlight_id && !picked.includes(key(x)))).length;
-    if (!confirm(`Delete ${items.length} video${items.length > 1 ? 's' : ''}?${withCine ? `\n\n${withCine} of them ${withCine > 1 ? 'are originals whose' : 'is an original whose'} cinematic version is deleted too.` : ''}\n\nCopies already in your Downloads folder stay.`)) return;
+    if (items.some(c => c.fav || (cineOf(c) || {}).fav)) {
+      items = await askDelete(items);
+      if (!items || !items.length) return;
+    } else {
+      const withCine = items.filter(c => cineOf(c) && !picked.includes(key(cineOf(c)))).length;
+      if (!confirm(`Delete ${items.length} video${items.length > 1 ? 's' : ''}?${withCine ? `\n\n${withCine} of them ${withCine > 1 ? 'are originals whose' : 'is an original whose'} cinematic version is deleted too.` : ''}\n\nCopies already in your Downloads folder stay.`)) return;
+    }
     const btn = $('tray-del'); btn.disabled = true; btn.textContent = 'deleting…';
     const failed = [];
     // originals first would take their cinematic versions with them; a "no such clip" afterwards is fine
@@ -250,36 +291,21 @@
     markPicks(); renderTray();
   });
 
-  $('tray-go').onclick = async () => {
+  // the montage dialog of the Matches tab (song, order, slow motion, casters, colour…) for the picked videos
+  $('tray-go').onclick = () => {
     const items = picked.map(byKey).filter(Boolean);
     if (items.length < 2) return;
-    const btn = $('tray-go'); btn.disabled = true;
-    const body = items.map(c => ({ demo_id: c.demo_id, file: c.file }));
-    if ($('tray-style').value === 'cine') {
-      btn.textContent = 'starting…';
-      try {
-        await API.montage(body, $('tray-title').value, { cinematic: true, music: $('tray-music').value });
-        picked = []; $('tray-title').value = '';
-        setPicking(false);
-        startMontagePoll();
-      } catch (err) { alert('Could not make the montage: ' + err.message); }
-      btn.innerHTML = `${ic('film')} Create montage`; renderTray();
-      return;
-    }
-    btn.textContent = 'joining… (can take a minute)';
-    try {
-      const r = await API.montage(body, $('tray-title').value);
-      picked = []; $('tray-title').value = '';
-      setPicking(false);
-      showJoined();
-      await load();
-      const made = clips.find(c => c.kind === 'montage' && c.file === r.file);
+    window.openClipMontage(items, async (joined) => {
+      picked = []; setPicking(false);
+      if (!joined) return;            // cinematic: a background job, the status line above the matches follows it
+      showJoined(); await load();
+      const made = clips.find(c => c.kind === 'montage' && c.file === joined.file);
       if (made) openVideo(made);
-    } catch (err) { alert('Could not make the montage: ' + err.message); }
-    btn.innerHTML = `${ic('film')} Create montage`; renderTray();
+    });
   };
   function showJoined() {
-    kind = 'joined'; document.querySelectorAll('#view-clips .seg button').forEach(x => x.classList.toggle('active', x.dataset.kind === 'joined'));
+    kind = 'joined'; $('kind-seg').querySelectorAll('button').forEach(x => x.classList.toggle('active', x.dataset.kind === 'joined'));
+    setKillFilter(0, false);   // montages have no kill count: they would stay hidden
   }
 
   // ---- cinematic montage job (runs in the background; the same job slot as a match's montage) ----------
