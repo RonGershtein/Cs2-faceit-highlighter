@@ -742,13 +742,14 @@
       tools = await API.recordTools();
       const inst = tools.installing;
       $('recstatus').textContent = inst ? `${inst.stage} ${Math.round((inst.progress || 0) * 100)}%` : '';
-      if (tools.ready || (inst && inst.stage === 'error')) { clearInterval(t); $('btn-install-tools').style.display = tools.ready ? 'none' : ''; $('btn-install-tools').disabled = false; if (inst?.error) toast(esc(inst.error)); }
+      if ((tools.ready && !tools.hlae_update) || (inst && inst.stage === 'error')) { clearInterval(t); $('btn-install-tools').style.display = tools.ready && !tools.hlae_update ? 'none' : ''; $('btn-install-tools').disabled = false; if (inst?.error) toast(esc(inst.error)); }
     }, 1500);
   };
   (async () => {
     try { tools = await API.recordTools(); } catch (_) { tools = null; }
     if (tools) {
-      $('btn-install-tools').style.display = tools.windows && !tools.ready && !tools.missing_module ? '' : 'none';
+      $('btn-install-tools').style.display = tools.windows && (!tools.ready || tools.hlae_update) && !tools.missing_module ? '' : 'none';
+      if (tools.ready && tools.hlae_update) $('btn-install-tools').textContent = `Update HLAE (${tools.hlae_update})`;
       if (!tools.windows || tools.missing_module) $('btn-record-sel').title = tools.missing_module ? 'recorder module not installed' : 'recording only works on Windows';
     }
     await loadVideos();

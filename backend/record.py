@@ -33,6 +33,8 @@ TOOLS_DIR = ROOT / "tools"
 HLAE_DIR = TOOLS_DIR / "hlae"
 HLAE_EXE = HLAE_DIR / "HLAE.exe"
 HOOK_DLL = HLAE_DIR / "x64" / "AfxHookSource2.dll"
+HLAE_VERSION_FILE = HLAE_DIR / "cs2watcher_version.txt"   # the release tag we installed
+HLAE_RELEASES_API = "https://api.github.com/repos/advancedfx/advancedfx/releases/latest"
 FFMPEG_DIR = TOOLS_DIR / "ffmpeg"
 FFMPEG_EXE = FFMPEG_DIR / "bin" / "ffmpeg.exe"
 VIDEOS_DIR = DATA_DIR / "videos"
@@ -43,6 +45,7 @@ _lock = threading.Lock()
 _job: dict | None = None
 _cancel = threading.Event()
 _tools_job: dict | None = None
+_hlae_release: dict | None = None   # latest HLAE release, fetched once per app run
 
 
 def is_windows() -> bool:
@@ -70,11 +73,34 @@ def launch_game(demo_path: Path, cfg: dict) -> subprocess.Popen | None:
     return subprocess.Popen(cmd, cwd=str(HLAE_DIR), env=env)
 
 
+def _latest_hlae() -> dict | None:
+    """Latest HLAE release from GitHub, or None when offline. CS2 updates break old HLAE hooks (the game closes at
+    demo load), so the app offers an update whenever a newer release exists."""
+    global _hlae_release
+    if _hlae_release is None:
+        try:
+            _hlae_release = json.loads(urllib.request.urlopen(urllib.request.Request(
+                HLAE_RELEASES_API, headers={"User-Agent": "cs2-watcher"}), timeout=10).read())
+        except Exception:  # noqa: BLE001 - offline: keep recording with what is installed
+            return None
+    return _hlae_release
+
+
+def hlae_update() -> str | None:
+    """Tag of a newer HLAE release than the installed one (an install without a tag file counts as old)."""
+    if not (is_windows() and HLAE_EXE.exists() and HOOK_DLL.exists()):
+        return None
+    latest = (_latest_hlae() or {}).get("tag_name")
+    installed = HLAE_VERSION_FILE.read_text().strip() if HLAE_VERSION_FILE.exists() else None
+    return latest if latest and latest != installed else None
+
+
 def tools_status() -> dict:
     cs2 = find_cs2_path() if is_windows() else None
     return {
         "windows": is_windows(),
         "hlae": HLAE_EXE.exists() and HOOK_DLL.exists(),
+        "hlae_update": hlae_update(),
         "ffmpeg": FFMPEG_EXE.exists(),
         "cs2": str(cs2) if cs2 else None,
         "ready": is_windows() and HLAE_EXE.exists() and HOOK_DLL.exists() and FFMPEG_EXE.exists() and cs2 is not None,
@@ -103,16 +129,17 @@ def install_tools() -> None:
     global _tools_job
     TOOLS_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        if not (HLAE_EXE.exists() and HOOK_DLL.exists()):
-            api = json.loads(urllib.request.urlopen(
-                urllib.request.Request("https://api.github.com/repos/advancedfx/advancedfx/releases/latest",
-                                       headers={"User-Agent": "cs2-watcher"}), timeout=60).read())
+        if not (HLAE_EXE.exists() and HOOK_DLL.exists()) or hlae_update():
+            api = _latest_hlae()
+            if api is None:
+                raise RuntimeError("cannot reach GitHub to download HLAE")
             asset = next(a for a in api["assets"] if re.match(r"hlae_[\d_]+\.zip$", a["name"]))
             zpath = TOOLS_DIR / "hlae.zip"
             _download(asset["browser_download_url"], zpath, "downloading HLAE")
             shutil.rmtree(HLAE_DIR, ignore_errors=True)
             zipfile.ZipFile(zpath).extractall(HLAE_DIR)
             zpath.unlink()
+            HLAE_VERSION_FILE.write_text(api["tag_name"])
         if not FFMPEG_EXE.exists():
             zpath = TOOLS_DIR / "ffmpeg.zip"
             _download(FFMPEG_URL, zpath, "downloading FFmpeg")

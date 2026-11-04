@@ -979,3 +979,34 @@ def test_saved_clips_kills_and_favorites(tmp_path, monkeypatch):
     assert [c["file"] for c in r.saved_clips() if c["fav"]] == ["01_clutch_cine.mp4"]
     r.delete_saved("ab12cd34ef567890", "01_clutch.mp4")                                 # takes its cinematic version along
     assert r.load_favorites() == set()
+
+
+def _hlae_install(tmp_path, monkeypatch, installed_tag):
+    import backend.record as r
+    (tmp_path / "x64").mkdir(parents=True)
+    for f in ("HLAE.exe", "x64/AfxHookSource2.dll"):
+        (tmp_path / f).write_bytes(b"x")
+    if installed_tag:
+        (tmp_path / "v.txt").write_text(installed_tag)
+    monkeypatch.setattr(r, "HLAE_EXE", tmp_path / "HLAE.exe")
+    monkeypatch.setattr(r, "HOOK_DLL", tmp_path / "x64" / "AfxHookSource2.dll")
+    monkeypatch.setattr(r, "HLAE_VERSION_FILE", tmp_path / "v.txt")
+    monkeypatch.setattr(r, "is_windows", lambda: True)
+    monkeypatch.setattr(r, "_hlae_release", {"tag_name": "v2.192.10"})
+    return r
+
+
+def test_hlae_update_offered_when_older_or_untagged(tmp_path, monkeypatch):
+    r = _hlae_install(tmp_path, monkeypatch, None)
+
+    offered = r.hlae_update()
+
+    assert offered == "v2.192.10"
+
+
+def test_hlae_update_not_offered_when_current(tmp_path, monkeypatch):
+    r = _hlae_install(tmp_path, monkeypatch, "v2.192.10")
+
+    offered = r.hlae_update()
+
+    assert offered is None
