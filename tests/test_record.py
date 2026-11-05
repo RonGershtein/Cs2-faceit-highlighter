@@ -13,6 +13,7 @@ def test_build_cfg_schedules_in_order_and_quits():
     names = {"76561198000000001": "Some One"}
     text, seqs = build_cfg(hs, Path("C:/x/raw"), names, {"record_fps": 60, "record_crf": 20}, 64)
     assert "mirv_cmd clear" in text and "mirv_cmd enabled 1" in text
+    assert "mirv_cmd addAtTick 0 demo_resume" in text   # CS2 1.41.9.x FACEIT demo crash
     assert "mirv_cmd addAtTick 100 demo_gototick 4871" in text          # first jump from tick 100 to setup-1 (2 s pre-roll)
     assert "mirv_cmd addAtTick 4872 hl_s1" in text
     assert "mirv_cmd addAtTick 4904 hl_p1" in text and "mirv_cmd addAtTick 4992 hl_p1" in text   # spectator switch repeated

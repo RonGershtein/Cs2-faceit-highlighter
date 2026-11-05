@@ -515,6 +515,8 @@ def build_cfg(hs: list[dict], raw_dir: Path, names: dict[str, str], cfg: dict, t
         "mirv_streams record screen enabled 1", "mirv_streams record startMovieWav 1",
         f"mirv_streams record fps {fps}",
         "mirv_cmd clear", "mirv_cmd enabled 1",
+        # CS2 1.41.9.x crashes (engine2.dll) ~3 s into a FACEIT demo, which starts paused; resuming as it loads avoids it
+        "mirv_cmd addAtTick 0 demo_resume",
     ]
     seqs = []
     prev_end = 0
