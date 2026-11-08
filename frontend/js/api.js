@@ -23,6 +23,7 @@ const API = (() => {
     clips: () => json('/api/clips'),
     favorite: (demo_id, file, on) => json('/api/clips/favorite', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ demo_id, file, on }) }),
     deleteClip: (demoId, name) => json(`/api/clips/${demoId}/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    importClip: (file, start, end, player, text, fail) => { const f = new FormData(); f.append('file', file); f.append('start', start); f.append('end', end); f.append('player', player); f.append('text', text); f.append('fail', fail ? 'true' : 'false'); return json('/api/clips/import', { method: 'POST', body: f }); },
     montage: (clips, title, opts = {}) => post('/api/clips/montage', { clips, title, ...opts }),
     reprocess: (id) => post(`/api/demos/${id}/reprocess`, {}),
     launch: (id, tick, player_name, player_steamid) => post(`/api/demos/${id}/launch`, { tick, player_name, player_steamid }),

@@ -935,27 +935,11 @@ def drop_fx(drops: list[float], beat: float, total: float, riser_len: float = 2.
 
 def sfx_events(segs: list[Seg], slow_kills: list[float]) -> list[tuple[str, float, float]]:
     """(slot, output time, seconds of the file to skip) of the sound effects of a clip: a hit on every slow-motion
-    kill, and a whoosh that peaks where the slow motion begins (ramp included). Pure function; unit-tested."""
-    from .sfx import WHOOSH_SECONDS
-    out: list[tuple[str, float, float]] = []
-    starts: set[float] = set()
-    for k in slow_kills:
-        out.append(("impact", round(out_time(segs, k), 3), 0.0))
-        j = next((i for i, (a, b, s) in enumerate(segs) if a <= k <= b), None)
-        if j is None:
-            continue
-        while j > 0 and segs[j - 1][2] < 0.999 and abs(segs[j - 1][1] - segs[j][0]) < 1e-3:
-            j -= 1
-        st = round(out_time(segs, segs[j][0]), 3)
-        if st in starts:
-            continue
-        starts.add(st)
-        at = st - WHOOSH_SECONDS
-        out.append(("whoosh", round(max(0.0, at), 3), round(max(0.0, -at), 3)))
-    return sorted(out, key=lambda e: e[1])
+    kill. Pure function; unit-tested."""
+    return sorted(("impact", round(out_time(segs, k), 3), 0.0) for k in slow_kills)
 
 
-SFX_LEVEL = {"impact": 0.9, "whoosh": 0.55, "riser": 0.45}   # each effect's level at 100 %
+SFX_LEVEL = {"impact": 0.9, "riser": 0.45}   # each effect's level at 100 %
 # the music under the gunshots: gentle, and slow enough to start that the hit of a drum on the same moment gets through
 DUCK = "sidechaincompress=threshold=0.1:ratio=2.5:attack=25:release=250:makeup=1"
 
@@ -1599,7 +1583,7 @@ def make_cinematic(ffmpeg: Path, ffprobe: Path, src: Path, dst: Path, kill_times
         card_spec["idx"] = n_in
         args += ["-loop", "1", "-framerate", f"{fps:g}", "-i", str(card["photo"])]
         n_in += 1
-    # sound effects: a hit on the slow-motion kills, a whoosh into slow motion, a riser into the drop
+    # sound effects: a hit on the slow-motion kills, a riser into the drop
     sfx_on = bool(opts.get("cine_sfx", True))
     sfx_vol = float(opts.get("cine_sfx_volume", 0.8))
     music_fx, risers = "", []
@@ -2074,8 +2058,8 @@ def _random_order(exclude: set[str] | None = None) -> list[str]:
 
 
 def pick_music(opts: dict, exclude: set[str] | None = None) -> Path | None:
-    """The chosen track, or (none chosen) one of the two that hit hardest among the songs allowed in random picks,
-    the ones heard recently pushed back so the strong songs take turns; `exclude` leaves tracks out (the ones
+    """The chosen track, or (none chosen) one of the four that hit hardest among the songs allowed in random picks
+    that are not among the half heard most recently, so the strong songs take turns; `exclude` leaves tracks out (the ones
     already in this montage)."""
     tracks = [t for t in music_files() if t.name not in (exclude or set())]
     if not tracks:
@@ -2084,7 +2068,7 @@ def pick_music(opts: dict, exclude: set[str] | None = None) -> Path | None:
     pick = next((t for t in tracks if t.name == want), None)
     if pick is None:
         order = _random_order(exclude)
-        name = order[0] if len(order) < 2 or random.random() < 0.7 else order[1]
+        name = random.choice(songs.random_candidates(order, _recent()))
         pick = MUSIC_DIR / name
     _note_used(pick.name)
     return pick

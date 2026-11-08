@@ -144,13 +144,9 @@ def test_clip_timing_follows_the_retime():
     assert got["slows"] == [False, True]
 
 
-def test_sfx_events_whoosh_into_slow_motion_and_hit_on_the_kill():
+def test_sfx_events_hit_on_the_slow_motion_kill():
     segs = [(0.0, 3.0, 1.0), (3.0, 3.3, 0.6), (3.3, 4.5, 0.35), (4.5, 6.0, 1.0)]
-    ev = c.sfx_events(segs, [4.0])
-    kinds = {k: (at, skip) for k, at, skip in ev}
-    assert kinds["impact"][0] == round(c.out_time(segs, 4.0), 3)
-    from backend.sfx import WHOOSH_SECONDS
-    assert abs(kinds["whoosh"][0] - (3.0 - WHOOSH_SECONDS)) < 1e-3     # peaks where the ramp into slow motion starts
+    assert c.sfx_events(segs, [4.0]) == [("impact", round(c.out_time(segs, 4.0), 3), 0.0)]
 
 
 def test_drop_fx_builds_up_into_the_drop():
@@ -196,9 +192,6 @@ def test_built_in_effects_are_made_once(tmp_path, monkeypatch):
     for slot in sfx.SLOTS:
         p = sfx.file_for(slot)
         assert p.is_file() and p.stat().st_size > 10000
-    import wave
-    with wave.open(str(sfx.file_for("whoosh"))) as w:
-        assert abs(w.getnframes() / w.getframerate() - sfx.WHOOSH_SECONDS) < 0.01
     sfx.save("impact", "boom.mp3", b"ID3fake")
     assert sfx.file_for("impact").name == "impact.mp3" and sfx.listing()["slots"][0]["file"] == "impact.mp3"
     sfx.reset("impact")
@@ -318,3 +311,25 @@ def test_montage_music_lays_the_casters_over_the_song():
     v = c.voice_over_args(Path("ff"), Path("v.mp4"), Path("o.mp4"), [(Path("a.mp3"), 5.0), (Path("b.mp3"), 20.0)])
     gv = v[v.index("-filter_complex") + 1]
     assert "amix=inputs=3" in gv and "adelay=20000" in gv and v.count("-i") == 3
+
+
+def test_random_candidates_skips_the_recently_heard_half():
+    order = [f"s{i}" for i in range(8)]                       # best first
+    recent = ["s5", "s0", "s1", "s2"]                         # s2 heard last
+    assert songs.random_candidates(order, recent) == ["s3", "s4", "s6", "s7"]   # s0-s2 and s5... half = 4 most recent
+    assert songs.random_candidates(["a"], ["a"]) == ["a"]     # one song: nothing to rotate
+    assert songs.random_candidates(["a", "b"], ["a", "b"]) == ["a"]   # all heard: the plain ranking
+
+
+def test_song_switched_off_is_never_picked_at_random(tmp_path, monkeypatch):
+    from backend import cinematic as cine
+
+    for n in ("a.mp3", "b.mp3", "c.mp3"):
+        (tmp_path / n).write_bytes(b"x")
+    monkeypatch.setattr(cine, "MUSIC_DIR", tmp_path)
+    monkeypatch.setattr(cine, "MUSIC_RECENT", tmp_path / "recent.json")
+    monkeypatch.setattr(songs, "in_random", lambda name: name != "a.mp3")
+    monkeypatch.setattr(songs, "analyze", lambda *_: None)
+    picks = {cine.pick_music({}).name for _ in range(30)}
+    assert "a.mp3" not in picks and picks
+    assert cine.pick_music({"cine_music": "a.mp3"}).name == "a.mp3"   # still there when chosen by hand

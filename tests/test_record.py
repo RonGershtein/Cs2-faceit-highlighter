@@ -1011,3 +1011,34 @@ def test_hlae_update_not_offered_when_current(tmp_path, monkeypatch):
     offered = r.hlae_update()
 
     assert offered is None
+
+
+def test_import_clip_args_cuts_and_normalizes():
+    from backend.record import import_clip_args
+
+    a = import_clip_args(Path("in.mp4"), Path("out.mp4"), 12.5, 10.0, 1920, 1080, 60, 20, True)
+    assert a[a.index("-ss") + 1] == "12.500" and a[a.index("-t") + 1] == "10.000"
+    assert a.index("-ss") < a.index("-i")                       # fast seek before the input
+    assert "scale=1920:1080" in a[a.index("-vf") + 1] and "fps=60" in a[a.index("-vf") + 1]
+    assert "-an" not in a and a[-1] == "out.mp4"
+    assert "-an" in import_clip_args(Path("in.mp4"), Path("out.mp4"), 0, 5, 1920, 1080, 60, 20, False)
+
+
+def test_fail_args_freezes_the_end_with_a_scratch():
+    from backend import effects
+
+    args, files = effects.fail_args(Path("ff"), Path("in.mp4"), Path("out.mp4"), Path("f.ttf"), Path("s.wav"), "Gal",
+                                    1280, 720, 60, 6.0, True, Path("/tmp/xx"))
+    try:
+        graph = args[args.index("-filter_complex") + 1]
+        assert "tpad=stop_mode=clone:stop_duration=1.0" in graph and "concat=n=2:v=1:a=1" in graph
+        assert args.count("-i") == 3 and "-sseof" in args and args[-1] == "out.mp4"
+        assert [f.read_text() for f in files] == ["Gal", "FAIL"]
+        _, nameless = effects.fail_args(Path("ff"), Path("in.mp4"), Path("out.mp4"), Path("f.ttf"), Path("s.wav"), "",
+                                        1280, 720, 60, 6.0, False, Path("/tmp/yy"))
+        assert [f.read_text() for f in nameless] == ["FAIL"]
+        for f in nameless:
+            f.unlink()
+    finally:
+        for f in files:
+            f.unlink(missing_ok=True)

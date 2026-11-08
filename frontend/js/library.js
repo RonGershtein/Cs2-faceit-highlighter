@@ -361,7 +361,7 @@
       $('mu-count').textContent = m.files.length ? `${m.files.length} song${m.files.length === 1 ? '' : 's'}` : '';
       const rate = await API.musicRatings().catch(() => ({}));
       const meter = (p) => p == null ? '' : `<i class="punch" title="hits ${p >= 0.6 ? 'hard' : p >= 0.35 ? 'medium' : 'softly'}: ${p >= 0.6 ? 'often opens a montage' : p >= 0.35 ? 'picked now and then' : 'rarely picked when no song is chosen'}">${[0.15, 0.35, 0.6].map(x => `<b class="${p >= x ? 'on' : ''}"></b>`).join('')}</i>`;
-      $('mu-list').innerHTML = m.files.length ? m.files.map(f => `<span class="pill${rate[f] && rate[f].random === false ? ' off' : ''}" title="${esc(f)}${rate[f] && rate[f].random === false ? ' (only when picked)' : ''}">${meter(rate[f] && rate[f].punch)}<button class="pill-name song-open" data-song="${esc(f)}" title="See and edit the drops of ${esc(f)}">${esc(f.replace(/\.[^.]+$/, ''))}</button><button class="small ghost" data-del-song="${esc(f)}" title="remove" aria-label="Remove ${esc(f)}">${ic('x')}</button></span>`).join('')
+      $('mu-list').innerHTML = m.files.length ? m.files.map(f => `<span class="pill${rate[f] && rate[f].random === false ? ' off' : ''}" title="${esc(f)}${rate[f] && rate[f].random === false ? ' (only when picked)' : ''}"><input type="checkbox" class="song-rand" data-song="${esc(f)}" ${rate[f] && rate[f].random === false ? '' : 'checked'} title="Tick: this song can be picked when no song is chosen. Untick: only used when you choose it." aria-label="Can be picked at random: ${esc(f)}">${meter(rate[f] && rate[f].punch)}<button class="pill-name song-open" data-song="${esc(f)}" title="See and edit the drops of ${esc(f)}">${esc(f.replace(/\.[^.]+$/, ''))}</button><button class="small ghost" data-del-song="${esc(f)}" title="remove" aria-label="Remove ${esc(f)}">${ic('x')}</button></span>`).join('')
         : '<span class="muted">No songs yet: cinematic videos get slow motion only.</span>';
     } catch (e) { $('mu-list').innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
   }
@@ -385,6 +385,11 @@
   muDrop.addEventListener('drop', e => addSongs([...e.dataTransfer.files]));
   // a song dropped next to the zone must not make the browser leave the app to play it
   ['dragover', 'drop'].forEach(n => modal.addEventListener(n, e => e.preventDefault()));
+  $('mu-list').addEventListener('change', async (e) => {   // the tick in front of a song: may it be picked at random
+    const c = e.target.closest('input.song-rand'); if (!c) return;
+    try { await API.setRandom(c.dataset.song, c.checked); } catch (err) { $('mu-count').textContent = err.message; }
+    renderSongs();
+  });
   $('mu-list').addEventListener('click', async (e) => {
     const b = e.target.closest('button[data-del-song]'); if (!b) return;
     if (!confirm(`Remove "${b.dataset.delSong}" from the music library?`)) return;

@@ -464,6 +464,7 @@ button.primary .rec-dot { background: var(--accent-ink); }
 .mu-list .pill .song-open { padding: 0; background: none; font: inherit; color: inherit; cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .mu-list .pill .song-open:hover { color: var(--accent-hi); } }
 .mu-list .pill.off { opacity: .55; }
+.mu-list .pill .song-rand { margin: 0 4px 0 0; accent-color: var(--accent, currentColor); cursor: pointer; }
 .punch { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; margin-right: 4px; }
 .punch b { width: 3px; background: var(--bg-5); }
 .punch b:nth-child(1) { height: 5px; } .punch b:nth-child(2) { height: 8px; } .punch b:nth-child(3) { height: 12px; }

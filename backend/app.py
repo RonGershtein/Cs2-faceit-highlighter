@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -505,7 +506,7 @@ def saved_clips():
 
 @app.delete("/api/clips/{demo_id}/{name}")
 def delete_saved_clip(demo_id: str, name: str):
-    if not (re.fullmatch(r"[0-9a-f]{8,64}", demo_id) or demo_id == "montages") or "/" in name or "\\" in name or ".." in name:
+    if not (re.fullmatch(r"[0-9a-f]{8,64}", demo_id) or demo_id in ("montages", "imported")) or "/" in name or "\\" in name or ".." in name:
         raise HTTPException(400, "bad name")
     try:
         return _rec().delete_saved(demo_id, name)
@@ -525,10 +526,28 @@ class FavoriteIn(BaseModel):
 def favorite_clip(body: FavoriteIn):
     """Mark a saved video as a favorite (the Highlights tab can show only those, or those besides the big plays)."""
     r = _rec()
-    if not (re.fullmatch(r"[0-9a-f]{8,64}", body.demo_id) or body.demo_id == r.MONTAGE_ID) or "/" in body.file \
+    if not (re.fullmatch(r"[0-9a-f]{8,64}", body.demo_id) or body.demo_id in (r.MONTAGE_ID, r.IMPORT_ID)) or "/" in body.file \
             or "\\" in body.file or ".." in body.file or not (r.VIDEOS_DIR / body.demo_id / body.file).is_file():
         raise HTTPException(404, "no such clip")
     return {"fav": r.set_favorite(body.demo_id, body.file, body.on)}
+
+
+@app.post("/api/clips/import")
+async def import_clip(file: UploadFile = File(...), start: float = Form(0), end: float = Form(0),
+                      player: str = Form(""), text: str = Form(""), fail: bool = Form(False)):
+    """A video filmed outside the app (Medal, phone...), cut to [start, end] seconds and saved as a clip."""
+    r = _rec()
+    r.IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = r.IMPORT_DIR / f"upload_{uuid.uuid4().hex}.part"
+    try:
+        with open(tmp, "wb") as out:
+            while chunk := await file.read(1 << 20):
+                out.write(chunk)
+        return await run_in_threadpool(r.import_clip, tmp, start, end, player, text, fail)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 class MontageIn(BaseModel):
@@ -888,7 +907,7 @@ def music_ratings():
     return out
 
 
-# ---- sound effects (the hit, the whoosh and the riser of the cinematic edits) --------------------------------
+# ---- sound effects (the hit and the riser of the cinematic edits) --------------------------------
 
 @app.get("/api/sfx")
 def list_sfx():

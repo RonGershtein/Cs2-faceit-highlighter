@@ -82,6 +82,7 @@
         </div>
         <button class="small" id="fav-filter" aria-pressed="false" title="only your favorites; with a kill filter: those plays plus your favorites"><svg class="i" aria-hidden="true"><use href="#i-star"/></svg> Favorites</button>
         <select id="clip-map-filter" aria-label="Filter highlights by map"><option value="">All maps</option></select>
+        <button class="small" id="import-open" title="add a video filmed outside the app (Medal, phone...), cut to the part you want"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> Import clip</button>
         <button class="small" id="recap-open" title="your squad's plays of a month or a year in one video"><svg class="i" aria-hidden="true"><use href="#i-calendar"/></svg> Recap</button>
         <button class="small" id="montage-mode" title="select clips to delete several at once or join them into a montage (you can also drag a clip)"><svg class="i" aria-hidden="true"><use href="#i-select"/></svg> Select</button>
       </div>
@@ -134,6 +135,21 @@
 <div class="modal" role="dialog" aria-modal="true" id="video-modal" style="display:none"><div class="modal-box wide">
   <div class="modal-head"><span id="video-title"></span><span class="spacer"></span><a id="video-dl" href="#" download><svg class="i" aria-hidden="true"><use href="#i-download"/></svg> Download</a> <button class="small ghost" id="video-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
   <video id="video-el" controls autoplay playsinline></video>
+</div></div>
+
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="imp-title" id="import-modal" style="display:none"><div class="modal-box cine">
+  <div class="modal-head"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> <span id="imp-title">Import a clip</span><span class="spacer"></span><button class="small ghost" id="imp-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <div class="field"><label for="imp-file">Video (Medal, phone, anything)</label><input type="file" id="imp-file" accept="video/*"></div>
+  <div id="imp-editor" hidden>
+    <video id="imp-video" controls playsinline></video>
+    <div class="field" style="margin-top:14px"><label for="imp-start">Start: <b id="imp-start-t"></b></label><input type="range" id="imp-start" min="0" step="0.1" value="0">
+      <label for="imp-end">End: <b id="imp-end-t"></b></label><input type="range" id="imp-end" min="0" step="0.1" value="0">
+      <div class="row"><button class="small" id="imp-set-start" type="button">Start here</button><button class="small" id="imp-set-end" type="button">End here</button><button class="small" id="imp-play" type="button">Play the cut</button><span class="muted" id="imp-len" style="align-self:center"></span></div></div>
+    <div class="field"><label for="imp-player">Player</label><select id="imp-player"></select><span class="hint" id="imp-player-hint"></span></div>
+    <label class="opt"><input type="checkbox" id="imp-fail"> <span>Fail style: the name tag at the start, then the last frame freezes under a FAIL stamp with a record scratch (add about a second)</span></label>
+    <div class="field"><label for="imp-text">What happens (optional)</label><input type="text" id="imp-text" maxlength="60" autocomplete="off" placeholder="e.g. flashed himself"></div>
+  </div>
+  <div class="modal-foot"><span class="muted" id="imp-msg"></span><span class="spacer"></span><button id="imp-cancel">Cancel</button><button class="primary" id="imp-go" disabled>Save clip</button></div>
 </div></div>
 
 <div class="modal" role="dialog" aria-modal="true" aria-labelledby="del-title" id="del-modal" style="display:none"><div class="modal-box">
@@ -241,7 +257,7 @@
       <div class="uploads" id="mu-uploads" aria-live="polite"></div>
     </div>
     <div id="mu-list" class="mu-list"></div>
-    <p class="sq-note">Click a song to see its beats and drops, and move the drops yourself when one is off. The bars show how hard a song hits: when no song is chosen, a montage opens with one that hits hard.</p>
+    <p class="sq-note">Click a song to see its beats and drops, and move the drops yourself when one is off. The bars show how hard a song hits: when no song is chosen, a montage opens with one that hits hard. Untick the box in front of a song you do not want to hear: it is then never picked at random (not as the opening song, not as a follow-up), but you can still choose it yourself.</p>
   </div>
   <div class="st" aria-labelledby="fx-title">
     <div class="sq-label" id="fx-title">Sound effects</div>
@@ -273,6 +289,7 @@
 <script src="/js/share.js"></script>
 <script src="/js/library.js"></script>
 <script src="/js/clips.js"></script>
+<script src="/js/import.js"></script>
 <script src="/js/squad.js"></script>
 <script src="/js/songs.js"></script>
 </body>

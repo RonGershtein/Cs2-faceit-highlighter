@@ -63,7 +63,7 @@ DEFAULTS: dict = {
     "cine_music_sync": True,   # start the track at its drop so the drop lands on the slow-motion kill
     "cine_kill_beats": True,   # every other kill on a beat (the footage between kills sped up / slowed down a little)
     "cine_drop_fx": True,      # build-up into a drop a kill lands on: the music muffled, a moment of silence, then the drop
-    "cine_sfx": True,          # sound effects: a hit on slow-motion kills, a whoosh into slow motion, a riser into the drop
+    "cine_sfx": True,          # sound effects: a hit on slow-motion kills, a riser into the drop
     "cine_sfx_volume": 0.8,
     "cine_duck": True,         # the music dips under the gunshots
     "cine_beat_fx": True,      # a light flash on the beat and a shake on the last kill

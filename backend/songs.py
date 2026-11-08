@@ -487,6 +487,15 @@ def forget(name: str) -> None:
         _write_marks(m, name, {})
 
 
+def random_candidates(order: list[str], recent: list[str], keep: int = 4) -> list[str]:
+    """The songs a random pick chooses from: the best of `order` (ranked, see rank_for_random) that are not among the
+    half heard most recently, so every strong song takes its turn instead of the hardest-hitting one coming back
+    every third montage. Pure function; unit-tested."""
+    n = len(order) // 2
+    skip = set(recent[-n:]) if n else set()
+    return ([x for x in order if x not in skip] or order)[:keep]
+
+
 def rank_for_random(names: list[str], punches: dict[str, float], recent: list[str]) -> list[str]:
     """The songs (all allowed in random picks) in the order to use them when none is chosen: the hardest-hitting
     first, a song heard recently pushed back (0.7 of punch for the one heard last, half that for the one before,

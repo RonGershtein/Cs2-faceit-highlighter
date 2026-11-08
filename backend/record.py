@@ -1121,6 +1121,91 @@ def delete_saved(demo_id: str, name: str) -> dict:
     return {"ok": True, "files": names}
 
 
+# ---- imported clips: filmed outside the app (Medal, phone...), cut to the part you want -------------------
+
+IMPORT_ID = "imported"                  # data/videos/imported/ holds them like a match's clips; served the same way
+IMPORT_DIR = VIDEOS_DIR / IMPORT_ID
+
+
+def import_clip_args(src: Path, dst: Path, start: float, seconds: float, width: int, height: int, fps: int,
+                     crf: int, audio: bool) -> list[str]:
+    """Cut [start, start+seconds) of src and make it the same kind of video the app records (size, fps, 48 kHz
+    stereo AAC), so it joins any montage. Pure function; unit-tested."""
+    vf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+          f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p")
+    return [str(FFMPEG_EXE), "-y", "-ss", f"{start:.3f}", "-t", f"{seconds:.3f}", "-i", str(src), "-vf", vf,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), "-pix_fmt", "yuv420p",
+            *(["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"] if audio else ["-an"]),
+            "-movflags", "+faststart", str(dst)]
+
+
+def import_clip(src: Path, start: float, end: float, player: str, text: str = "", fail: bool = False) -> dict:
+    """Add a video filmed outside the app to the Highlights tab, cut to [start, end] seconds (end <= 0: to the
+    end). fail: the fail package (effects.fail_args): the player's name tag at the start, the last frame frozen
+    under a FAIL stamp and a record scratch at the end. Its videos.json entry (data/videos/imported/) is
+    returned. Such a clip has no kill timing, so a cinematic montage plays it without slow motion."""
+    if not FFMPEG_EXE.exists():
+        raise RuntimeError("FFmpeg is not installed (Install HLAE + FFmpeg)")
+    total = clip_seconds(src)
+    if not total:
+        raise RuntimeError("that is not a video FFmpeg can read")
+    start = max(0.0, start)
+    end = min(end, total) if end > 0 else total
+    if end - start < 0.5:
+        raise RuntimeError("the cut is shorter than half a second")
+    probe = subprocess.run([str(FFMPEG_EXE), "-hide_banner", "-i", str(src)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+    audio = stream_sig(probe.stderr)[1] is not None
+    player, text = player.strip()[:40], text.strip()[:80]
+    IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    name, n = f"ext_{stamp}_{_safe(player)}.mp4", 1
+    while (IMPORT_DIR / name).exists():
+        n += 1
+        name = f"ext_{stamp}_{_safe(player)}_{n}.mp4"
+    cfg = load_config()
+    dst = IMPORT_DIR / name
+    r = subprocess.run(import_clip_args(src, dst, start, end - start, int(cfg.get("record_width", 1920)),
+                                        int(cfg.get("record_height", 1080)), int(cfg.get("record_fps", 60)),
+                                        int(cfg.get("record_crf", 20)), audio), capture_output=True, text=True)
+    if r.returncode != 0 or not dst.exists():
+        dst.unlink(missing_ok=True)
+        raise RuntimeError("ffmpeg failed: " + r.stderr[-800:])
+    # highlight_id / start_tick: the cinematic code reads them from every play; there is no match, so it finds no kills
+    shown = end - start
+    if fail:
+        from . import cinematic as cine, effects, sfx
+        font = cine.find_font()
+        if font is None:
+            dst.unlink(missing_ok=True)
+            raise RuntimeError("no font found for the fail package")
+        done = dst.with_name(dst.stem + "_fail.mp4")
+        args, texts = effects.fail_args(FFMPEG_EXE, dst, done, font, sfx.scratch_file(), player, int(cfg.get("record_width", 1920)),
+                                        int(cfg.get("record_height", 1080)), int(cfg.get("record_fps", 60)), shown, audio,
+                                        dst.with_suffix(""), int(cfg.get("record_crf", 20)))
+        try:
+            r = subprocess.run(args, capture_output=True, text=True)
+        finally:
+            for t in texts:
+                t.unlink(missing_ok=True)
+        if r.returncode != 0 or not done.exists():
+            dst.unlink(missing_ok=True)
+            done.unlink(missing_ok=True)
+            raise RuntimeError("ffmpeg failed (fail package): " + r.stderr[-800:])
+        done.replace(dst)
+        shown += effects.FAIL_HOLD
+        audio = True
+    entry = {"file": name, "type": "external", "external": True, "player": player or None, "audio": audio, "fail": fail,
+             "highlight_id": None, "start_tick": 0,
+             "description": " · ".join(x for x in (player, text) if x) or "Imported clip",
+             "seconds": round(shown, 1), "size": dst.stat().st_size}
+    index = videos_index(IMPORT_ID)
+    index.setdefault("videos", []).append(entry)
+    index["match"] = {"date": time.strftime("%Y-%m-%d")}   # the day it was imported, shown on the clip card
+    (IMPORT_DIR / "videos.json").write_text(json.dumps(index, indent=1), encoding="utf-8")
+    return entry
+
+
 # ---- montages: clips of different matches joined into one video ----------------------------------------
 
 MONTAGE_ID = "montages"                 # served like a demo's videos: /api/demos/montages/videos/<file>
@@ -2065,6 +2150,8 @@ def _pin_song(overrides: dict | None) -> dict | None:
 
 def _lineup_entry(cine, demo_id: str, v: dict) -> tuple[dict | None, int]:
     """(player card, kills) of one montage play for the end card's line-up; (None, 0) when it cannot be told."""
+    if v.get("external"):
+        return None, 0   # filmed outside the app: not one of the squad on the end card
     try:
         h = (v.get("ctx") or {}).get("highlight") or {"player": v.get("player_steamid"), "player_name": v.get("player")}
         return cine.player_card(h), len(cine.video_kills(demo_id, v))
@@ -2926,9 +3013,11 @@ def start_library_montage(items: list[dict], title: str = "", overrides: dict | 
             song = made["music"]
             maps = sorted({(videos_index(d).get("match") or {}).get("map") or (db.get_demo(d) or {}).get("map") or ""
                            for d, _ in plays} - {""})
+            heard = " + ".join(Path(x).stem for x in made["songs"])   # every song of the soundtrack, not only the first
             entry = {"file": out.name, "seconds": made["seconds"], "maps": maps, "cinematic": True, "music": song,
+                     "songs": made["songs"],
                      "description": (title.strip()[:80] or f"Montage · {len(plays)} highlights (cinematic)")
-                     + (f" · {Path(song).stem}" if song and not title.strip() else ""),
+                     + (f" · {heard}" if heard and not title.strip() else ""),
                      "clips": [{"demo_id": d, "file": v["file"], "description": v.get("description")} for d, v in joined],
                      "created": time.time()}
             _save_montage(out, entry)
@@ -2989,7 +3078,7 @@ def _recap_matches() -> list[dict]:
     if not VIDEOS_DIR.is_dir():
         return out
     for d in VIDEOS_DIR.iterdir():
-        if d.name == MONTAGE_ID or not (d / "videos.json").is_file():
+        if d.name in (MONTAGE_ID, IMPORT_ID) or not (d / "videos.json").is_file():
             continue
         try:
             stamp_match(d.name)
@@ -3125,7 +3214,7 @@ def squad_intro(kind: str, plays: list[tuple[str, dict]], dates: dict[str, str |
     cfg = load_team()
     if not cfg["intro"] or not plays:
         return None
-    demos = list(dict.fromkeys(d for d, _ in plays))
+    demos = list(dict.fromkeys(d for d, _ in plays if d != IMPORT_ID))   # imported clips are no match with a date
     when = period or intro_dates([dates.get(d) or "" for d in demos])
     n = len(demos)
     sub = " · ".join(x for x in (kind, f"{n} matches" if n > 1 and not period else "", when) if x)

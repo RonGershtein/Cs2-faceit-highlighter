@@ -1,4 +1,4 @@
-"""Sound effects for the cinematic edits: a hit on the slow-motion kills, a whoosh into slow motion and a riser into
+"""Sound effects for the cinematic edits: a hit on the slow-motion kills and a riser into
 the drop. Built-in ones are made here (synthesised, so there is nothing to download and no licence to worry
 about); a file the user drops into a slot (Settings) replaces the built-in one: data/sfx/<slot>.<ext>.
 """
@@ -15,13 +15,12 @@ SFX_DIR = DATA_DIR / "sfx"
 BUILTIN_VERSION = 1
 SLOTS = {   # slot: (label, what it does)
     "impact": ("Kill hit", "a deep hit on every slow-motion kill"),
-    "whoosh": ("Whoosh", "rushes into slow motion"),
     "riser": ("Riser", "builds up into a drop the kill lands on"),
 }
 EXT = (".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac", ".opus")
 RATE = 48000
-# where the effect's moment is in its file: the hit's attack at 0, the whoosh and the riser peak at their very end
-WHOOSH_SECONDS, RISER_SECONDS = 0.55, 2.4
+# where the effect's moment is in its file: the hit's attack at 0, the riser peaks at its very end
+RISER_SECONDS = 2.4
 
 
 def _write(path: Path, left: list[float], right: list[float] | None = None) -> None:
@@ -81,16 +80,6 @@ def _sweep_noise(n: int, f0: float, f1: float, env, seed: int) -> list[float]:
     return out
 
 
-def make_whoosh(seconds: float = WHOOSH_SECONDS) -> tuple[list[float], list[float]]:
-    """Air rushing past: band-passed noise sweeping up, swelling to the end where slow motion starts, a little
-    wider in stereo. Pure function."""
-    n = int(RATE * seconds)
-    env = lambda t, x: (x ** 2.2) * (1 - max(0.0, x - 0.93) / 0.07)   # noqa: E731
-    left = _sweep_noise(n, 300, 4200, env, 11)
-    right = _sweep_noise(n, 320, 4000, env, 12)
-    return left, right
-
-
 def make_riser(seconds: float = RISER_SECONDS) -> tuple[list[float], list[float]]:
     """A build-up: noise sweeping up with a rising tone under it, getting louder to the very end (the drop).
     Pure function."""
@@ -108,13 +97,41 @@ def make_riser(seconds: float = RISER_SECONDS) -> tuple[list[float], list[float]
     return left, right
 
 
+SCRATCH_SECONDS = 0.7
+
+
+def make_scratch(seconds: float = SCRATCH_SECONDS) -> list[float]:
+    """A record scratch: a rough saw wave whose pitch falls from 1.1 kHz to 60 Hz while the 'platter' drags to a
+    stop (a few wobbles of a hand pulling it back), over a little filtered noise, cut off hard at the end.
+    Pure function."""
+    n = int(RATE * seconds)
+    noise = _noise(n, 31)
+    out, phase, lp = [], 0.0, 0.0
+    for i in range(n):
+        t = i / RATE
+        x = t / seconds
+        f = 60 + 1040 * (1 - x) ** 2.2 * (1 + 0.18 * math.sin(2 * math.pi * 9 * t))
+        phase = (phase + f / RATE) % 1.0
+        saw = 2 * phase - 1
+        lp += 0.35 * (noise[i] - lp)
+        env = min(1.0, t / 0.01) * (1 - max(0.0, x - 0.9) / 0.1)
+        out.append(math.tanh(1.8 * (0.7 * saw + 0.5 * lp)) * env * (1 - 0.35 * x))
+    return out
+
+
+def scratch_file() -> Path:
+    """The built-in record scratch of the fail package (made on first use; not a replaceable slot)."""
+    p = SFX_DIR / "builtin" / f"scratch_v{BUILTIN_VERSION}.wav"
+    if not p.is_file():
+        _write(p, make_scratch())
+    return p
+
+
 def _builtin(slot: str) -> Path:
     p = SFX_DIR / "builtin" / f"{slot}_v{BUILTIN_VERSION}.wav"
     if not p.is_file():
         if slot == "impact":
             _write(p, make_impact())
-        elif slot == "whoosh":
-            _write(p, *make_whoosh())
         else:
             _write(p, *make_riser())
     return p

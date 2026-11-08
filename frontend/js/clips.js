@@ -58,7 +58,7 @@
     $('clips').innerHTML = list.map((c, i) => {
       const n = picked.indexOf(key(c));
       const where = c.kind === 'montage' ? (c.maps || []).join(' · ') : [c.map, fmtDay(c.date)].filter(Boolean).join(' · ');
-      const sub = [c.player, c.round ? `round ${c.round}` : ''].filter(Boolean).join(' · ');
+      const sub = [c.demo_id === 'imported' ? '' : c.player, c.round ? `round ${c.round}` : ''].filter(Boolean).join(' · ');
       const url = API.videoUrl(c.demo_id, c.file);
       return `<article class="card clip ${n >= 0 ? 'picked' : ''}" data-k="${esc(key(c))}" draggable="true" style="--i:${Math.min(i, 11)}">
         <div class="thumb" role="button" tabindex="0" aria-label="${picking ? 'Select' : 'Play'}: ${esc(c.description)}">
@@ -72,7 +72,7 @@
           <div class="clip-title" title="${esc(c.description)}">${esc(c.description)}</div>
           <div class="clip-meta">${esc(where)}${sub ? ` <span class="dot">·</span> ${esc(sub)}` : ''}</div>
           <div class="clip-foot">
-            ${c.demo_exists ? `<a href="/match.html?id=${esc(c.demo_id)}" class="small-link">open match</a>` : (c.kind === 'montage' ? '' : '<span class="muted gone" title="the demo was deleted; the clip is kept">match deleted</span>')}
+            ${c.demo_exists ? `<a href="/match.html?id=${esc(c.demo_id)}" class="small-link">open match</a>` : (c.kind === 'montage' ? '' : c.demo_id === 'imported' ? '<span class="muted">imported</span>' : '<span class="muted gone" title="the demo was deleted; the clip is kept">match deleted</span>')}
             <span class="spacer"></span>
             <button class="icon-btn fav-btn${c.fav ? ' on' : ''}" aria-pressed="${!!c.fav}" title="${c.fav ? 'remove from favorites' : 'add to favorites'}" aria-label="Favorite: ${esc(c.description)}">${ic(c.fav ? 'star' : 'star-o')}</button>
             <a class="icon-btn" href="${url}" download="${esc(c.file)}" title="download" aria-label="Download ${esc(c.description)}">${ic('download')}</a>

@@ -201,7 +201,7 @@ highlights you ticked (those are remade). Takes ~10-20 s per clip
 - **On the music:** every kill lands on a beat (the game between two kills runs up to 25 % faster or slower; a kill that cannot
   reach a beat goes on the half beat), and before a drop a kill lands on, the music goes muffled with a riser under it, cuts out for
   half a beat, and the drop hits with the kill. The music dips a little under the gunshots.
-- **Sound effects:** a whoosh into slow motion, a deep hit and an echo on slow-motion kills; built in (made by the app), or drop your
+- **Sound effects:** a deep hit and an echo on slow-motion kills, a riser into the drop; built in (made by the app), or drop your
   own file on a slot in **Settings → Sound effects**. A light flash on the bars and a shake on the last kill go with them.
 - **Caster voice lines:** short sound bites in `data/voice/start`, `data/voice/kill` and `data/voice/final` play at the clip start, on
   every kill but the last, and right after the final kill. They are picked by what happened: a sub-folder named after the highlight type
@@ -303,7 +303,7 @@ backend/launch.py        open CS2 at a tick
 backend/record.py        HLAE + FFmpeg recording pipeline
 backend/cinematic.py     slow-motion + music post-processing
 backend/songs.py         song analysis: beats, bars, drops, loudness, punch (cached in data/cache/songs)
-backend/sfx.py           sound effects: built-in hit / whoosh / riser, or the user's own
+backend/sfx.py           sound effects: built-in hit / riser, or the user's own
 frontend/                index.html (library), match.html (viewer), js/replay.js (canvas renderer)
 data/                    demos, parsed matches, videos, music, app.db   (not in git)
 tools/                   HLAE and FFmpeg                                (downloaded, not in git)
