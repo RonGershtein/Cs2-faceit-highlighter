@@ -76,6 +76,7 @@
             <span class="spacer"></span>
             <button class="icon-btn fav-btn${c.fav ? ' on' : ''}" aria-pressed="${!!c.fav}" title="${c.fav ? 'remove from favorites' : 'add to favorites'}" aria-label="Favorite: ${esc(c.description)}">${ic(c.fav ? 'star' : 'star-o')}</button>
             <a class="icon-btn" href="${url}" download="${esc(c.file)}" title="download" aria-label="Download ${esc(c.description)}">${ic('download')}</a>
+            ${c.kind === 'clip' ? `<button class="small ghost cut-clip" title="cut this clip: pick the start and end, then save the cut as a new clip" aria-label="Cut ${esc(c.description)}">${ic('film')}</button>` : ''}
             <button class="small ghost del-clip" title="delete this video" aria-label="Delete ${esc(c.description)}">${ic('x')}</button>
           </div>
         </div></article>`;
@@ -110,6 +111,7 @@
       try { await API.favorite(c.demo_id, c.file, on); } catch (err) { markFav(card, c, !on); alert(err.message); }
       return;
     }
+    if (e.target.closest('.cut-clip')) { window.cutClip(c); return; }
     if (e.target.closest('.del-clip')) {
       const extra = c.kind === 'clip' && clips.some(x => x.kind === 'cinematic' && x.demo_id === c.demo_id && x.highlight_id === c.highlight_id)
         ? `\n\nIts cinematic version is deleted too${(cineOf(c) || {}).fav ? ', and that one is a favorite' : ''}.` : '';

@@ -90,6 +90,7 @@
             <button class="small act-play" data-i="${i}">${ic('play')} Play</button>
             <button class="small act-cs2" data-i="${i}" title="open CS2 at this moment">Open in CS2</button>
             ${videoFor(h) ? `<button class="small act-video has-video" data-i="${i}" title="watch the recorded MP4">${ic('play')} Video</button>${videoFor(h).cine ? `<button class="small act-cine has-video" data-i="${i}" title="watch the cinematic version (slow-motion + music)">${ic('sparkles')} Cinematic</button>` : ''}${videoFor(h).reel ? `<button class="small act-reel has-video" data-i="${i}" title="watch the 9:16 reel (Shorts, Instagram, TikTok)">${ic('play')} Reel</button>` : ''}` : `<button class="small act-rec" data-i="${i}" title="record only this highlight"><i class="rec-dot"></i> Rec</button>`}
+            ${videoFor(h) && h.type === 'round' ? `<a class="small" href="${API.videoUrl(id, videoFor(h).file)}" download title="download the recorded MP4">${ic('download')} Download</a><button class="small act-cut" data-i="${i}" title="watch the round and choose where the clip starts and ends">${ic('film')} Cut</button>` : ''}
             <button class="small ghost act-csdm" data-i="${i}" title="copy a CS Demo Manager sequence to the clipboard">CSDM</button>
           </div>
         </div>
@@ -132,6 +133,7 @@
     if (b?.classList.contains('act-video')) { openVideo(videoFor(h)); return; }
     if (b?.classList.contains('act-reel')) { const v = videoFor(h); openVideo({ ...v, file: v.reel, description: v.description + ' (reel)', seconds: v.reel_info?.seconds ?? v.seconds }); return; }
     if (b?.classList.contains('act-cine')) { const v = videoFor(h); openVideo({ ...v, file: v.cine, description: v.description + ' (cinematic)', seconds: v.cine_info?.seconds ?? v.seconds }); return; }
+    if (b?.classList.contains('act-cut')) { cutRound(h); return; }
     if (b?.classList.contains('act-rec')) { startRecording([h.id]); return; }
     if (b?.classList.contains('act-csdm')) {
       const seq = { number: 1, startTick: h.start_tick, endTick: h.end_tick, showXRay: false, showAssists: true, showOnlyDeathNotices: true,
@@ -336,7 +338,7 @@
       recStatusText(st);
       if (st.status === 'done' || st.status === 'error' || st.status === 'idle') {
         clearInterval(recPoll); recPoll = null;
-        if (st.status === 'done') { await loadVideos(); renderHighlights(); }
+        if (st.status === 'done') { await loadVideos(); renderHighlights(); const h = highlightsAll.find(x => x.id === cutWhenDone); cutWhenDone = null; if (h) cutRound(h); }
       }
     } catch (_) { /* ignore */ }
   }
@@ -356,6 +358,28 @@
       } catch (e) { toast(`<b>Could not start recording:</b> ${esc(e.message)}`); }
     };
   }
+  // ---- any round of any player: record the whole round, then cut it with a preview (same dialog as Import clip) ----
+  let cutWhenDone = null;   // highlight id of a round clip being recorded: its cut dialog opens when it is done
+  const openRound = () => {
+    $('round-player').innerHTML = meta.players.map(p => `<option value="${esc(p.steamid)}">${esc(p.name)}</option>`).join('');
+    $('round-num').innerHTML = meta.rounds.map(r => `<option value="${r.num}">Round ${r.num} (${esc(r.winner)} won)</option>`).join('');
+    $('round-player').value = me || meta.players[0].steamid;
+    $('round-modal').style.display = '';
+  };
+  $('btn-round').onclick = openRound;
+  $('round-close').onclick = () => $('round-modal').style.display = 'none';
+  $('round-go').onclick = async () => {
+    try {
+      const h = await API.addRound(id, { player: $('round-player').value, round: +$('round-num').value, start: -5 });
+      highlightsAll = await API.highlights(id);
+      $('round-modal').style.display = 'none';
+      filter = 'all'; renderHighlights();
+      cutWhenDone = h.id;
+      startRecording([h.id]);
+    } catch (e) { toast(`<b>Could not add the round:</b> ${esc(e.message)}`); }
+  };
+  window.onCutSaved = (c) => toast(`Clip saved in the Highlights tab. <a href="${API.videoUrl('imported', c.file)}" download="${esc(c.file)}">${ic('download')} Download it now</a>`, 15000);
+  function cutRound(h) { const v = videoFor(h); if (v) window.cutClip({ demo_id: id, file: v.file, player: v.player || h.player_name }); }
   $('rec-close').onclick = $('rec-cancel-btn').onclick = () => $('rec-modal').style.display = 'none';
   $('btn-select-all').onclick = () => {
     const ids = listed.map(h => h.id);

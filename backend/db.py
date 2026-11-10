@@ -195,6 +195,45 @@ def get_highlights(demo_id: str, steamid: str | None = None, include_kills: bool
     return out
 
 
+def add_highlight(demo_id: str, h: dict) -> dict:
+    """Insert one hand-made highlight (id = next free one; detect() numbers its own 1..n)."""
+    with _lock:
+        c = conn()
+        nxt = 1 + max([json.loads(r["data"]).get("id", 0) for r in c.execute("SELECT data FROM highlights WHERE demo_id=?", (demo_id,))] or [0])
+        h = {**h, "id": nxt}
+        c.execute(
+            """INSERT INTO highlights (demo_id, type, steamid, player_name, round, start_tick, end_tick, score, description, data)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (demo_id, h["type"], str(h["player"]), h.get("player_name", ""), h["round"], h["start_tick"],
+             h["end_tick"], h["score"], h["description"], json.dumps(h)))
+        c.commit()
+    return h
+
+
+def set_highlight_window(demo_id: str, hid: int, start: int, end: int) -> dict | None:
+    with _lock:
+        c = conn()
+        for r in c.execute("SELECT id AS rid, data FROM highlights WHERE demo_id=?", (demo_id,)).fetchall():
+            h = json.loads(r["data"])
+            if h.get("id") == hid and h["type"] == "round":
+                h.update(start_tick=start, end_tick=end)
+                c.execute("UPDATE highlights SET start_tick=?, end_tick=?, data=? WHERE id=?", (start, end, json.dumps(h), r["rid"]))
+                c.commit()
+                return h
+    return None
+
+
+def delete_round_highlight(demo_id: str, hid: int) -> bool:
+    with _lock:
+        c = conn()
+        for r in c.execute("SELECT id AS rid, data FROM highlights WHERE demo_id=? AND type='round'", (demo_id,)).fetchall():
+            if json.loads(r["data"]).get("id") == hid:
+                c.execute("DELETE FROM highlights WHERE id=?", (r["rid"],))
+                c.commit()
+                return True
+    return False
+
+
 def top_highlight(demo_id: str, steamid: str | None = None) -> dict | None:
     hs = get_highlights(demo_id, steamid, include_kills=False)
     return hs[0] if hs else None

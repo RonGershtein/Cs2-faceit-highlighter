@@ -30,7 +30,25 @@
       $('imp-player-hint').textContent = names.length ? '' : 'No squad yet: add your teammates in the Squad tab to pick them here.';
     } catch (e) { $('imp-player-hint').textContent = e.message; }
   }
-  $('import-open').onclick = () => { reset(); $('import-modal').style.display = ''; loadSquad(); };
+  const setMode = (cut) => {   // the same dialog cuts a clip that is already saved
+    $('imp-title').textContent = cut ? 'Cut a clip' : 'Import a clip';
+    $('imp-file').closest('.field').hidden = cut;
+    $('imp-go').textContent = cut ? 'Save the cut as a new clip' : 'Save clip';
+  };
+  if ($('import-open')) $('import-open').onclick = () => { reset(); setMode(false); $('import-modal').style.display = ''; loadSquad(); };
+  window.cutClip = async (c) => {   // c: a saved clip; its video is fetched and goes through the import path
+    reset(); setMode(true); $('import-modal').style.display = '';
+    $('imp-msg').textContent = 'loading the video…';
+    await loadSquad();
+    const sel = $('imp-player'), name = (c.player || '').trim();
+    if (name && ![...sel.options].some(o => o.value === name)) sel.add(new Option(name, name));
+    if (name) sel.value = name;
+    try {
+      const blob = await (await fetch(API.videoUrl(c.demo_id, c.file))).blob();
+      file = new File([blob], c.file, { type: 'video/mp4' });
+      url = URL.createObjectURL(file); v.src = url;
+    } catch (e) { $('imp-msg').textContent = e.message; }
+  };
   $('imp-close').onclick = $('imp-cancel').onclick = close;
   $('import-modal').addEventListener('click', (e) => { if (e.target === $('import-modal')) close(); });
 
@@ -58,8 +76,9 @@
   $('imp-go').onclick = async () => {
     $('imp-go').disabled = true; $('imp-msg').textContent = 'cutting and saving… (a few seconds)';
     try {
-      await API.importClip(file, start(), end() >= v.duration - 0.05 ? 0 : end(), $('imp-player').value, $('imp-text').value, $('imp-fail').checked);
-      close(); window.showTab('highlights');
+      const clip = await API.importClip(file, start(), end() >= v.duration - 0.05 ? 0 : end(), $('imp-player').value, $('imp-text').value, $('imp-fail').checked);
+      close();
+      if (window.showTab) window.showTab('highlights'); else window.onCutSaved?.(clip);
     } catch (err) { $('imp-msg').textContent = err.message; $('imp-go').disabled = false; }
   };
 })();

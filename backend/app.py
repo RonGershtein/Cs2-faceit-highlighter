@@ -303,6 +303,57 @@ def demo_highlights(demo_id: str, player: str | None = None, kills: bool = True)
     return db.get_highlights(demo_id, player, include_kills=kills)
 
 
+class RoundIn(BaseModel):
+    player: str
+    round: int
+    start: float = 0.0     # seconds after the round's freeze time ends (negative = earlier)
+    end: float | None = None   # seconds after the same point; None = the round's end
+
+
+def _round_window(d: dict, demo_id: str, body: RoundIn) -> tuple[dict, int, int]:
+    meta = json.loads((PARSED_DIR / demo_id / "meta.json").read_text(encoding="utf-8"))
+    rnd = next((r for r in meta["rounds"] if r["num"] == body.round), None)
+    if not rnd:
+        raise HTTPException(400, "no such round")
+    tr = d.get("tickrate") or 64
+    start = int(rnd["freeze_end"] + body.start * tr)
+    end = int(rnd["freeze_end"] + body.end * tr) if body.end is not None else int(rnd["official_end"])
+    start = max(start, 0)
+    if end - start < tr:
+        raise HTTPException(400, "the clip must be at least 1 second long")
+    return meta, start, end
+
+
+@app.post("/api/demos/{demo_id}/highlights/round")
+def add_round_highlight(demo_id: str, body: RoundIn):
+    """Any round of any player as a clip, with its own start/end, so it can be recorded like a detected highlight."""
+    d = _demo_or_404(demo_id)
+    meta, start, end = _round_window(d, demo_id, body)
+    pl = next((p for p in meta["players"] if str(p["steamid"]) == body.player), None)
+    if not pl:
+        raise HTTPException(400, "no such player")
+    return db.add_highlight(demo_id, {"type": "round", "player": body.player, "player_name": pl["name"], "round": body.round,
+                                      "start_tick": start, "end_tick": end, "score": 0, "kills": [],
+                                      "description": f"{pl['name']}: round {body.round}"})
+
+
+@app.put("/api/demos/{demo_id}/highlights/{hid}/round")
+def set_round_window(demo_id: str, hid: int, body: RoundIn):
+    d = _demo_or_404(demo_id)
+    _, start, end = _round_window(d, demo_id, body)
+    h = db.set_highlight_window(demo_id, hid, start, end)
+    if not h:
+        raise HTTPException(404, "no such round clip")
+    return h
+
+
+@app.delete("/api/demos/{demo_id}/highlights/{hid}")
+def delete_round_highlight(demo_id: str, hid: int):
+    if not db.delete_round_highlight(demo_id, hid):
+        raise HTTPException(404, "no such round clip")
+    return {"ok": True}
+
+
 @app.delete("/api/demos/{demo_id}")
 def delete_demo(demo_id: str):
     _demo_or_404(demo_id)

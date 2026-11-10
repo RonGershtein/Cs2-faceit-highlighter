@@ -67,6 +67,7 @@
         <button class="small" data-f="all" id="f-all">All</button>
         <button class="small" data-f="kills" id="f-kills" title="include single kills">+ kills</button>
         <span class="spacer"></span>
+        <button class="small" id="btn-round" title="record any round of any player, with your own start and end"><i class="rec-dot"></i> Any round</button>
         <button class="small" id="btn-play-all" title="play all listed highlights in order"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg> Play all</button>
         <a class="small muted" id="csdm-all" href="#" download title="export listed highlights as CS Demo Manager sequences">CSDM</a>
       </div>
@@ -96,6 +97,30 @@
   <p class="muted" style="margin:0 0 12px">Pick your name so "Mine" shows your highlights and your stats appear in the library. Saved for all demos.</p>
   <div class="who" id="me-list"></div>
 </div></div>
+<div class="modal" role="dialog" aria-modal="true" id="round-modal" style="display:none"><div class="modal-box">
+  <div class="modal-head">Record any round <span class="spacer"></span><button class="small ghost" id="round-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <p class="muted" style="margin:0 0 12px">Pick a player and a round. The whole round is recorded; when it is done you watch it, choose where the clip starts and ends, and download it.</p>
+  <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center">
+    <label for="round-player">Player</label><select id="round-player"></select>
+    <label for="round-num">Round</label><select id="round-num"></select>
+  </div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="small primary" id="round-go"><i class="rec-dot"></i> Record this round</button></div>
+</div></div>
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="imp-title" id="import-modal" style="display:none"><div class="modal-box cine">
+  <div class="modal-head"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg> <span id="imp-title">Import a clip</span><span class="spacer"></span><button class="small ghost" id="imp-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <div class="field"><label for="imp-file">Video (Medal, phone, anything)</label><input type="file" id="imp-file" accept="video/*"></div>
+  <div id="imp-editor" hidden>
+    <video id="imp-video" controls playsinline></video>
+    <div class="field" style="margin-top:14px"><label for="imp-start">Start: <b id="imp-start-t"></b></label><input type="range" id="imp-start" min="0" step="0.1" value="0">
+      <label for="imp-end">End: <b id="imp-end-t"></b></label><input type="range" id="imp-end" min="0" step="0.1" value="0">
+      <div class="row"><button class="small" id="imp-set-start" type="button">Start here</button><button class="small" id="imp-set-end" type="button">End here</button><button class="small" id="imp-play" type="button">Play the cut</button><span class="muted" id="imp-len" style="align-self:center"></span></div></div>
+    <div class="field"><label for="imp-player">Player</label><select id="imp-player"></select><span class="hint" id="imp-player-hint"></span></div>
+    <label class="opt"><input type="checkbox" id="imp-fail"> <span>Fail style: the name tag at the start, then the last frame freezes under a FAIL stamp with a record scratch (add about a second)</span></label>
+    <div class="field"><label for="imp-text">What happens (optional)</label><input type="text" id="imp-text" maxlength="60" autocomplete="off" placeholder="e.g. flashed himself"></div>
+  </div>
+  <div class="modal-foot"><span class="muted" id="imp-msg"></span><span class="spacer"></span><button id="imp-cancel">Cancel</button><button class="primary" id="imp-go" disabled>Save clip</button></div>
+</div></div>
+
 <div class="modal" role="dialog" aria-modal="true" id="rec-modal" style="display:none"><div class="modal-box">
   <div class="modal-head">Before recording <span class="spacer"></span><button class="small ghost" id="rec-close" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
   <ul class="checklist">
@@ -255,6 +280,7 @@
 <script src="/js/share.js"></script>
 <script src="/js/replay.js"></script>
 <script src="/js/timeline.js"></script>
+<script src="/js/import.js"></script>
 <script src="/js/ui.js"></script>
 </body>
 </html>
